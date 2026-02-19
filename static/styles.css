@@ -130,6 +130,16 @@ a{ color:inherit; text-decoration:none; }
   border-color: transparent;
   background: rgba(59,130,246,.12);
 }
+
+.btn--danger{
+  background: var(--danger);
+  color: #fff;
+  border: 1px solid var(--danger);
+}
+.btn--danger:hover{
+  filter: brightness(0.95);
+}
+
 .theme-dark .btn--primary{
   background: rgba(122,162,255,.18);
 }
@@ -304,29 +314,37 @@ a{ color:inherit; text-decoration:none; }
 }
 
 /* ---- bulk highlight ---- */
+/* ---- bulk highlight ---- */
+.day.hl{
+  box-shadow: none; /* override normal has-note border */
+}
+
 .day.hl--fill{
-  box-shadow: none;                 /* override normal has-note border */
   background: var(--hl, #ea9999);
 }
 .day.hl--fill:hover{
-  background: var(--hl, #ea9999);   /* keep fill on hover */
+  background: var(--hl, #ea9999);
 }
 
-.day.hl--border{
-  box-shadow: none;                 /* we draw border via ::after */
-}
-.day.hl--border::after{
+/* we draw borders via ::after for BOTH border/fill */
+.day.hl::after{
   content:"";
   position:absolute;
   inset:0;
   pointer-events:none;
 }
 
-/* sides for "single box" look across a range */
-.day.hl-b-l::after{ border-left: 2px solid var(--danger); }
-.day.hl-b-r::after{ border-right: 2px solid var(--danger); }
-.day.hl-b-t::after{ border-top: 2px solid var(--danger); }
-.day.hl-b-b::after{ border-bottom: 2px solid var(--danger); }
+/* border mode = same as normal note border color */
+.day.hl--border.hl-b-l::after{ border-left: 2px solid var(--danger); }
+.day.hl--border.hl-b-r::after{ border-right: 2px solid var(--danger); }
+.day.hl--border.hl-b-t::after{ border-top: 2px solid var(--danger); }
+.day.hl--border.hl-b-b::after{ border-bottom: 2px solid var(--danger); }
+
+/* fill mode = border color equals fill color */
+.day.hl--fill.hl-b-l::after{ border-left: 2px solid var(--hl, #ea9999); }
+.day.hl--fill.hl-b-r::after{ border-right: 2px solid var(--hl, #ea9999); }
+.day.hl--fill.hl-b-t::after{ border-top: 2px solid var(--hl, #ea9999); }
+.day.hl--fill.hl-b-b::after{ border-bottom: 2px solid var(--hl, #ea9999); }
 
 
 .day__top{

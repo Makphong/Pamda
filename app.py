@@ -653,11 +653,15 @@ def tools_bulk_note():
 @app.post("/tools/bulk_note")
 def tools_bulk_note_submit():
     content = (request.form.get("content") or "").rstrip()
-    if not content.strip():
+    mode = (request.form.get("mode") or "border").lower()
+
+    # allow empty content ONLY for fill mode (highlight-only)
+    if mode != "fill" and not content.strip():
         flash("Note can't be empty.", "error")
         return redirect(url_for("tools_bulk_note"))
 
     start_str = (request.form.get("start_day") or "").strip()
+
     end_str = (request.form.get("end_day") or "").strip() or start_str
 
     try:
@@ -670,7 +674,6 @@ def tools_bulk_note_submit():
     if e < s:
         s, e = e, s
 
-    mode = (request.form.get("mode") or "border").lower()
     color = request.form.get("color") or "#ea9999"
 
     target = (request.form.get("target_project") or "all").strip().lower()
@@ -692,12 +695,67 @@ def tools_bulk_note_submit():
     for pid in pids:
         add_highlight(pid, s.isoformat(), e.isoformat(), mode, color)
 
-        cur = s
-        while cur <= e:
-            upsert_note_append(pid, cur.isoformat(), content)
-            cur += dt.timedelta(days=1)
+        # only write notes if content is provided (fill can be highlight-only)
+        if content.strip():
+            cur = s
+            while cur <= e:
+                upsert_note_append(pid, cur.isoformat(), content)
+                cur += dt.timedelta(days=1)
+
 
     flash("Added note.", "ok")
+    return redirect(url_for("index"))
+
+
+@app.post("/tools/bulk_clear")
+def tools_bulk_clear_submit():
+    start_str = (request.form.get("start_day") or "").strip()
+    end_str = (request.form.get("end_day") or "").strip() or start_str
+
+    try:
+        s = dt.date.fromisoformat(start_str)
+        e = dt.date.fromisoformat(end_str)
+    except Exception:
+        flash("Invalid date.", "error")
+        return redirect(url_for("tools_bulk_note"))
+
+    if e < s:
+        s, e = e, s
+
+    target = (request.form.get("target_project") or "all").strip().lower()
+    ps = list_projects()
+
+    if target == "all":
+        pids = [int(p["id"]) for p in ps]
+    else:
+        try:
+            pid = int(target)
+            pids = [pid]
+        except Exception:
+            pids = []
+
+    if not pids:
+        flash("Select a project.", "error")
+        return redirect(url_for("tools_bulk_note"))
+
+    for pid in pids:
+        # delete notes in range
+        with db() as con:
+            con.execute(
+                "DELETE FROM notes WHERE project_id=? AND day>=? AND day<=?",
+                (pid, s.isoformat(), e.isoformat()),
+            )
+
+        # remove highlight on each day (same behavior as single-day clear)
+        cur = s
+        while cur <= e:
+            try:
+                remove_highlight_day(pid, cur.isoformat())
+            except Exception:
+                pass
+            cur += dt.timedelta(days=1)
+
+    flash("Cleared notes.", "ok")
     return redirect(url_for("index"))
 
 

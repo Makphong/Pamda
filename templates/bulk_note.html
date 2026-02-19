@@ -64,7 +64,45 @@
 
         <div class="card__hint">
           • End day ว่าง = ใส่โน้ตวันเดียว<br>
-          • เลือก “กรอบ” แล้วใส่ช่วงวัน ระบบจะวาดเป็นกรอบต่อเนื่องเหมือนเป็นกล่องเดียว
+          • เลือก “กรอบ” แล้วใส่ช่วงวัน ระบบจะวาดเป็นกรอบต่อเนื่องเหมือนเป็นกล่องเดียว<br>
+          • โหมด “เทสี” สามารถเว้นข้อความว่างได้ (เทสีอย่างเดียว)
+        </div>
+      </form>
+    </div>
+
+    <div class="card card--full">
+      <div class="card__title">เคลียร์โน้ต (เลือกวัน/ช่วงวัน)</div>
+
+      <form method="post" action="{{ url_for('tools_bulk_clear_submit') }}" class="stack">
+        <div class="row">
+          <div class="stack" style="min-width: 220px;">
+            <label class="muted">วันเริ่ม (Start day)</label>
+            <input class="input" type="date" name="start_day" value="{{ today }}" required>
+          </div>
+
+          <div class="stack" style="min-width: 220px;">
+            <label class="muted">วันสิ้นสุด (End day) — เว้นว่าง = วันเดียว</label>
+            <input class="input" type="date" name="end_day" placeholder="optional">
+          </div>
+
+          <div class="stack" style="min-width: 260px;">
+            <label class="muted">เคลียร์ใน Project</label>
+            <select class="select" name="target_project">
+              <option value="all">ทั้งหมด (All projects)</option>
+              {% for p in projects %}
+                <option value="{{ p.id }}">{{ p.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <button class="btn btn--danger" type="submit">Clear</button>
+          <a class="btn btn--ghost" href="{{ url_for('index') }}">Cancel</a>
+        </div>
+
+        <div class="card__hint">
+          • การเคลียร์จะลบ “โน้ต” และทำให้ “กรอบ/สี highlight” ของวันนั้นหายด้วย (เหมือน Clear รายวัน)
         </div>
       </form>
     </div>
