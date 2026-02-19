@@ -1,4 +1,3 @@
-
 {% extends "base.html" %}
 {% block content %}
 <section class="note">
@@ -10,12 +9,61 @@
     <a class="btn btn--ghost" href="{{ url_for('index') }}">Back</a>
   </div>
 
-  <form method="post" class="note__form">
-    <textarea name="content" class="textarea" placeholder="จดโน้ตสำหรับวันนี้… (รองรับหลายบรรทัด)">{{ content }}</textarea>
-    <div class="note__actions">
-      <button class="btn btn--primary" type="submit" name="action" value="save">Save</button>
-      <button class="btn btn--danger" type="submit" name="action" value="clear">Clear</button>
+  <div class="note__split">
+    <!-- TOP HALF: list items (like Google Calendar day) -->
+    <div class="note__pane note__pane--top">
+      <div class="note__section-title">รายการวันนี้</div>
+
+      {% if gcal_events and gcal_events|length %}
+        <div class="note__gcal">
+          <div class="note__gcal-title">Google Calendar</div>
+          <ul class="note__gcal-list">
+            {% for ev in gcal_events[:6] %}
+              <li>{{ ev.summary }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      {% if items|length == 0 %}
+        <div class="muted">ยังไม่มีรายการ — เพิ่มได้จากครึ่งล่าง</div>
+      {% else %}
+        <div class="note__list">
+          {% for it in items %}
+            <div class="note__item">
+              <form method="post"
+                    action="{{ url_for('note_edit_item', pid=project.id, day=day, item_id=it.id) }}"
+                    class="row note__item-row">
+                <input class="input note__item-input" name="text" value="{{ it.text }}" maxlength="200" />
+                <button class="btn btn--ghost" type="submit">Save</button>
+              </form>
+
+              <form method="post"
+                    action="{{ url_for('note_delete_item', pid=project.id, day=day, item_id=it.id) }}"
+                    class="inline">
+                <button class="btn btn--danger" type="submit">Delete</button>
+              </form>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
     </div>
-  </form>
+
+    <!-- BOTTOM HALF: add item -->
+    <div class="note__pane note__pane--bottom">
+      <div class="note__section-title">เพิ่มรายการย่อย</div>
+
+      <form method="post" action="{{ url_for('note_add_item', pid=project.id, day=day) }}" class="row note__add">
+        <input class="input note__add-input" name="text" placeholder="พิมพ์รายการย่อยแล้วกด + Add" maxlength="200" />
+        <button class="btn btn--primary" type="submit">+ Add</button>
+      </form>
+
+      <div class="note__bottom-actions">
+        <form method="post" action="{{ url_for('note_save', pid=project.id, day=day) }}" class="inline">
+          <button class="btn btn--danger" type="submit" name="action" value="clear">Clear all</button>
+        </form>
+      </div>
+    </div>
+  </div>
 </section>
 {% endblock %}

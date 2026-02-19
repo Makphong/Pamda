@@ -52,12 +52,58 @@ def init_db() -> None:
                 is_deleted INTEGER NOT NULL DEFAULT 0
             );
 
+            -- legacy (keep for migration/backward compatibility)
             CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id INTEGER NOT NULL,
                 day TEXT NOT NULL,         -- YYYY-MM-DD
                 content TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                UNIQUE(project_id, day),
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            );
+
+            -- NEW: sub-note items (many per day)
+            CREATE TABLE IF NOT EXISTS note_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                day TEXT NOT NULL,         -- YYYY-MM-DD
+                text TEXT NOT NULL,
+                sort_index INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_note_items_pid_day
+              ON note_items(project_id, day);
+
+            -- Persist visible projects per user_key (so settings won't vanish)
+            CREATE TABLE IF NOT EXISTS user_visible_projects (
+                user_key TEXT NOT NULL,
+                project_id INTEGER NOT NULL,
+                sort_index INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(user_key, project_id),
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            );
+
+            -- Existing DBs already have this, but new DB must create it too
+            CREATE TABLE IF NOT EXISTS highlights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                start_day TEXT NOT NULL,   -- YYYY-MM-DD
+                end_day TEXT NOT NULL,     -- YYYY-MM-DD
+                mode TEXT NOT NULL,        -- border | fill
+                color TEXT NOT NULL,       -- e.g. #ea9999
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            );
+
+            -- Existing DBs already have this too
+            CREATE TABLE IF NOT EXISTS day_colors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                day TEXT NOT NULL,         -- YYYY-MM-DD
+                color_key TEXT NOT NULL,
                 UNIQUE(project_id, day),
                 FOREIGN KEY(project_id) REFERENCES projects(id)
             );
@@ -75,9 +121,6 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(user_key, day)
             );
-
-
-
             """
         )
 
@@ -96,6 +139,42 @@ def init_db() -> None:
             con.execute("ALTER TABLE projects ADD COLUMN link_url TEXT")
         except Exception:
             pass
+
+        # --- migrate legacy notes(content) -> note_items(text) (one-time, safe) ---
+        try:
+            now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+            legacy_rows = con.execute(
+                "SELECT project_id, day, content FROM notes WHERE TRIM(content) <> ''"
+            ).fetchall()
+
+            for r in legacy_rows:
+                pid = int(r["project_id"])
+                day = r["day"]
+
+                # if already migrated, skip
+                exists = con.execute(
+                    "SELECT 1 FROM note_items WHERE project_id=? AND day=? LIMIT 1",
+                    (pid, day),
+                ).fetchone()
+                if exists:
+                    continue
+
+                lines = [ln.strip() for ln in (r["content"] or "").splitlines() if ln.strip()]
+                if not lines:
+                    continue
+
+                for idx, text in enumerate(lines):
+                    con.execute(
+                        """
+                        INSERT INTO note_items(project_id, day, text, sort_index, created_at, updated_at)
+                        VALUES(?,?,?,?,?,?)
+                        """,
+                        (pid, day, text, idx, now, now),
+                    )
+        except Exception:
+            pass
+
 
         # Seed default projects if empty
         cur = con.execute("SELECT COUNT(*) AS c FROM projects WHERE is_deleted=0")
@@ -195,17 +274,51 @@ def list_projects(include_deleted: bool = False) -> List[sqlite3.Row]:
 
 
 def get_visible_project_ids() -> List[int]:
-    # Default: show first 4 non-deleted projects
-    if "visible_projects" not in session:
-        ps = list_projects()
-        session["visible_projects"] = [int(p["id"]) for p in ps[:4]]
-    return list(map(int, session.get("visible_projects", [])))
+    # 1) try DB (persisted by user_key)
+    user_key = session.get("user_key")
+    if user_key:
+        with db() as con:
+            rows = con.execute(
+                """
+                SELECT project_id
+                FROM user_visible_projects
+                WHERE user_key=?
+                ORDER BY sort_index ASC
+                """,
+                (user_key,),
+            ).fetchall()
+        if rows:
+            return [int(r["project_id"]) for r in rows]
+
+    # 2) fallback session
+    if "visible_projects" in session and session["visible_projects"]:
+        return list(map(int, session.get("visible_projects", [])))
+
+    # 3) default: first 4 projects
+    ps = list_projects()
+    ids = [int(p["id"]) for p in ps[:4]]
+    set_visible_project_ids(ids)
+    return ids
 
 
 def set_visible_project_ids(ids: List[int]) -> None:
     # limit max 4
     ids = [int(x) for x in ids][:4]
     session["visible_projects"] = ids
+
+    user_key = session.get("user_key")
+    if not user_key:
+        return
+
+    with db() as con:
+        con.execute("DELETE FROM user_visible_projects WHERE user_key=?", (user_key,))
+        con.executemany(
+            """
+            INSERT INTO user_visible_projects(user_key, project_id, sort_index)
+            VALUES(?,?,?)
+            """,
+            [(user_key, pid, i) for i, pid in enumerate(ids)],
+        )
 
 
 def toggle_project_visible(pid: int) -> None:
@@ -233,51 +346,115 @@ def toggle_project_visible(pid: int) -> None:
     set_visible_project_ids(ids)
 
 
-# ---------- notes ----------
-def get_notes_map(
+# ---------- note items (sub-notes) ----------
+def get_note_items_map(
     project_ids: List[int], start_day: dt.date, end_day: dt.date
-) -> Dict[Tuple[int, str], str]:
+) -> Dict[Tuple[int, str], List[dict]]:
     if not project_ids:
         return {}
+
     with db() as con:
         q = """
-            SELECT project_id, day, content
-            FROM notes
+            SELECT id, project_id, day, text, sort_index
+            FROM note_items
             WHERE project_id IN ({})
               AND day >= ?
               AND day <= ?
+            ORDER BY project_id ASC, day ASC, sort_index ASC, id ASC
         """.format(",".join(["?"] * len(project_ids)))
         args = list(project_ids) + [start_day.isoformat(), end_day.isoformat()]
         rows = con.execute(q, args).fetchall()
-    out: Dict[Tuple[int, str], str] = {}
+
+    out: Dict[Tuple[int, str], List[dict]] = {}
     for r in rows:
-        out[(int(r["project_id"]), r["day"])] = r["content"]
+        key = (int(r["project_id"]), r["day"])
+        out.setdefault(key, []).append({"id": int(r["id"]), "text": r["text"]})
     return out
 
 
-def upsert_note(project_id: int, day: str, content: str) -> None:
+def add_note_item(project_id: int, day: str, text: str) -> None:
+    text = (text or "").strip()
+    if not text:
+        return
+
     now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
     with db() as con:
+        nxt = con.execute(
+            """
+            SELECT COALESCE(MAX(sort_index), -1) + 1 AS n
+            FROM note_items
+            WHERE project_id=? AND day=?
+            """,
+            (project_id, day),
+        ).fetchone()["n"]
+
         con.execute(
             """
-            INSERT INTO notes(project_id, day, content, updated_at)
-            VALUES(?,?,?,?)
-            ON CONFLICT(project_id, day) DO UPDATE SET
-                content=excluded.content,
-                updated_at=excluded.updated_at
+            INSERT INTO note_items(project_id, day, text, sort_index, created_at, updated_at)
+            VALUES(?,?,?,?,?,?)
             """,
-            (project_id, day, content, now),
+            (project_id, day, text, int(nxt), now, now),
         )
 
 
-def delete_note(project_id: int, day: str) -> None:
+def edit_note_item(project_id: int, item_id: int, text: str) -> None:
+    text = (text or "").strip()
+    now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
     with db() as con:
-        con.execute("DELETE FROM notes WHERE project_id=? AND day=?", (project_id, day))
-    # also remove the bulk highlight border/fill for this day (like clearing a single note)
+        if text:
+            con.execute(
+                """
+                UPDATE note_items
+                SET text=?, updated_at=?
+                WHERE id=? AND project_id=?
+                """,
+                (text, now, item_id, project_id),
+            )
+        else:
+            # empty text => delete
+            con.execute(
+                "DELETE FROM note_items WHERE id=? AND project_id=?",
+                (item_id, project_id),
+            )
+
+
+def delete_note_item(project_id: int, item_id: int) -> None:
+    with db() as con:
+        con.execute(
+            "DELETE FROM note_items WHERE id=? AND project_id=?",
+            (item_id, project_id),
+        )
+
+
+def delete_note_items_day(project_id: int, day: str) -> None:
+    with db() as con:
+        con.execute(
+            "DELETE FROM note_items WHERE project_id=? AND day=?",
+            (project_id, day),
+        )
+    # also remove highlight for this day
     try:
         remove_highlight_day(project_id, day)
     except Exception:
         pass
+
+
+def add_note_items_append(project_id: int, day: str, content: str) -> None:
+    """
+    Used by Bulk Note tool. Each line becomes a sub-note item.
+    """
+    content = (content or "").rstrip()
+    if not content.strip():
+        return
+
+    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    if not lines:
+        return
+
+    for ln in lines:
+        add_note_item(project_id, day, ln)
 
 
 # ---------- bulk highlights (for "Add Note" tool) ----------
@@ -388,22 +565,6 @@ def remove_highlight_day(project_id: int, day: str) -> None:
                 )
 
 
-def upsert_note_append(project_id: int, day: str, content: str) -> None:
-    content = (content or "").rstrip()
-    if not content.strip():
-        return
-
-    with db() as con:
-        row = con.execute(
-            "SELECT content FROM notes WHERE project_id=? AND day=?", (project_id, day)
-        ).fetchone()
-
-    if row and (row["content"] or "").strip():
-        merged = (row["content"].rstrip() + "\n" + content).rstrip()
-    else:
-        merged = content
-
-    upsert_note(project_id, day, merged)
 
 
 def get_highlight_map(
@@ -780,7 +941,7 @@ def index():
     start_day = dt.date(months[0].year, months[0].month, 1)
     _, end_last = month_first_last(months[-1])
     visible_pids = [int(p["id"]) for p in visible_projects]
-    notes = get_notes_map(visible_pids, start_day, end_last)
+    day_items = get_note_items_map(visible_pids, start_day, end_last)
     highlights = get_highlight_map(visible_pids, start_day, end_last)
 
     # Google events (optional)
@@ -838,7 +999,7 @@ def index():
         years=years,
         start=start,
         end=end,
-        notes=notes,
+        day_items=day_items,
         highlights=highlights,
         gcal_counts=gcal_counts,
         gcal_ready=google_client_config_ok(),
@@ -930,7 +1091,7 @@ def tools_bulk_note_submit():
         if content.strip():
             cur = s
             while cur <= e:
-                upsert_note_append(pid, cur.isoformat(), content)
+                add_note_items_append(pid, cur.isoformat(), content)
                 cur += dt.timedelta(days=1)
 
     flash("Added note.", "ok")
@@ -969,12 +1130,18 @@ def tools_bulk_clear_submit():
         return redirect(url_for("tools_bulk_note"))
 
     for pid in pids:
-        # delete notes in range
+        # delete note items in range
         with db() as con:
+            con.execute(
+                "DELETE FROM note_items WHERE project_id=? AND day>=? AND day<=?",
+                (pid, s.isoformat(), e.isoformat()),
+            )
+            # also clear legacy notes (optional but keeps DB tidy)
             con.execute(
                 "DELETE FROM notes WHERE project_id=? AND day>=? AND day<=?",
                 (pid, s.isoformat(), e.isoformat()),
             )
+
 
         # remove highlight on each day (same behavior as single-day clear)
         cur = s
@@ -1096,10 +1263,16 @@ def note(pid: int, day: str):
         ).fetchone()
         if not proj:
             return redirect(url_for("index"))
-        row = con.execute(
-            "SELECT content FROM notes WHERE project_id=? AND day=?", (pid, day)
-        ).fetchone()
-    content = row["content"] if row else ""
+
+        items = con.execute(
+            """
+            SELECT id, text
+            FROM note_items
+            WHERE project_id=? AND day=?
+            ORDER BY sort_index ASC, id ASC
+            """,
+            (pid, day),
+        ).fetchall()
 
     # Google Calendar events for this day (stored in DB)
     gcal_events = gcal_load_day(session["user_key"], day)
@@ -1108,7 +1281,7 @@ def note(pid: int, day: str):
         "note.html",
         project=proj,
         day=day,
-        content=content,
+        items=[{"id": int(r["id"]), "text": r["text"]} for r in items],
         gcal_events=gcal_events,
         theme=get_theme(),
     )
@@ -1116,21 +1289,51 @@ def note(pid: int, day: str):
 
 @app.post("/note/<int:pid>/<day>")
 def note_save(pid: int, day: str):
-    action = (request.form.get("action") or "save").lower()
-    content = (request.form.get("content") or "").rstrip()
+    action = (request.form.get("action") or "").lower()
 
     if action == "clear":
-        delete_note(pid, day)
+        delete_note_items_day(pid, day)
+        # also clear legacy notes row (optional)
+        with db() as con:
+            con.execute("DELETE FROM notes WHERE project_id=? AND day=?", (pid, day))
+        return redirect(url_for("note", pid=pid, day=day))
+
+    return redirect(url_for("note", pid=pid, day=day))
+
+@app.post("/note/<int:pid>/<day>/add")
+def note_add_item(pid: int, day: str):
+    try:
+        dt.date.fromisoformat(day)
+    except Exception:
         return redirect(url_for("index"))
 
-    # save
-    if content.strip():
-        upsert_note(pid, day, content)
-    else:
-        delete_note(pid, day)
+    text = (request.form.get("text") or "").strip()
+    if text:
+        add_note_item(pid, day, text)
+    return redirect(url_for("note", pid=pid, day=day))
 
-    return redirect(url_for("index"))
 
+@app.post("/note/<int:pid>/<day>/edit/<int:item_id>")
+def note_edit_item(pid: int, day: str, item_id: int):
+    try:
+        dt.date.fromisoformat(day)
+    except Exception:
+        return redirect(url_for("index"))
+
+    text = (request.form.get("text") or "").strip()
+    edit_note_item(pid, item_id, text)
+    return redirect(url_for("note", pid=pid, day=day))
+
+
+@app.post("/note/<int:pid>/<day>/delete/<int:item_id>")
+def note_delete_item(pid: int, day: str, item_id: int):
+    try:
+        dt.date.fromisoformat(day)
+    except Exception:
+        return redirect(url_for("index"))
+
+    delete_note_item(pid, item_id)
+    return redirect(url_for("note", pid=pid, day=day))
 
 # ---------- Google Calendar connect/disconnect ----------
 @app.post("/gcal/toggle")

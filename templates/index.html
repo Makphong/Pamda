@@ -100,12 +100,13 @@
             <div class="day day--empty"></div>
             {% else %}
             {% set key = (p.id, d.isoformat()) %}
-            {% set note = notes.get(key, "") %}
+            {% set items = day_items.get(key, []) %}
             {% set gcal_n = gcal_counts.get(d.isoformat(), 0) %}
+
 
             {% set hl = highlights.get(key) %}
             <a class="day
-          {{ 'has-note' if note|trim else '' }}
+          {{ 'has-note' if items|length > 0 else '' }}
           {{ 'is-today' if d.isoformat()==today_iso else '' }}
           {{ 'hl' if hl else '' }}
           {{ 'hl--fill' if hl and hl.mode=='fill' else '' }}
@@ -125,11 +126,16 @@
               <span class="gcal-dot" title="{{ gcal_n }} event(s)"></span>
               {% endif %}
 
-              {% if note|trim %}
-              <div class="day__note">{{ note|truncate(180, True) }}</div>
-              {% else %}
-              <div class="day__note day__note--empty">&nbsp;</div>
-              {% endif %}
+              <div class="day__items">
+                {% for i in range(3) %}
+                  {% if i < items|length %}
+                    <div class="day__item">{{ items[i].text }}</div>
+                  {% else %}
+                    <div class="day__item day__item--empty">&nbsp;</div>
+                  {% endif %}
+                {% endfor %}
+              </div>
+
             </a>
             {% endif %}
             {% endfor %}
