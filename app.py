@@ -1,4 +1,3 @@
-
 import os
 import json
 import uuid
@@ -8,10 +7,7 @@ import calendar as cal
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from flask import (
-    Flask, render_template, request, redirect, url_for,
-    session, flash
-)
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 
 # Google Calendar (server-side OAuth)
 from google.oauth2.credentials import Credentials
@@ -32,9 +28,7 @@ app.config["SESSION_PERMANENT"] = True
 app.config["PERMANENT_SESSION_LIFETIME"] = dt.timedelta(days=30)
 
 # ---- Google OAuth settings ----
-GOOGLE_SCOPES = [
-    "https://www.googleapis.com/auth/calendar.readonly"
-]
+GOOGLE_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 CLIENT_SECRETS_FILE = os.path.join(APP_DIR, "secrets", "client_secret.json")
 
 
@@ -74,19 +68,18 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS highlights (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL,
-                start_day TEXT NOT NULL,   -- YYYY-MM-DD
-                end_day TEXT NOT NULL,     -- YYYY-MM-DD
-                mode TEXT NOT NULL,        -- border | fill
-                color TEXT NOT NULL,       -- e.g. #ea9999
-                created_at TEXT NOT NULL,
-                FOREIGN KEY(project_id) REFERENCES projects(id)
+            CREATE TABLE IF NOT EXISTS gcal_day_events (
+                user_key TEXT NOT NULL,
+                day TEXT NOT NULL,         -- YYYY-MM-DD
+                events_json TEXT NOT NULL, -- JSON list
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(user_key, day)
             );
+
+
+
             """
         )
-
 
         # --- lightweight migrations (keep existing instance DB working) ---
         try:
@@ -109,7 +102,7 @@ def init_db() -> None:
         if cur.fetchone()["c"] == 0:
             con.executemany(
                 "INSERT INTO projects(name) VALUES(?)",
-                [("Project 1",), ("Project 2",), ("Project 3",), ("Project 4",)]
+                [("Project 1",), ("Project 2",), ("Project 3",), ("Project 4",)],
             )
 
 
@@ -145,7 +138,6 @@ def month_first_last(mref: MonthRef) -> Tuple[dt.date, dt.date]:
     last_day = cal.monthrange(mref.year, mref.month)[1]
     last = dt.date(mref.year, mref.month, last_day)
     return first, last
-
 
 
 def build_month_grid(mref: MonthRef) -> List[List[Optional[dt.date]]]:
@@ -240,8 +232,11 @@ def toggle_project_visible(pid: int) -> None:
 
     set_visible_project_ids(ids)
 
+
 # ---------- notes ----------
-def get_notes_map(project_ids: List[int], start_day: dt.date, end_day: dt.date) -> Dict[Tuple[int, str], str]:
+def get_notes_map(
+    project_ids: List[int], start_day: dt.date, end_day: dt.date
+) -> Dict[Tuple[int, str], str]:
     if not project_ids:
         return {}
     with db() as con:
@@ -271,7 +266,7 @@ def upsert_note(project_id: int, day: str, content: str) -> None:
                 content=excluded.content,
                 updated_at=excluded.updated_at
             """,
-            (project_id, day, content, now)
+            (project_id, day, content, now),
         )
 
 
@@ -283,6 +278,7 @@ def delete_note(project_id: int, day: str) -> None:
         remove_highlight_day(project_id, day)
     except Exception:
         pass
+
 
 # ---------- bulk highlights (for "Add Note" tool) ----------
 def _valid_hex_color(s: str) -> str:
@@ -296,7 +292,9 @@ def _valid_hex_color(s: str) -> str:
     return "#ea9999"
 
 
-def add_highlight(project_id: int, start_day: str, end_day: str, mode: str, color: str) -> None:
+def add_highlight(
+    project_id: int, start_day: str, end_day: str, mode: str, color: str
+) -> None:
     now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
     mode = "fill" if (mode or "").lower() == "fill" else "border"
     color = _valid_hex_color(color)
@@ -306,7 +304,7 @@ def add_highlight(project_id: int, start_day: str, end_day: str, mode: str, colo
             INSERT INTO highlights(project_id, start_day, end_day, mode, color, created_at)
             VALUES(?,?,?,?,?,?)
             """,
-            (project_id, start_day, end_day, mode, color, now)
+            (project_id, start_day, end_day, mode, color, now),
         )
 
 
@@ -352,7 +350,9 @@ def remove_highlight_day(project_id: int, day: str) -> None:
             # shrink from left
             if s == target and target < e:
                 ns = (target + dt.timedelta(days=1)).isoformat()
-                con.execute("UPDATE highlights SET start_day=? WHERE id=?", (ns, r["id"]))
+                con.execute(
+                    "UPDATE highlights SET start_day=? WHERE id=?", (ns, r["id"])
+                )
                 continue
 
             # shrink from right
@@ -367,7 +367,9 @@ def remove_highlight_day(project_id: int, day: str) -> None:
                 right_start = (target + dt.timedelta(days=1)).isoformat()
 
                 # update current row to be the left part
-                con.execute("UPDATE highlights SET end_day=? WHERE id=?", (left_end, r["id"]))
+                con.execute(
+                    "UPDATE highlights SET end_day=? WHERE id=?", (left_end, r["id"])
+                )
 
                 # insert right part as new row
                 con.execute(
@@ -375,7 +377,14 @@ def remove_highlight_day(project_id: int, day: str) -> None:
                     INSERT INTO highlights(project_id, start_day, end_day, mode, color, created_at)
                     VALUES(?,?,?,?,?,?)
                     """,
-                    (project_id, right_start, e.isoformat(), r["mode"], r["color"], now),
+                    (
+                        project_id,
+                        right_start,
+                        e.isoformat(),
+                        r["mode"],
+                        r["color"],
+                        now,
+                    ),
                 )
 
 
@@ -386,8 +395,7 @@ def upsert_note_append(project_id: int, day: str, content: str) -> None:
 
     with db() as con:
         row = con.execute(
-            "SELECT content FROM notes WHERE project_id=? AND day=?",
-            (project_id, day)
+            "SELECT content FROM notes WHERE project_id=? AND day=?", (project_id, day)
         ).fetchone()
 
     if row and (row["content"] or "").strip():
@@ -398,7 +406,9 @@ def upsert_note_append(project_id: int, day: str, content: str) -> None:
     upsert_note(project_id, day, merged)
 
 
-def get_highlight_map(project_ids: List[int], render_start: dt.date, render_end: dt.date) -> Dict[Tuple[int, str], dict]:
+def get_highlight_map(
+    project_ids: List[int], render_start: dt.date, render_end: dt.date
+) -> Dict[Tuple[int, str], dict]:
     if not project_ids:
         return {}
 
@@ -464,7 +474,9 @@ def get_highlight_map(project_ids: List[int], render_start: dt.date, render_end:
 # ---------- Google Calendar persistence ----------
 def token_get(user_key: str) -> Optional[Credentials]:
     with db() as con:
-        row = con.execute("SELECT token_json FROM oauth_tokens WHERE user_key=?", (user_key,)).fetchone()
+        row = con.execute(
+            "SELECT token_json FROM oauth_tokens WHERE user_key=?", (user_key,)
+        ).fetchone()
     if not row:
         return None
     try:
@@ -486,7 +498,7 @@ def token_put(user_key: str, creds: Credentials) -> None:
                 token_json=excluded.token_json,
                 updated_at=excluded.updated_at
             """,
-            (user_key, creds.to_json(), now)
+            (user_key, creds.to_json(), now),
         )
 
 
@@ -507,13 +519,13 @@ def google_client_config_ok() -> bool:
 
 def build_flow(redirect_uri: str) -> Flow:
     return Flow.from_client_secrets_file(
-        CLIENT_SECRETS_FILE,
-        scopes=GOOGLE_SCOPES,
-        redirect_uri=redirect_uri
+        CLIENT_SECRETS_FILE, scopes=GOOGLE_SCOPES, redirect_uri=redirect_uri
     )
 
 
-def gcal_events_by_day(creds: Credentials, start: dt.datetime, end: dt.datetime) -> Dict[str, List[dict]]:
+def gcal_events_by_day(
+    creds: Credentials, start: dt.datetime, end: dt.datetime
+) -> Dict[str, List[dict]]:
     """
     Return { 'YYYY-MM-DD': [event, ...] } for primary calendar.
     """
@@ -522,15 +534,19 @@ def gcal_events_by_day(creds: Credentials, start: dt.datetime, end: dt.datetime)
     events: List[dict] = []
     page_token = None
     while True:
-        resp = service.events().list(
-            calendarId="primary",
-            timeMin=start.isoformat() + "Z",
-            timeMax=end.isoformat() + "Z",
-            singleEvents=True,
-            orderBy="startTime",
-            maxResults=2500,
-            pageToken=page_token
-        ).execute()
+        resp = (
+            service.events()
+            .list(
+                calendarId="primary",
+                timeMin=start.isoformat() + "Z",
+                timeMax=end.isoformat() + "Z",
+                singleEvents=True,
+                orderBy="startTime",
+                maxResults=2500,
+                pageToken=page_token,
+            )
+            .execute()
+        )
         events.extend(resp.get("items", []))
         page_token = resp.get("nextPageToken")
         if not page_token:
@@ -550,6 +566,117 @@ def gcal_events_by_day(creds: Credentials, start: dt.datetime, end: dt.datetime)
     return by_day
 
 
+def _gcal_norm_event(ev: dict) -> dict:
+    s = ev.get("start", {}) or {}
+    e = ev.get("end", {}) or {}
+
+    is_all_day = "date" in s
+    start = s.get("dateTime") or s.get("date") or ""
+    end = e.get("dateTime") or e.get("date") or ""
+
+    return {
+        "id": ev.get("id", ""),
+        "summary": ev.get("summary") or "(no title)",
+        "start": start,
+        "end": end,
+        "is_all_day": bool(is_all_day),
+        "location": ev.get("location") or "",
+        "description": ev.get("description") or "",
+        "htmlLink": ev.get("htmlLink") or "",
+    }
+
+
+def gcal_store_range(
+    user_key: str, by_day_norm: Dict[str, List[dict]], start_day: str, end_day: str
+) -> None:
+    """
+    Upsert days that have events, and delete days in [start_day..end_day] that now have no events.
+    """
+    now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+    with db() as con:
+        # upsert days with events
+        for day, evs in by_day_norm.items():
+            con.execute(
+                """
+                INSERT INTO gcal_day_events(user_key, day, events_json, updated_at)
+                VALUES(?,?,?,?)
+                ON CONFLICT(user_key, day) DO UPDATE SET
+                    events_json=excluded.events_json,
+                    updated_at=excluded.updated_at
+                """,
+                (user_key, day, json.dumps(evs, ensure_ascii=False), now),
+            )
+
+        # delete days in range that are NOT in fetched result (means now empty)
+        days_with_events = sorted([d for d, evs in by_day_norm.items() if evs])
+        if days_with_events:
+            placeholders = ",".join(["?"] * len(days_with_events))
+            con.execute(
+                f"""
+                DELETE FROM gcal_day_events
+                WHERE user_key=?
+                  AND day>=?
+                  AND day<=?
+                  AND day NOT IN ({placeholders})
+                """,
+                [user_key, start_day, end_day] + days_with_events,
+            )
+        else:
+            con.execute(
+                """
+                DELETE FROM gcal_day_events
+                WHERE user_key=?
+                  AND day>=?
+                  AND day<=?
+                """,
+                (user_key, start_day, end_day),
+            )
+
+
+def gcal_load_range(
+    user_key: str, start_day: str, end_day: str
+) -> Dict[str, List[dict]]:
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT day, events_json
+            FROM gcal_day_events
+            WHERE user_key=?
+              AND day>=?
+              AND day<=?
+            """,
+            (user_key, start_day, end_day),
+        ).fetchall()
+
+    out: Dict[str, List[dict]] = {}
+    for r in rows:
+        try:
+            out[r["day"]] = json.loads(r["events_json"] or "[]")
+        except Exception:
+            out[r["day"]] = []
+    return out
+
+
+def gcal_load_day(user_key: str, day: str) -> List[dict]:
+    with db() as con:
+        row = con.execute(
+            "SELECT events_json FROM gcal_day_events WHERE user_key=? AND day=?",
+            (user_key, day),
+        ).fetchone()
+    if not row:
+        return []
+    try:
+        return json.loads(row["events_json"] or "[]")
+    except Exception:
+        return []
+
+
+def gcal_clear_user(user_key: str) -> None:
+    with db() as con:
+        con.execute("DELETE FROM gcal_day_events WHERE user_key=?", (user_key,))
+
+
 # ---------- routes ----------
 @app.before_request
 def _bootstrap():
@@ -564,7 +691,9 @@ def inject_globals():
     all_projects = list_projects()
     visible_ids = set(get_visible_project_ids())
     gcal_ready = google_client_config_ok()
-    gcal_linked = token_get(session.get("user_key", "")) is not None if gcal_ready else False
+    gcal_linked = (
+        token_get(session.get("user_key", "")) is not None if gcal_ready else False
+    )
     return {
         "all_projects": all_projects,
         "visible_ids": visible_ids,
@@ -627,7 +756,11 @@ def index():
         cur_m = MonthRef(today.year, today.month)
         months = [cur_m]
         grid = build_month_grid(cur_m)
-        month_grids = {cur_m.key: [w for w in grid if any((d is not None and d >= week_start) for d in w)]}
+        month_grids = {
+            cur_m.key: [
+                w for w in grid if any((d is not None and d >= week_start) for d in w)
+            ]
+        }
     else:
         months = kept_months
         month_grids = kept_grids
@@ -651,21 +784,46 @@ def index():
     highlights = get_highlight_map(visible_pids, start_day, end_last)
 
     # Google events (optional)
+    # Google events (optional) — store in DB, show only a red dot on calendar
     gcal_linked = False
-    gcal = {}
+    gcal_counts: Dict[str, int] = {}
+
     if google_client_config_ok():
         creds = token_get(session["user_key"])
         if creds:
+            gcal_linked = True
             try:
                 creds = google_creds_valid(creds)
                 token_put(session["user_key"], creds)
-                gcal_linked = True
+
                 start_dt = dt.datetime.combine(start_day, dt.time.min)
-                end_dt = dt.datetime.combine(end_last + dt.timedelta(days=1), dt.time.min)
-                gcal = gcal_events_by_day(creds, start_dt, end_dt)
+                end_dt = dt.datetime.combine(
+                    end_last + dt.timedelta(days=1), dt.time.min
+                )
+
+                raw_by_day = gcal_events_by_day(creds, start_dt, end_dt)
+                norm_by_day = {
+                    day: [_gcal_norm_event(ev) for ev in evs]
+                    for day, evs in raw_by_day.items()
+                }
+
+                # persist into PM Calendar DB table
+                gcal_store_range(
+                    session["user_key"],
+                    norm_by_day,
+                    start_day.isoformat(),
+                    end_last.isoformat(),
+                )
+
+                # only send counts to calendar UI (no details shown on grid)
+                gcal_counts = {day: len(evs) for day, evs in norm_by_day.items() if evs}
+
             except Exception:
-                # Fail soft: don't break the calendar for an auth hiccup
-                gcal_linked = False
+                # Fail soft: keep UI usable, use last stored data (if any)
+                stored = gcal_load_range(
+                    session["user_key"], start_day.isoformat(), end_last.isoformat()
+                )
+                gcal_counts = {day: len(evs) for day, evs in stored.items() if evs}
 
     # Month/year picker range (minimal but practical)
     years = list(range(today.year - 3, today.year + 4))
@@ -682,14 +840,12 @@ def index():
         end=end,
         notes=notes,
         highlights=highlights,
-        gcal_events=gcal,
+        gcal_counts=gcal_counts,
         gcal_ready=google_client_config_ok(),
         gcal_linked=gcal_linked,
         today_iso=today.isoformat(),
-        theme=get_theme()
+        theme=get_theme(),
     )
-
-
 
 
 @app.post("/tools/toggle_project/<int:pid>")
@@ -711,14 +867,18 @@ def tools_range():
     sm = request.form.get("start_month")
     ey = request.form.get("end_year")
     em = request.form.get("end_month")
-    return redirect(url_for("index", start_year=sy, start_month=sm, end_year=ey, end_month=em))
+    return redirect(
+        url_for("index", start_year=sy, start_month=sm, end_year=ey, end_month=em)
+    )
 
 
 @app.get("/tools/bulk_note")
 def tools_bulk_note():
     projects = list_projects()
     today = dt.date.today().isoformat()
-    return render_template("bulk_note.html", projects=projects, today=today, theme=get_theme())
+    return render_template(
+        "bulk_note.html", projects=projects, today=today, theme=get_theme()
+    )
 
 
 @app.post("/tools/bulk_note")
@@ -772,7 +932,6 @@ def tools_bulk_note_submit():
             while cur <= e:
                 upsert_note_append(pid, cur.isoformat(), content)
                 cur += dt.timedelta(days=1)
-
 
     flash("Added note.", "ok")
     return redirect(url_for("index"))
@@ -834,7 +993,12 @@ def tools_bulk_clear_submit():
 def manage():
     projects = list_projects()
     visible_ids = get_visible_project_ids()
-    return render_template("manage.html", projects=projects, visible_ids=set(visible_ids), theme=get_theme())
+    return render_template(
+        "manage.html",
+        projects=projects,
+        visible_ids=set(visible_ids),
+        theme=get_theme(),
+    )
 
 
 @app.post("/manage/add")
@@ -856,7 +1020,9 @@ def manage_rename(pid: int):
         flash("Project name can't be empty.", "error")
         return redirect(url_for("manage"))
     with db() as con:
-        con.execute("UPDATE projects SET name=? WHERE id=? AND is_deleted=0", (name, pid))
+        con.execute(
+            "UPDATE projects SET name=? WHERE id=? AND is_deleted=0", (name, pid)
+        )
     flash("Renamed project.", "ok")
     return redirect(url_for("manage"))
 
@@ -878,6 +1044,7 @@ def manage_visible():
     set_visible_project_ids([int(x) for x in ids])
     flash("Updated visible projects.", "ok")
     return redirect(url_for("manage"))
+
 
 # ---------- project header actions: overview + link ----------
 @app.post("/project/<int:pid>/overview")
@@ -916,7 +1083,6 @@ def project_link(pid: int):
     return redirect(request.referrer or url_for("index"))
 
 
-
 @app.get("/note/<int:pid>/<day>")
 def note(pid: int, day: str):
     # Validate day
@@ -925,12 +1091,27 @@ def note(pid: int, day: str):
     except Exception:
         return redirect(url_for("index"))
     with db() as con:
-        proj = con.execute("SELECT id, name FROM projects WHERE id=? AND is_deleted=0", (pid,)).fetchone()
+        proj = con.execute(
+            "SELECT id, name FROM projects WHERE id=? AND is_deleted=0", (pid,)
+        ).fetchone()
         if not proj:
             return redirect(url_for("index"))
-        row = con.execute("SELECT content FROM notes WHERE project_id=? AND day=?", (pid, day)).fetchone()
+        row = con.execute(
+            "SELECT content FROM notes WHERE project_id=? AND day=?", (pid, day)
+        ).fetchone()
     content = row["content"] if row else ""
-    return render_template("note.html", project=proj, day=day, content=content, theme=get_theme())
+
+    # Google Calendar events for this day (stored in DB)
+    gcal_events = gcal_load_day(session["user_key"], day)
+
+    return render_template(
+        "note.html",
+        project=proj,
+        day=day,
+        content=content,
+        gcal_events=gcal_events,
+        theme=get_theme(),
+    )
 
 
 @app.post("/note/<int:pid>/<day>")
@@ -957,6 +1138,7 @@ def gcal_toggle():
     user_key = session["user_key"]
     if token_get(user_key):
         token_delete(user_key)
+        gcal_clear_user(user_key)
         flash("Google Calendar disconnected.", "ok")
         return redirect(url_for("index"))
 
@@ -964,12 +1146,15 @@ def gcal_toggle():
         flash("Missing Google OAuth client_secret.json. See README.", "error")
         return redirect(url_for("index"))
 
+    # Allow OAuth over HTTP only for local development (localhost/127.0.0.1)
+    if request.host.startswith(("127.0.0.1", "localhost")):
+        os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+
     redirect_uri = url_for("gcal_callback", _external=True)
     flow = build_flow(redirect_uri)
+
     auth_url, state = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent"
+        access_type="offline", include_granted_scopes="true", prompt="consent"
     )
     session["gcal_state"] = state
     return redirect(auth_url)
@@ -982,6 +1167,11 @@ def gcal_callback():
         return redirect(url_for("index"))
 
     state = session.get("gcal_state")
+
+    # Allow OAuth over HTTP only for local development (localhost/127.0.0.1)
+    if request.host.startswith(("127.0.0.1", "localhost")):
+        os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+
     redirect_uri = url_for("gcal_callback", _external=True)
     flow = build_flow(redirect_uri)
     flow.fetch_token(authorization_response=request.url)

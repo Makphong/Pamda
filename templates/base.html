@@ -21,16 +21,6 @@
       {% endfor %}
     </div>
 
-    <div class="topbar__group topbar__group--gcal" aria-label="Google Calendar">
-      <form class="inline" method="post" action="{{ url_for('gcal_toggle') }}">
-        <button class="btn btn--chip {{ 'is-on' if gcal_linked else '' }}" type="submit"
-                {% if not gcal_ready %}disabled title="ต้องเพิ่ม client_secret.json ก่อน"{% endif %}>
-          Google Calendar
-          <span class="badge">{{ 'Linked' if gcal_linked else 'Link' }}</span>
-        </button>
-      </form>
-    </div>
-
     {% if start is defined and years is defined %}
     <div class="topbar__group topbar__group--range" aria-label="Date range">
       <form class="range" method="post" action="{{ url_for('tools_range') }}">
@@ -92,12 +82,7 @@
   </main>
 
   <footer class="footer">
-    <div class="footer__hint">
-      Tip: คลิกวันเพื่อจดโน้ต (แต่ละ Project แยกกัน) — วันไหนมีโน้ตจะมีกรอบแดง
-      {% if gcal_ready %}
-        • Google Calendar จะโชว์เป็นจุดเล็กๆ เพื่อไม่กินพื้นที่โน้ต
-      {% endif %}
-    </div>
+
   </footer>
 </body>
 </html>
