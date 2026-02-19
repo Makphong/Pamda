@@ -564,6 +564,39 @@ def index():
     months = month_range(start, end)
     month_grids = {m.key: build_month_grid(m) for m in months}
 
+    # Hide weeks that are fully in the past (before current week)
+    week_start = today - dt.timedelta(days=today.weekday())  # Monday start
+
+    kept_months = []
+    kept_grids = {}
+
+    for m in months:
+        kept_weeks = []
+        for week in month_grids[m.key]:
+            ds = [d for d in week if d is not None]
+            if not ds:
+                continue
+
+            # if the last day of this week (within this month) is before current week => skip
+            if max(ds) < week_start:
+                continue
+
+            kept_weeks.append(week)
+
+        if kept_weeks:
+            kept_months.append(m)
+            kept_grids[m.key] = kept_weeks
+
+    # Safety: never allow empty view (at least show current month from current week)
+    if not kept_months:
+        cur_m = MonthRef(today.year, today.month)
+        months = [cur_m]
+        grid = build_month_grid(cur_m)
+        month_grids = {cur_m.key: [w for w in grid if any((d is not None and d >= week_start) for d in w)]}
+    else:
+        months = kept_months
+        month_grids = kept_grids
+
     # Visible projects
     all_projects = list_projects()
     visible_ids = get_visible_project_ids()
