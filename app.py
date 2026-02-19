@@ -87,6 +87,23 @@ def init_db() -> None:
             """
         )
 
+
+        # --- lightweight migrations (keep existing instance DB working) ---
+        try:
+            con.execute("ALTER TABLE projects ADD COLUMN overview_note TEXT")
+        except Exception:
+            pass
+
+        try:
+            con.execute("ALTER TABLE projects ADD COLUMN link_name TEXT")
+        except Exception:
+            pass
+
+        try:
+            con.execute("ALTER TABLE projects ADD COLUMN link_url TEXT")
+        except Exception:
+            pass
+
         # Seed default projects if empty
         cur = con.execute("SELECT COUNT(*) AS c FROM projects WHERE is_deleted=0")
         if cur.fetchone()["c"] == 0:
@@ -168,9 +185,16 @@ def toggle_theme() -> None:
     session["theme"] = "dark" if get_theme() == "light" else "light"
 
 
-# ---------- projects ----------
 def list_projects(include_deleted: bool = False) -> List[sqlite3.Row]:
-    q = "SELECT id, name FROM projects"
+    q = """
+        SELECT
+            id,
+            name,
+            COALESCE(overview_note, '') AS overview_note,
+            COALESCE(link_name, '') AS link_name,
+            COALESCE(link_url, '') AS link_url
+        FROM projects
+    """.strip()
     if not include_deleted:
         q += " WHERE is_deleted=0"
     q += " ORDER BY id ASC"
@@ -854,6 +878,43 @@ def manage_visible():
     set_visible_project_ids([int(x) for x in ids])
     flash("Updated visible projects.", "ok")
     return redirect(url_for("manage"))
+
+# ---------- project header actions: overview + link ----------
+@app.post("/project/<int:pid>/overview")
+def project_overview(pid: int):
+    text = (request.form.get("overview") or "").rstrip()
+    with db() as con:
+        con.execute(
+            "UPDATE projects SET overview_note=? WHERE id=? AND is_deleted=0",
+            (text, pid),
+        )
+    flash("Saved.", "ok")
+    return redirect(request.referrer or url_for("index"))
+
+
+@app.post("/project/<int:pid>/link")
+def project_link(pid: int):
+    name = (request.form.get("link_name") or "").strip()
+    url = (request.form.get("link_url") or "").strip()
+
+    # allow clearing link easily
+    if not url:
+        name = ""
+        url = ""
+    else:
+        # soft-normalize URL
+        if not (url.startswith("http://") or url.startswith("https://")):
+            url = "https://" + url
+
+    with db() as con:
+        con.execute(
+            "UPDATE projects SET link_name=?, link_url=? WHERE id=? AND is_deleted=0",
+            (name, url, pid),
+        )
+
+    flash("Saved.", "ok")
+    return redirect(request.referrer or url_for("index"))
+
 
 
 @app.get("/note/<int:pid>/<day>")

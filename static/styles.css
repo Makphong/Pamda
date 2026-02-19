@@ -240,6 +240,50 @@ a{ color:inherit; text-decoration:none; }
   letter-spacing: .2px;
 }
 
+
+.project__header{
+  display:flex;
+  align-items:center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project__head-actions{
+  display:flex;
+  gap: 6px;
+  align-items:center;
+}
+
+.btn--sm{
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 10px;
+}
+
+/* Simple dialog (popup) */
+.dialog{
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 12px;
+  width: min(560px, calc(100vw - 24px));
+}
+
+.dialog::backdrop{
+  background: rgba(0,0,0,.35);
+}
+
+.dialog__title{
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.textarea--small{
+  min-height: 180px;
+}
+
+
 .project__months{
   padding: 8px;
   display:flex;
@@ -298,7 +342,7 @@ a{ color:inherit; text-decoration:none; }
 
 .day:nth-child(7n){ border-right: none; } /* end of week */
 .day--empty{
-  background: rgba(0,0,0,.02);
+  background: rgba(192, 51, 43, .12);
 }
 .theme-dark .day--empty{
   background: rgba(255,255,255,.03);

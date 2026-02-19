@@ -10,9 +10,79 @@
   <div class="projects-grid projects-grid--{{ visible_projects|length }}">
     {% for p in visible_projects %}
       <article class="project">
-        <div class="project__header">
-          <h2 class="project__title">{{ p.name }}</h2>
-        </div>
+<div class="project__header">
+  <h2 class="project__title">{{ p.name }}</h2>
+
+  <div class="project__head-actions">
+    <button type="button"
+            class="btn btn--chip btn--sm"
+            onclick="document.getElementById('dlg-ov-{{ p.id }}').showModal()">
+      ภาพรวม
+    </button>
+
+    <button type="button"
+            class="btn btn--chip btn--sm"
+            onclick="document.getElementById('dlg-link-{{ p.id }}').showModal()">
+      {{ p.link_name if p.link_name|trim else 'ลิงก์' }}
+    </button>
+  </div>
+</div>
+
+<dialog class="dialog" id="dlg-ov-{{ p.id }}">
+  <div class="dialog__title">ภาพรวม: {{ p.name }}</div>
+
+  <form method="post" action="{{ url_for('project_overview', pid=p.id) }}">
+    <textarea class="textarea textarea--small"
+              name="overview"
+              placeholder="จดภาพรวมโปรเจกต์...">{{ p.overview_note }}</textarea>
+
+    <div class="note__actions">
+      <button class="btn btn--primary" type="submit">บันทึก</button>
+      <button class="btn" type="button"
+              onclick="document.getElementById('dlg-ov-{{ p.id }}').close()">
+        ปิด
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="dialog" id="dlg-link-{{ p.id }}">
+  <div class="dialog__title">ลิงก์: {{ p.name }}</div>
+
+  {% if p.link_url|trim %}
+    <div class="row">
+      <a class="btn btn--primary" href="{{ p.link_url }}" target="_blank" rel="noopener">
+        ไปยังลิงก์
+      </a>
+    </div>
+    <div style="height:8px;"></div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('project_link', pid=p.id) }}">
+    <input class="input" name="link_name" placeholder="ชื่อลิงก์"
+           value="{{ p.link_name }}" />
+
+    <div style="height:8px;"></div>
+
+    <input class="input" name="link_url" placeholder="https://..."
+           value="{{ p.link_url }}" />
+
+    <div class="note__actions">
+      <button class="btn btn--primary" type="submit">บันทึก</button>
+
+      <button class="btn" type="submit"
+              onclick="document.getElementsByName('link_url')[0].value=''; document.getElementsByName('link_name')[0].value='';">
+        ล้างลิงก์
+      </button>
+
+      <button class="btn" type="button"
+              onclick="document.getElementById('dlg-link-{{ p.id }}').close()">
+        ปิด
+      </button>
+    </div>
+  </form>
+</dialog>
+
 
         <div class="project__months">
           {% for m in months %}
