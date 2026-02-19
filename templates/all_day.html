@@ -23,19 +23,38 @@
       </div>
     {% endif %}
 
-    {% if items|length == 0 %}
+{% if items|length == 0 %}
       <div class="muted">ยังไม่มีรายการในทุกโปรเจกต์</div>
     {% else %}
-      {% for grp in items|groupby('project_name') %}
-        <div class="note__section-title">{{ grp.grouper }}</div>
-        <ul class="note__gcal-list">
-          {% for it in grp.list %}
-            <li>{{ it.label }}</li>
-          {% endfor %}
-        </ul>
-        <div style="height:8px;"></div>
-      {% endfor %}
+      <div class="day-timeline">
+        <div class="tl-axis" aria-hidden="true">
+          <span>00:00</span>
+          <span>06:00</span>
+          <span>12:00</span>
+          <span>18:00</span>
+          <span>24:00</span>
+        </div>
+
+        {% for it in items %}
+          <div class="tl-row">
+            <div class="tl-barwrap" title="{{ it.time_str if it.time_str else 'ไม่ระบุเวลา' }}">
+              {% if it.has_time %}
+                <div class="tl-bar" style="--x: {{ it.bar_left }}%; --w: {{ it.bar_width }}%;"></div>
+              {% else %}
+                <div class="tl-bar tl-bar--notime" style="--x: 0%; --w: 3%;"></div>
+              {% endif %}
+            </div>
+
+            <div class="tl-meta">
+              <div class="tl-project">{{ it.project_name }}</div>
+              <div class="tl-text">{{ it.text }}</div>
+              <div class="tl-time">{{ it.time_str if it.time_str else 'ไม่ระบุเวลา' }}</div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
     {% endif %}
+
   </div>
 </section>
 {% endblock %}

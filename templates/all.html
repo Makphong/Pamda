@@ -6,7 +6,6 @@
     <article class="project">
       <div class="project__header">
         <h2 class="project__title">All Project</h2>
-        
       </div>
 
       <div class="project__months">
@@ -52,7 +51,8 @@
               <div class="day__items">
                 {% for i in range(5) %}
                   {% if i < items|length %}
-                    <div class="day__item">{{ items[i].label }}</div>
+                    <div class="day__item">{{ items[i].text }}</div>
+
                   {% else %}
                     <div class="day__item day__item--empty">&nbsp;</div>
                   {% endif %}

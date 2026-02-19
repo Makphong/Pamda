@@ -378,6 +378,30 @@ def _clean_time_field(s: Optional[str]) -> Optional[str]:
     return s[:5]
 
 
+def _time_to_minutes(t: Optional[str]) -> Optional[int]:
+    t = (t or "").strip()
+    if not t:
+        return None
+    try:
+        # expect HH:MM
+        tt = dt.time.fromisoformat(t)
+        return tt.hour * 60 + tt.minute
+    except Exception:
+        return None
+
+
+def _note_item_time_str(start_time: Optional[str], end_time: Optional[str]) -> str:
+    st = (start_time or "").strip()
+    et = (end_time or "").strip()
+    if st and et:
+        return f"{st}-{et}"
+    if st:
+        return st
+    if et:
+        return et
+    return ""
+
+
 def get_note_items_map(
     project_ids: List[int], start_day: dt.date, end_day: dt.date
 ) -> Dict[Tuple[int, str], List[dict]]:
@@ -1149,18 +1173,51 @@ def get_all_note_items_day(day: str) -> List[dict]:
             (day,),
         ).fetchall()
 
-    return [
-        {
-            "id": int(r["id"]),
-            "project_id": int(r["project_id"]),
-            "project_name": r["project_name"],
-            "text": r["text"],
-            "start_time": r["start_time"],
-            "end_time": r["end_time"],
-            "label": _note_item_label(r["start_time"], r["end_time"], r["text"]),
-        }
-        for r in rows
-    ]
+    out: List[dict] = []
+    for r in rows:
+        st_min = _time_to_minutes(r["start_time"])
+        et_min = _time_to_minutes(r["end_time"])
+
+        # Normalize for drawing bars
+        # - if only start_time => assume 30 mins block
+        # - if only end_time   => assume 30 mins block ending at end_time
+        if st_min is not None and et_min is None:
+            et_min = min(st_min + 30, 1440)
+        elif st_min is None and et_min is not None:
+            st_min = max(et_min - 30, 0)
+
+        has_time = st_min is not None and et_min is not None
+
+        bar_left = "0"
+        bar_width = "0"
+        if has_time:
+            if et_min < st_min:
+                et_min = st_min
+
+            dur = et_min - st_min
+            # Minimum visual length so very short tasks are still visible (~15 mins)
+            dur = max(dur, 15)
+
+            bar_left = f"{(st_min / 1440) * 100:.4f}"
+            bar_width = f"{(dur / 1440) * 100:.4f}"
+
+        out.append(
+            {
+                "id": int(r["id"]),
+                "project_id": int(r["project_id"]),
+                "project_name": r["project_name"],
+                "text": r["text"],
+                "start_time": r["start_time"],
+                "end_time": r["end_time"],
+                "label": _note_item_label(r["start_time"], r["end_time"], r["text"]),
+                "time_str": _note_item_time_str(r["start_time"], r["end_time"]),
+                "has_time": bool(has_time),
+                "bar_left": bar_left,
+                "bar_width": bar_width,
+            }
+        )
+
+    return out
 
 
 @app.get("/all")
