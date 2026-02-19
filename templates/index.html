@@ -129,7 +129,7 @@
               <div class="day__items">
                 {% for i in range(3) %}
                   {% if i < items|length %}
-                    <div class="day__item">{{ items[i].text }}</div>
+                    <div class="day__item">{{ items[i].label }}</div>
                   {% else %}
                     <div class="day__item day__item--empty">&nbsp;</div>
                   {% endif %}

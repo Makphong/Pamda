@@ -577,6 +577,11 @@ a{ color:inherit; text-decoration:none; }
   width: 100%;
 }
 
+.input--time{
+  width: 120px;
+  font-variant-numeric: tabular-nums;
+}
+
 .note__add {
   align-items: stretch;
 }

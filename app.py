@@ -6,7 +6,7 @@ import datetime as dt
 import calendar as cal
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-
+from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 
 # Google Calendar (server-side OAuth)
@@ -69,11 +69,14 @@ def init_db() -> None:
                 project_id INTEGER NOT NULL,
                 day TEXT NOT NULL,         -- YYYY-MM-DD
                 text TEXT NOT NULL,
+                start_time TEXT,           -- HH:MM (NULL/empty = all-day)
+                end_time TEXT,             -- HH:MM
                 sort_index INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id)
             );
+
             CREATE INDEX IF NOT EXISTS idx_note_items_pid_day
               ON note_items(project_id, day);
 
@@ -124,7 +127,7 @@ def init_db() -> None:
             """
         )
 
-        # --- lightweight migrations (keep existing instance DB working) ---
+# --- lightweight migrations (keep existing instance DB working) ---
         try:
             con.execute("ALTER TABLE projects ADD COLUMN overview_note TEXT")
         except Exception:
@@ -136,11 +139,21 @@ def init_db() -> None:
             pass
 
         try:
+            con.execute("ALTER TABLE note_items ADD COLUMN start_time TEXT")
+        except Exception:
+            pass
+
+        try:
+            con.execute("ALTER TABLE note_items ADD COLUMN end_time TEXT")
+        except Exception:
+            pass
+
+        try:
             con.execute("ALTER TABLE projects ADD COLUMN link_url TEXT")
         except Exception:
             pass
 
-        # --- migrate legacy notes(content) -> note_items(text) (one-time, safe) ---
+        # --- migrate legacy notes
         try:
             now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
@@ -343,6 +356,28 @@ def toggle_project_visible(pid: int) -> None:
 
 
 # ---------- note items (sub-notes) ----------
+def _note_item_label(start_time: Optional[str], end_time: Optional[str], text: str) -> str:
+    st = (start_time or "").strip()
+    et = (end_time or "").strip()
+    if st:
+        if et:
+            return f"{st}-{et} {text}"
+        return f"{st} {text}"
+    return text
+
+
+def _clean_time_field(s: Optional[str]) -> Optional[str]:
+    s = (s or "").strip()
+    if not s:
+        return None
+    # HTML <input type="time"> returns HH:MM
+    try:
+        dt.time.fromisoformat(s)
+    except Exception:
+        return None
+    return s[:5]
+
+
 def get_note_items_map(
     project_ids: List[int], start_day: dt.date, end_day: dt.date
 ) -> Dict[Tuple[int, str], List[dict]]:
@@ -351,12 +386,20 @@ def get_note_items_map(
 
     with db() as con:
         q = """
-            SELECT id, project_id, day, text, sort_index
+            SELECT id, project_id, day, text, start_time, end_time, sort_index
             FROM note_items
             WHERE project_id IN ({})
               AND day >= ?
               AND day <= ?
-            ORDER BY project_id ASC, day ASC, sort_index ASC, id ASC
+            ORDER BY
+              project_id ASC,
+              day ASC,
+              CASE WHEN start_time IS NULL OR TRIM(start_time)='' THEN 1 ELSE 0 END ASC,
+              start_time ASC,
+              CASE WHEN end_time IS NULL OR TRIM(end_time)='' THEN 1 ELSE 0 END ASC,
+              end_time ASC,
+              sort_index ASC,
+              id ASC
         """.format(",".join(["?"] * len(project_ids)))
         args = list(project_ids) + [start_day.isoformat(), end_day.isoformat()]
         rows = con.execute(q, args).fetchall()
@@ -364,14 +407,36 @@ def get_note_items_map(
     out: Dict[Tuple[int, str], List[dict]] = {}
     for r in rows:
         key = (int(r["project_id"]), r["day"])
-        out.setdefault(key, []).append({"id": int(r["id"]), "text": r["text"]})
+        out.setdefault(key, []).append(
+            {
+                "id": int(r["id"]),
+                "text": r["text"],
+                "start_time": r["start_time"],
+                "end_time": r["end_time"],
+                "label": _note_item_label(r["start_time"], r["end_time"], r["text"]),
+            }
+        )
     return out
 
 
-def add_note_item(project_id: int, day: str, text: str) -> None:
+def add_note_item(
+    project_id: int,
+    day: str,
+    text: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+) -> None:
     text = (text or "").strip()
     if not text:
         return
+
+    st = _clean_time_field(start_time)
+    et = _clean_time_field(end_time)
+
+    # If start time is missing => treat as all-day (ignore end)
+    if not st:
+        st = None
+        et = None
 
     now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
@@ -387,26 +452,39 @@ def add_note_item(project_id: int, day: str, text: str) -> None:
 
         con.execute(
             """
-            INSERT INTO note_items(project_id, day, text, sort_index, created_at, updated_at)
-            VALUES(?,?,?,?,?,?)
+            INSERT INTO note_items(project_id, day, text, start_time, end_time, sort_index, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?)
             """,
-            (project_id, day, text, int(nxt), now, now),
+            (project_id, day, text, st, et, int(nxt), now, now),
         )
 
 
-def edit_note_item(project_id: int, item_id: int, text: str) -> None:
+def edit_note_item(
+    project_id: int,
+    item_id: int,
+    text: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+) -> None:
     text = (text or "").strip()
     now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+    st = _clean_time_field(start_time)
+    et = _clean_time_field(end_time)
+
+    if not st:
+        st = None
+        et = None
 
     with db() as con:
         if text:
             con.execute(
                 """
                 UPDATE note_items
-                SET text=?, updated_at=?
+                SET text=?, start_time=?, end_time=?, updated_at=?
                 WHERE id=? AND project_id=?
                 """,
-                (text, now, item_id, project_id),
+                (text, st, et, now, item_id, project_id),
             )
         else:
             # empty text => delete
@@ -1005,10 +1083,278 @@ def index():
     )
 
 
+# ---------- All Projects (read-only combined view) ----------
+def get_all_note_items_by_day_range(
+    start_day: dt.date, end_day: dt.date
+) -> Dict[str, List[dict]]:
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT ni.id, ni.project_id, p.name AS project_name, ni.day,
+                   ni.text, ni.start_time, ni.end_time, ni.sort_index
+            FROM note_items ni
+            JOIN projects p ON p.id = ni.project_id
+            WHERE p.is_deleted=0
+              AND ni.day >= ?
+              AND ni.day <= ?
+            ORDER BY
+              ni.day ASC,
+              CASE WHEN ni.start_time IS NULL OR TRIM(ni.start_time)='' THEN 1 ELSE 0 END ASC,
+              ni.start_time ASC,
+              CASE WHEN ni.end_time IS NULL OR TRIM(ni.end_time)='' THEN 1 ELSE 0 END ASC,
+              ni.end_time ASC,
+              p.name ASC,
+              ni.sort_index ASC,
+              ni.id ASC
+            """,
+            (start_day.isoformat(), end_day.isoformat()),
+        ).fetchall()
+
+    out: Dict[str, List[dict]] = {}
+    for r in rows:
+        day = r["day"]
+        out.setdefault(day, []).append(
+            {
+                "id": int(r["id"]),
+                "project_id": int(r["project_id"]),
+                "project_name": r["project_name"],
+                "text": r["text"],
+                "start_time": r["start_time"],
+                "end_time": r["end_time"],
+                "label": _note_item_label(r["start_time"], r["end_time"], r["text"]),
+            }
+        )
+    return out
+
+
+def get_all_note_items_day(day: str) -> List[dict]:
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT ni.id, ni.project_id, p.name AS project_name,
+                   ni.text, ni.start_time, ni.end_time, ni.sort_index
+            FROM note_items ni
+            JOIN projects p ON p.id = ni.project_id
+            WHERE p.is_deleted=0
+              AND ni.day = ?
+            ORDER BY
+              CASE WHEN ni.start_time IS NULL OR TRIM(ni.start_time)='' THEN 1 ELSE 0 END ASC,
+              ni.start_time ASC,
+              CASE WHEN ni.end_time IS NULL OR TRIM(ni.end_time)='' THEN 1 ELSE 0 END ASC,
+              ni.end_time ASC,
+              p.name ASC,
+              ni.sort_index ASC,
+              ni.id ASC
+            """,
+            (day,),
+        ).fetchall()
+
+    return [
+        {
+            "id": int(r["id"]),
+            "project_id": int(r["project_id"]),
+            "project_name": r["project_name"],
+            "text": r["text"],
+            "start_time": r["start_time"],
+            "end_time": r["end_time"],
+            "label": _note_item_label(r["start_time"], r["end_time"], r["text"]),
+        }
+        for r in rows
+    ]
+
+
+@app.get("/all")
+def all_projects():
+    # Date range controls (same behavior as /)
+    today = dt.date.today()
+    default_start = MonthRef(today.year, today.month)
+    default_end_date = today + dt.timedelta(days=185)
+    default_end = MonthRef(default_end_date.year, default_end_date.month)
+
+    try:
+        sy = int(request.args.get("start_year", default_start.year))
+        sm = int(request.args.get("start_month", default_start.month))
+        ey = int(request.args.get("end_year", default_end.year))
+        em = int(request.args.get("end_month", default_end.month))
+        start = MonthRef(sy, sm)
+        end = MonthRef(ey, em)
+        if (end.year, end.month) < (start.year, start.month):
+            start, end = end, start
+    except Exception:
+        start, end = default_start, default_end
+
+    months = month_range(start, end)
+    month_grids = {m.key: build_month_grid(m) for m in months}
+
+    week_start = today - dt.timedelta(days=today.weekday())  # Monday start
+
+    kept_months = []
+    kept_grids = {}
+
+    for m in months:
+        kept_weeks = []
+        for week in month_grids[m.key]:
+            ds = [d for d in week if d is not None]
+            if not ds:
+                continue
+            if max(ds) < week_start:
+                continue
+            kept_weeks.append(week)
+
+        if kept_weeks:
+            kept_months.append(m)
+            kept_grids[m.key] = kept_weeks
+
+    if not kept_months:
+        cur_m = MonthRef(today.year, today.month)
+        months = [cur_m]
+        grid = build_month_grid(cur_m)
+        month_grids = {
+            cur_m.key: [
+                w for w in grid if any((d is not None and d >= week_start) for d in w)
+            ]
+        }
+    else:
+        months = kept_months
+        month_grids = kept_grids
+
+    start_day = dt.date(months[0].year, months[0].month, 1)
+    _, end_last = month_first_last(months[-1])
+
+    # All note items across all projects, but show max 5 per day on calendar
+    by_day = get_all_note_items_by_day_range(start_day, end_last)
+    day_items = {day: items[:5] for day, items in by_day.items()}
+
+    # Google events counts (same as /)
+    gcal_linked = False
+    gcal_counts: Dict[str, int] = {}
+
+    if google_client_config_ok():
+        creds = token_get(session["user_key"])
+        if creds:
+            gcal_linked = True
+            try:
+                creds = google_creds_valid(creds)
+                token_put(session["user_key"], creds)
+
+                start_dt = dt.datetime.combine(start_day, dt.time.min)
+                end_dt = dt.datetime.combine(end_last + dt.timedelta(days=1), dt.time.min)
+
+                raw_by_day = gcal_events_by_day(creds, start_dt, end_dt)
+                norm_by_day = {
+                    day: [_gcal_norm_event(ev) for ev in evs]
+                    for day, evs in raw_by_day.items()
+                }
+
+                gcal_store_range(
+                    session["user_key"],
+                    norm_by_day,
+                    start_day.isoformat(),
+                    end_last.isoformat(),
+                )
+
+                gcal_counts = {day: len(evs) for day, evs in norm_by_day.items() if evs}
+
+            except Exception:
+                stored = gcal_load_range(
+                    session["user_key"], start_day.isoformat(), end_last.isoformat()
+                )
+                gcal_counts = {day: len(evs) for day, evs in stored.items() if evs}
+
+    years = list(range(today.year - 3, today.year + 4))
+
+    return render_template(
+        "all.html",
+        months=months,
+        month_grids=month_grids,
+        years=years,
+        start=start,
+        end=end,
+        day_items=day_items,
+        gcal_counts=gcal_counts,
+        gcal_ready=google_client_config_ok(),
+        gcal_linked=gcal_linked,
+        today_iso=today.isoformat(),
+        theme=get_theme(),
+    )
+
+
+@app.get("/all/<day>")
+def all_projects_day(day: str):
+    try:
+        dt.date.fromisoformat(day)
+    except Exception:
+        return redirect(url_for("all_projects"))
+
+    items = get_all_note_items_day(day)
+    gcal_events = gcal_load_day(session["user_key"], day)
+
+    return render_template(
+        "all_day.html",
+        day=day,
+        items=items,
+        gcal_events=gcal_events,
+        theme=get_theme(),
+    )
+
+
 @app.post("/tools/toggle_project/<int:pid>")
 def tools_toggle_project(pid: int):
     toggle_project_visible(pid)
-    return redirect(request.referrer or url_for("index"))
+
+    ref = request.referrer or ""
+    try:
+        u = urlparse(ref)
+        # ถ้ากดจากหน้า All Project ให้ไปหน้า index (โฟกัสโปรเจกต์ที่กด)
+        if u.path.startswith("/all"):
+            q = parse_qs(u.query or "")
+            params = {k: (v[0] if v else "") for k, v in q.items()}
+            params = {k: v for k, v in params.items() if v}
+            return redirect(url_for("index", **params))
+    except Exception:
+        pass
+
+    return redirect(ref or url_for("index"))
+
+
+@app.post("/tools/toggle_all")
+def tools_toggle_all():
+    # คงช่วงเดือนเดิมถ้ามีส่งมา
+    params = {}
+    for k in ["start_year", "start_month", "end_year", "end_month"]:
+        v = (request.form.get(k) or "").strip()
+        if v:
+            params[k] = v
+
+    ref = request.referrer or ""
+    try:
+        u = urlparse(ref)
+        # ถ้าอยู่หน้า All แล้วกด All อีกครั้ง -> กลับหน้า index (แสดง 4 โปรเจกต์เดิม)
+        if u.path.startswith("/all"):
+            return redirect(url_for("index", **params))
+    except Exception:
+        pass
+
+    # ถ้าไม่ได้อยู่หน้า All -> ไปหน้า All
+    return redirect(url_for("all_projects", **params))
+
+
+
+@app.post("/tools/show_default")
+def tools_show_default():
+    # กลับไปค่าเริ่มต้น 4 โปรเจกต์แรก
+    ps = list_projects()
+    default_ids = [int(p["id"]) for p in ps[:4]]
+    set_visible_project_ids(default_ids)
+
+    # พยายามคงช่วงวันที่ (ถ้ามีส่งมาจากฟอร์ม)
+    params = {}
+    for k in ["start_year", "start_month", "end_year", "end_month"]:
+        v = (request.form.get(k) or "").strip()
+        if v:
+            params[k] = v
+
+    return redirect(url_for("index", **params))
 
 
 @app.post("/tools/theme")
@@ -1262,13 +1608,20 @@ def note(pid: int, day: str):
 
         items = con.execute(
             """
-            SELECT id, text
+            SELECT id, text, start_time, end_time
             FROM note_items
             WHERE project_id=? AND day=?
-            ORDER BY sort_index ASC, id ASC
+            ORDER BY
+              CASE WHEN start_time IS NULL OR TRIM(start_time)='' THEN 1 ELSE 0 END ASC,
+              start_time ASC,
+              CASE WHEN end_time IS NULL OR TRIM(end_time)='' THEN 1 ELSE 0 END ASC,
+              end_time ASC,
+              sort_index ASC,
+              id ASC
             """,
             (pid, day),
         ).fetchall()
+
 
     # Google Calendar events for this day (stored in DB)
     gcal_events = gcal_load_day(session["user_key"], day)
@@ -1277,7 +1630,7 @@ def note(pid: int, day: str):
         "note.html",
         project=proj,
         day=day,
-        items=[{"id": int(r["id"]), "text": r["text"]} for r in items],
+        items=[{"id": int(r["id"]), "text": r["text"], "start_time": r["start_time"], "end_time": r["end_time"], "label": _note_item_label(r["start_time"], r["end_time"], r["text"])} for r in items],
         gcal_events=gcal_events,
         theme=get_theme(),
     )
@@ -1304,8 +1657,11 @@ def note_add_item(pid: int, day: str):
         return redirect(url_for("index"))
 
     text = (request.form.get("text") or "").strip()
+    start_time = request.form.get("start_time")
+    end_time = request.form.get("end_time")
+
     if text:
-        add_note_item(pid, day, text)
+        add_note_item(pid, day, text, start_time=start_time, end_time=end_time)
     return redirect(url_for("note", pid=pid, day=day))
 
 
@@ -1317,7 +1673,10 @@ def note_edit_item(pid: int, day: str, item_id: int):
         return redirect(url_for("index"))
 
     text = (request.form.get("text") or "").strip()
-    edit_note_item(pid, item_id, text)
+    start_time = request.form.get("start_time")
+    end_time = request.form.get("end_time")
+
+    edit_note_item(pid, item_id, text, start_time=start_time, end_time=end_time)
     return redirect(url_for("note", pid=pid, day=day))
 
 

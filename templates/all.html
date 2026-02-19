@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="calendar">
+  <div class="projects-grid projects-grid--1">
+    <article class="project">
+      <div class="project__header">
+        <h2 class="project__title">All Project</h2>
+        
+      </div>
+
+      <div class="project__months">
+        {% for m in months %}
+        <section class="month">
+          <div class="month__head">
+            <div class="month__label">{{ m.label }}</div>
+          </div>
+
+          <div class="month__dow">
+            <div>Mon</div>
+            <div>Tue</div>
+            <div>Wed</div>
+            <div>Thu</div>
+            <div>Fri</div>
+            <div>Sat</div>
+            <div>Sun</div>
+          </div>
+
+          <div class="month__grid">
+            {% for week in month_grids[m.key] %}
+            {% for d in week %}
+            {% if d is none %}
+            <div class="day day--empty"></div>
+            {% else %}
+            {% set items = day_items.get(d.isoformat(), []) %}
+            {% set gcal_n = gcal_counts.get(d.isoformat(), 0) %}
+
+            <a class="day
+              {{ 'has-note' if items|length > 0 else '' }}
+              {{ 'is-today' if d.isoformat()==today_iso else '' }}"
+              href="{{ url_for('all_projects_day', day=d.isoformat()) }}"
+              title="{{ d.isoformat() }}">
+
+              <div class="day__top">
+                <div class="day__num">{{ d.day }}</div>
+              </div>
+
+              {% if gcal_n %}
+              <span class="gcal-dot" title="{{ gcal_n }} event(s)"></span>
+              {% endif %}
+
+              <div class="day__items">
+                {% for i in range(5) %}
+                  {% if i < items|length %}
+                    <div class="day__item">{{ items[i].label }}</div>
+                  {% else %}
+                    <div class="day__item day__item--empty">&nbsp;</div>
+                  {% endif %}
+                {% endfor %}
+              </div>
+
+            </a>
+            {% endif %}
+            {% endfor %}
+            {% endfor %}
+          </div>
+        </section>
+        {% endfor %}
+      </div>
+    </article>
+  </div>
+</section>
+
+{% endblock %}
