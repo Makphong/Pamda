@@ -868,16 +868,13 @@ def note_save(pid: int, day: str):
 
     if action == "clear":
         delete_note(pid, day)
-        flash("Cleared.", "ok")
         return redirect(url_for("index"))
 
     # save
     if content.strip():
         upsert_note(pid, day, content)
-        flash("Saved.", "ok")
     else:
         delete_note(pid, day)
-        flash("Cleared.", "ok")
 
     return redirect(url_for("index"))
 
