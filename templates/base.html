@@ -8,7 +8,7 @@
 </head>
 <body class="theme-{{ theme }}">
   <header class="topbar">
-    <div class="topbar__title">Tools</div>
+    <!-- <div class="topbar__title">Tools</div> -->
 
     <div class="topbar__group topbar__group--projects" aria-label="Project picker">
       {% for p in all_projects %}
@@ -59,10 +59,10 @@
 
     <div class="topbar__group topbar__group--actions">
       <a class="btn btn--ghost" href="{{ url_for('manage') }}">Manage Project</a>
-      <a class="btn btn--primary" href="{{ url_for('tools_bulk_note') }}">เพิ่มโน้ต</a>
-      <form class="inline" method="post" action="{{ url_for('tools_theme') }}">
+      <a class="btn btn--ghost" href="{{ url_for('tools_bulk_note') }}">เพิ่มโน้ต</a>
+      <!-- <form class="inline" method="post" action="{{ url_for('tools_theme') }}">
         <button class="btn btn--ghost" type="submit">{{ 'Night' if theme=='light' else 'Day' }}</button>
-      </form>
+      </form> -->
     </div>
 
   </header>

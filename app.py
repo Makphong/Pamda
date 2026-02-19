@@ -324,26 +324,22 @@ def set_visible_project_ids(ids: List[int]) -> None:
 def toggle_project_visible(pid: int) -> None:
     ids = get_visible_project_ids()
 
-    # If currently showing 4, first click becomes "focus" (show only one)
-    if len(ids) == 4:
-        set_visible_project_ids([pid])
+    # ค่าเริ่มต้น: แสดง 4 โปรเจกต์แรก (หรือน้อยกว่านั้นถ้ามีน้อยกว่า 4)
+    ps = list_projects()
+    default_ids = [int(p["id"]) for p in ps[:4]]
+
+    # โหมด Focus (กำลังแสดงโปรเจกต์เดี่ยว)
+    if len(ids) == 1:
+        # กดซ้ำโปรเจกต์เดิม -> กลับไปค่าเริ่มต้น 4 โปรเจกต์
+        if int(ids[0]) == int(pid):
+            set_visible_project_ids(default_ids)
+        # กดโปรเจกต์อื่น -> ย้าย focus ไปโปรเจกต์นั้นทันที
+        else:
+            set_visible_project_ids([pid])
         return
 
-    # Otherwise: toggle add/remove
-    if pid in ids:
-        ids = [x for x in ids if x != pid]
-    else:
-        if len(ids) >= 4:
-            ids = ids[1:] + [pid]
-        else:
-            ids.append(pid)
-
-    # If user removed everything, revert to default 4 projects
-    if not ids:
-        ps = list_projects()
-        ids = [int(p["id"]) for p in ps[:4]]
-
-    set_visible_project_ids(ids)
+    # โหมด 4 โปรเจกต์ (หรือกรณีแปลก ๆ ที่ไม่ใช่ 1) -> focus โปรเจกต์ที่กด
+    set_visible_project_ids([pid])
 
 
 # ---------- note items (sub-notes) ----------
