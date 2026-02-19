@@ -1,0 +1,62 @@
+
+{% extends "base.html" %}
+{% block content %}
+<section class="manage">
+  <div class="manage__head">
+    <h1 class="manage__title">Manage Project</h1>
+    <a class="btn btn--ghost" href="{{ url_for('index') }}">Back</a>
+  </div>
+
+  <div class="manage__grid">
+    <div class="card">
+      <div class="card__title">Visible on main screen (max 4)</div>
+      <form method="post" action="{{ url_for('manage_visible') }}" class="stack">
+        {% for p in projects %}
+          <label class="check">
+            <input type="checkbox" name="visible_ids" value="{{ p.id }}" {{ 'checked' if p.id in visible_ids else '' }}>
+            <span>{{ p.name }}</span>
+          </label>
+        {% endfor %}
+        <button class="btn btn--primary" type="submit">Update</button>
+      </form>
+      <div class="card__hint">ถ้าเลือกเกิน 4 ระบบจะใช้ 4 อันแรก</div>
+    </div>
+
+    <div class="card">
+      <div class="card__title">Add project</div>
+      <form method="post" action="{{ url_for('manage_add') }}" class="row">
+        <input class="input" name="name" placeholder="New project name" maxlength="60" />
+        <button class="btn btn--primary" type="submit">Add</button>
+      </form>
+      <div class="card__hint">ชื่อสั้นๆจะช่วยประหยัดพื้นที่</div>
+    </div>
+
+    <div class="card card--full">
+      <div class="card__title">Rename / Delete</div>
+      <div class="table">
+        <div class="table__row table__head">
+          <div>ID</div><div>Name</div><div>Actions</div>
+        </div>
+        {% for p in projects %}
+          <div class="table__row">
+            <div class="muted">{{ p.id }}</div>
+            <div>
+              <form method="post" action="{{ url_for('manage_rename', pid=p.id) }}" class="row">
+                <input class="input" name="name" value="{{ p.name }}" maxlength="60" />
+                <button class="btn btn--ghost" type="submit">Rename</button>
+              </form>
+            </div>
+            <div>
+              <form method="post" action="{{ url_for('manage_delete', pid=p.id) }}" class="inline"
+                   >
+                <button class="btn btn--danger" type="submit">Delete</button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="card__hint">Delete จะซ่อนโปรเจกต์ (ข้อมูลโน้ตจะยังอยู่ใน DB)</div>
+    </div>
+  </div>
+</section>
+{% endblock %}

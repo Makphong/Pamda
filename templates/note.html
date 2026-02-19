@@ -1,0 +1,21 @@
+
+{% extends "base.html" %}
+{% block content %}
+<section class="note">
+  <div class="note__head">
+    <div class="note__meta">
+      <div class="note__project">{{ project.name }}</div>
+      <div class="note__day">{{ day }}</div>
+    </div>
+    <a class="btn btn--ghost" href="{{ url_for('index') }}">Back</a>
+  </div>
+
+  <form method="post" class="note__form">
+    <textarea name="content" class="textarea" placeholder="จดโน้ตสำหรับวันนี้… (รองรับหลายบรรทัด)">{{ content }}</textarea>
+    <div class="note__actions">
+      <button class="btn btn--primary" type="submit" name="action" value="save">Save</button>
+      <button class="btn btn--danger" type="submit" name="action" value="clear">Clear</button>
+    </div>
+  </form>
+</section>
+{% endblock %}
