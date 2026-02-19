@@ -194,16 +194,27 @@ def set_visible_project_ids(ids: List[int]) -> None:
 
 def toggle_project_visible(pid: int) -> None:
     ids = get_visible_project_ids()
+
+    # If currently showing 4, first click becomes "focus" (show only one)
+    if len(ids) == 4:
+        set_visible_project_ids([pid])
+        return
+
+    # Otherwise: toggle add/remove
     if pid in ids:
         ids = [x for x in ids if x != pid]
     else:
         if len(ids) >= 4:
-            # Replace oldest selection (leftmost) to keep it snappy
             ids = ids[1:] + [pid]
         else:
             ids.append(pid)
-    set_visible_project_ids(ids)
 
+    # If user removed everything, revert to default 4 projects
+    if not ids:
+        ps = list_projects()
+        ids = [int(p["id"]) for p in ps[:4]]
+
+    set_visible_project_ids(ids)
 
 # ---------- notes ----------
 def get_notes_map(project_ids: List[int], start_day: dt.date, end_day: dt.date) -> Dict[Tuple[int, str], str]:
