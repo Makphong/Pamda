@@ -275,12 +275,14 @@ a{ color:inherit; text-decoration:none; }
 .day{
   display:flex;
   flex-direction: column;
-  min-height: 112px; /* priority: room for notes */
+  height: 112px; /* fixed: stop expanding when note is long */
+  overflow: hidden; /* hide anything beyond the box */
   padding: 6px 6px 6px;
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
+
 .day:nth-child(7n){ border-right: none; } /* end of week */
 .day--empty{
   background: rgba(0,0,0,.02);
@@ -333,7 +335,15 @@ a{ color:inherit; text-decoration:none; }
   line-height: 1.25;
   white-space: pre-wrap;
   overflow: hidden;
+
+  /* force wrapping even for long words/URLs (no spaces) */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+
+  /* let note area take remaining height inside the fixed day box */
+  flex: 1;
 }
+
 .day__note--empty{
   color: transparent; /* keep height */
 }
