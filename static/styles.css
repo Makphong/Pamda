@@ -13,6 +13,7 @@
 
   --primary: #3b82f6;   /* used sparingly */
   --danger: #c0332b;    /* note border + destructive actions */
+  --today: #2563eb;     /* today highlight */
   --shadow: 0 1px 0 rgba(0,0,0,.04);
 }
 
@@ -29,6 +30,7 @@
 
   --primary: #7aa2ff;
   --danger: #ff6b6b;
+  --today: #7aa2ff;     /* today highlight (dark) */
   --shadow: 0 1px 0 rgba(255,255,255,.03);
 }
 
@@ -312,6 +314,26 @@ a{ color:inherit; text-decoration:none; }
 .day.has-note{
   box-shadow: inset 0 0 0 2px var(--danger);
 }
+
+.day{
+  position: relative;
+}
+
+/* today = same style as has-note, just different color */
+.day.is-today{
+  box-shadow: inset 0 0 0 2px var(--today);
+}
+
+/* if today is also has-note, keep today color (blue wins) */
+.day.is-today.has-note{
+  box-shadow: inset 0 0 0 2px var(--today);
+}
+
+
+.theme-dark .day.is-today::before{
+  box-shadow: inset 0 0 0 2px var(--today), 0 6px 14px rgba(0,0,0,.38);
+}
+
 
 /* ---- bulk highlight ---- */
 /* ---- bulk highlight ---- */

@@ -617,8 +617,11 @@ def index():
         gcal_events=gcal,
         gcal_ready=google_client_config_ok(),
         gcal_linked=gcal_linked,
+        today_iso=today.isoformat(),
         theme=get_theme()
     )
+
+
 
 
 @app.post("/tools/toggle_project/<int:pid>")
