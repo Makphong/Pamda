@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="manage">
+  <div class="manage__head">
+    <h1 class="manage__title">เพิ่มโน้ต</h1>
+    <a class="btn btn--ghost" href="{{ url_for('index') }}">Back</a>
+  </div>
+
+  <div class="manage__grid">
+    <div class="card card--full">
+      <div class="card__title">รายละเอียดโน้ต</div>
+
+      <form method="post" action="{{ url_for('tools_bulk_note_submit') }}" class="stack">
+        <label class="muted">โน้ต</label>
+        <textarea class="input" name="content" rows="5" placeholder="พิมพ์โน้ตที่ต้องการเพิ่ม..."></textarea>
+
+        <div class="row">
+          <div class="stack" style="min-width: 220px;">
+            <label class="muted">วันเริ่ม (Start day)</label>
+            <input class="input" type="date" name="start_day" value="{{ today }}" required>
+          </div>
+
+          <div class="stack" style="min-width: 220px;">
+            <label class="muted">วันสิ้นสุด (End day) — เว้นว่าง = วันเดียว</label>
+            <input class="input" type="date" name="end_day" placeholder="optional">
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="stack" style="min-width: 260px;">
+            <label class="muted">เพิ่มลง Project</label>
+            <select class="select" name="target_project">
+              <option value="all">ทั้งหมด (All projects)</option>
+              {% for p in projects %}
+                <option value="{{ p.id }}">{{ p.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="stack" style="min-width: 260px;">
+            <label class="muted">รูปแบบการแสดง</label>
+            <div class="row">
+              <label class="check">
+                <input type="radio" name="mode" value="border" checked>
+                <span>กรอบ (Border)</span>
+              </label>
+              <label class="check">
+                <input type="radio" name="mode" value="fill">
+                <span>เทสี (Fill)</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="stack" style="min-width: 180px;">
+            <label class="muted">สี (มาตรฐาน #ea9999)</label>
+            <input class="input" type="color" name="color" value="#ea9999">
+          </div>
+        </div>
+
+        <div class="row">
+          <button class="btn btn--primary" type="submit">Add</button>
+          <a class="btn btn--ghost" href="{{ url_for('index') }}">Cancel</a>
+        </div>
+
+        <div class="card__hint">
+          • End day ว่าง = ใส่โน้ตวันเดียว<br>
+          • เลือก “กรอบ” แล้วใส่ช่วงวัน ระบบจะวาดเป็นกรอบต่อเนื่องเหมือนเป็นกล่องเดียว
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+{% endblock %}

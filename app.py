@@ -73,6 +73,17 @@ def init_db() -> None:
                 token_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS highlights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                start_day TEXT NOT NULL,   -- YYYY-MM-DD
+                end_day TEXT NOT NULL,     -- YYYY-MM-DD
+                mode TEXT NOT NULL,        -- border | fill
+                color TEXT NOT NULL,       -- e.g. #ea9999
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            );
             """
         )
 
@@ -232,6 +243,112 @@ def upsert_note(project_id: int, day: str, content: str) -> None:
 def delete_note(project_id: int, day: str) -> None:
     with db() as con:
         con.execute("DELETE FROM notes WHERE project_id=? AND day=?", (project_id, day))
+# ---------- bulk highlights (for "Add Note" tool) ----------
+def _valid_hex_color(s: str) -> str:
+    s = (s or "").strip()
+    if len(s) == 7 and s.startswith("#"):
+        try:
+            int(s[1:], 16)
+            return s.lower()
+        except Exception:
+            pass
+    return "#ea9999"
+
+
+def add_highlight(project_id: int, start_day: str, end_day: str, mode: str, color: str) -> None:
+    now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    mode = "fill" if (mode or "").lower() == "fill" else "border"
+    color = _valid_hex_color(color)
+    with db() as con:
+        con.execute(
+            """
+            INSERT INTO highlights(project_id, start_day, end_day, mode, color, created_at)
+            VALUES(?,?,?,?,?,?)
+            """,
+            (project_id, start_day, end_day, mode, color, now)
+        )
+
+
+def upsert_note_append(project_id: int, day: str, content: str) -> None:
+    content = (content or "").rstrip()
+    if not content.strip():
+        return
+
+    with db() as con:
+        row = con.execute(
+            "SELECT content FROM notes WHERE project_id=? AND day=?",
+            (project_id, day)
+        ).fetchone()
+
+    if row and (row["content"] or "").strip():
+        merged = (row["content"].rstrip() + "\n" + content).rstrip()
+    else:
+        merged = content
+
+    upsert_note(project_id, day, merged)
+
+
+def get_highlight_map(project_ids: List[int], render_start: dt.date, render_end: dt.date) -> Dict[Tuple[int, str], dict]:
+    if not project_ids:
+        return {}
+
+    with db() as con:
+        q = """
+            SELECT id, project_id, start_day, end_day, mode, color
+            FROM highlights
+            WHERE project_id IN ({})
+              AND start_day <= ?
+              AND end_day >= ?
+            ORDER BY id DESC
+        """.format(",".join(["?"] * len(project_ids)))
+        args = list(project_ids) + [render_end.isoformat(), render_start.isoformat()]
+        rows = con.execute(q, args).fetchall()
+
+    out: Dict[Tuple[int, str], dict] = {}
+
+    for r in rows:
+        pid = int(r["project_id"])
+        try:
+            s = dt.date.fromisoformat(r["start_day"])
+            e = dt.date.fromisoformat(r["end_day"])
+        except Exception:
+            continue
+
+        mode = (r["mode"] or "border").lower()
+        mode = "fill" if mode == "fill" else "border"
+        color = _valid_hex_color(r["color"])
+
+        cur = max(s, render_start)
+        last = min(e, render_end)
+
+        while cur <= last:
+            day_iso = cur.isoformat()
+            key = (pid, day_iso)
+
+            # keep newest highlight (rows ordered by id DESC)
+            if key not in out:
+                prev = cur - dt.timedelta(days=1)
+                nxt = cur + dt.timedelta(days=1)
+                up = cur - dt.timedelta(days=7)
+                down = cur + dt.timedelta(days=7)
+
+                in_prev = (s <= prev <= e) and (render_start <= prev <= render_end)
+                in_nxt = (s <= nxt <= e) and (render_start <= nxt <= render_end)
+                in_up = (s <= up <= e) and (render_start <= up <= render_end)
+                in_down = (s <= down <= e) and (render_start <= down <= render_end)
+
+                out[key] = {
+                    "mode": mode,
+                    "color": color,
+                    "l": not in_prev,
+                    "r": not in_nxt,
+                    "t": not in_up,
+                    "b": not in_down,
+                }
+
+            cur += dt.timedelta(days=1)
+
+    return out
 
 
 # ---------- Google Calendar persistence ----------
@@ -386,7 +503,9 @@ def index():
     # Compute notes + (optional) Google events
     start_day = dt.date(months[0].year, months[0].month, 1)
     _, end_last = month_first_last(months[-1])
-    notes = get_notes_map([int(p["id"]) for p in visible_projects], start_day, end_last)
+    visible_pids = [int(p["id"]) for p in visible_projects]
+    notes = get_notes_map(visible_pids, start_day, end_last)
+    highlights = get_highlight_map(visible_pids, start_day, end_last)
 
     # Google events (optional)
     gcal_linked = False
@@ -419,6 +538,7 @@ def index():
         start=start,
         end=end,
         notes=notes,
+        highlights=highlights,
         gcal_events=gcal,
         gcal_ready=google_client_config_ok(),
         gcal_linked=gcal_linked,
@@ -446,6 +566,64 @@ def tools_range():
     ey = request.form.get("end_year")
     em = request.form.get("end_month")
     return redirect(url_for("index", start_year=sy, start_month=sm, end_year=ey, end_month=em))
+
+
+@app.get("/tools/bulk_note")
+def tools_bulk_note():
+    projects = list_projects()
+    today = dt.date.today().isoformat()
+    return render_template("bulk_note.html", projects=projects, today=today, theme=get_theme())
+
+
+@app.post("/tools/bulk_note")
+def tools_bulk_note_submit():
+    content = (request.form.get("content") or "").rstrip()
+    if not content.strip():
+        flash("Note can't be empty.", "error")
+        return redirect(url_for("tools_bulk_note"))
+
+    start_str = (request.form.get("start_day") or "").strip()
+    end_str = (request.form.get("end_day") or "").strip() or start_str
+
+    try:
+        s = dt.date.fromisoformat(start_str)
+        e = dt.date.fromisoformat(end_str)
+    except Exception:
+        flash("Invalid date.", "error")
+        return redirect(url_for("tools_bulk_note"))
+
+    if e < s:
+        s, e = e, s
+
+    mode = (request.form.get("mode") or "border").lower()
+    color = request.form.get("color") or "#ea9999"
+
+    target = (request.form.get("target_project") or "all").strip().lower()
+    ps = list_projects()
+
+    if target == "all":
+        pids = [int(p["id"]) for p in ps]
+    else:
+        try:
+            pid = int(target)
+            pids = [pid]
+        except Exception:
+            pids = []
+
+    if not pids:
+        flash("Select a project.", "error")
+        return redirect(url_for("tools_bulk_note"))
+
+    for pid in pids:
+        add_highlight(pid, s.isoformat(), e.isoformat(), mode, color)
+
+        cur = s
+        while cur <= e:
+            upsert_note_append(pid, cur.isoformat(), content)
+            cur += dt.timedelta(days=1)
+
+    flash("Added note.", "ok")
+    return redirect(url_for("index"))
 
 
 @app.get("/manage")

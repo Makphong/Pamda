@@ -273,6 +273,7 @@ a{ color:inherit; text-decoration:none; }
 }
 
 .day{
+  position: relative; /* for highlight border ::after */
   display:flex;
   flex-direction: column;
   height: 112px; /* fixed: stop expanding when note is long */
@@ -301,6 +302,32 @@ a{ color:inherit; text-decoration:none; }
 .day.has-note{
   box-shadow: inset 0 0 0 2px var(--danger);
 }
+
+/* ---- bulk highlight ---- */
+.day.hl--fill{
+  box-shadow: none;                 /* override normal has-note border */
+  background: var(--hl, #ea9999);
+}
+.day.hl--fill:hover{
+  background: var(--hl, #ea9999);   /* keep fill on hover */
+}
+
+.day.hl--border{
+  box-shadow: none;                 /* we draw border via ::after */
+}
+.day.hl--border::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+
+/* sides for "single box" look across a range */
+.day.hl-b-l::after{ border-left: 2px solid var(--hl, #ea9999); }
+.day.hl-b-r::after{ border-right: 2px solid var(--hl, #ea9999); }
+.day.hl-b-t::after{ border-top: 2px solid var(--hl, #ea9999); }
+.day.hl-b-b::after{ border-bottom: 2px solid var(--hl, #ea9999); }
+
 
 .day__top{
   display:flex;

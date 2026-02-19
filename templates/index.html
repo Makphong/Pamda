@@ -31,12 +31,23 @@
                     {% if d is none %}
                       <div class="day day--empty"></div>
                     {% else %}
-                      {% set key = (p.id, d.isoformat()) %}
+                       {% set key = (p.id, d.isoformat()) %}
                       {% set note = notes.get(key, "") %}
                       {% set evs = gcal_events.get(d.isoformat(), []) %}
-                      <a class="day {{ 'has-note' if note|trim else '' }}"
+                      {% set hl = highlights.get(key) %}
+                      <a class="day
+                                {{ 'has-note' if note|trim else '' }}
+                                {{ 'hl' if hl else '' }}
+                                {{ 'hl--fill' if hl and hl.mode=='fill' else '' }}
+                                {{ 'hl--border' if hl and hl.mode=='border' else '' }}
+                                {{ 'hl-b-l' if hl and hl.l else '' }}
+                                {{ 'hl-b-r' if hl and hl.r else '' }}
+                                {{ 'hl-b-t' if hl and hl.t else '' }}
+                                {{ 'hl-b-b' if hl and hl.b else '' }}"
+                         {% if hl %}style="--hl: {{ hl.color }};"{% endif %}
                          href="{{ url_for('note', pid=p.id, day=d.isoformat()) }}"
                          title="{{ d.isoformat() }}">
+
                         <div class="day__top">
                           <div class="day__num">{{ d.day }}</div>
                           {% if evs %}
