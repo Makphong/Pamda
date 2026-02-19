@@ -16,11 +16,7 @@
 ### Windows / macOS / Linux
 ```bash
 python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# macOS/Linux:
-source .venv/bin/activate
-
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
@@ -29,52 +25,9 @@ pip install -r requirements.txt
 ## 2) รันเว็บ
 
 ```bash
-# ตั้ง secret key (แนะนำ)
-# Windows (PowerShell):
-setx FLASK_SECRET_KEY "change-me-please"
-# macOS/Linux:
-export FLASK_SECRET_KEY="change-me-please"
-
 python app.py
 ```
 
 เปิดเว็บ: `http://127.0.0.1:5000/`
 
 ---
-
-## 3) เชื่อม Google Calendar (ถ้าต้องการ)
-
-### 3.1 สร้าง OAuth Client
-1. ไปที่ Google Cloud Console
-2. สร้าง/เลือก Project
-3. Enable API: **Google Calendar API**
-4. สร้าง Credentials → **OAuth client ID**
-   - Application type: **Web application**
-   - Authorized redirect URIs ใส่:
-     - `http://127.0.0.1:5000/gcal/oauth2callback`
-
-### 3.2 วางไฟล์ client secret
-ดาวน์โหลดไฟล์ JSON จาก Google แล้ววางที่:
-```
-secrets/client_secret.json
-```
-
-รีสตาร์ทแอป แล้วกดปุ่ม **Google Calendar → Link** ที่แถบ Tools
-
-> การล็อกอินจะ “ค้าง” ได้ เพราะ token ถูกเก็บฝั่งเซิร์ฟเวอร์ใน SQLite (instance/app.db) และ session cookie ถูกตั้งแบบ persistent
-
----
-
-## โครงสร้างโปรเจกต์
-- `app.py` : Flask app + SQLite + Google Calendar integration
-- `templates/` : HTML templates
-- `static/styles.css` : CSS ธีม minimal
-- `instance/app.db` : ฐานข้อมูล (สร้างอัตโนมัติ)
-- `secrets/client_secret.json` : (คุณต้องใส่เอง) Google OAuth client secret
-
----
-
-## หมายเหตุ
-- ลบโปรเจกต์: จะซ่อนโปรเจกต์จาก UI (โน้ตเดิมยังอยู่ใน DB แต่ไม่แสดง)
-- ถ้าจะย้ายเครื่อง/backup แค่ copy `instance/app.db`
-
