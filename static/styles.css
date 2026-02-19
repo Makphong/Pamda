@@ -323,10 +323,10 @@ a{ color:inherit; text-decoration:none; }
 }
 
 /* sides for "single box" look across a range */
-.day.hl-b-l::after{ border-left: 2px solid var(--hl, #ea9999); }
-.day.hl-b-r::after{ border-right: 2px solid var(--hl, #ea9999); }
-.day.hl-b-t::after{ border-top: 2px solid var(--hl, #ea9999); }
-.day.hl-b-b::after{ border-bottom: 2px solid var(--hl, #ea9999); }
+.day.hl-b-l::after{ border-left: 2px solid var(--danger); }
+.day.hl-b-r::after{ border-right: 2px solid var(--danger); }
+.day.hl-b-t::after{ border-top: 2px solid var(--danger); }
+.day.hl-b-b::after{ border-bottom: 2px solid var(--danger); }
 
 
 .day__top{

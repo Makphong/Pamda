@@ -243,6 +243,12 @@ def upsert_note(project_id: int, day: str, content: str) -> None:
 def delete_note(project_id: int, day: str) -> None:
     with db() as con:
         con.execute("DELETE FROM notes WHERE project_id=? AND day=?", (project_id, day))
+    # also remove the bulk highlight border/fill for this day (like clearing a single note)
+    try:
+        remove_highlight_day(project_id, day)
+    except Exception:
+        pass
+
 # ---------- bulk highlights (for "Add Note" tool) ----------
 def _valid_hex_color(s: str) -> str:
     s = (s or "").strip()
@@ -267,6 +273,75 @@ def add_highlight(project_id: int, start_day: str, end_day: str, mode: str, colo
             """,
             (project_id, start_day, end_day, mode, color, now)
         )
+
+
+def remove_highlight_day(project_id: int, day: str) -> None:
+    """
+    Remove highlight only for the given day.
+    If a highlight is a range, split/shrink the range so other days remain highlighted.
+    """
+    try:
+        target = dt.date.fromisoformat(day)
+    except Exception:
+        return
+
+    with db() as con:
+        rows = con.execute(
+            """
+            SELECT id, start_day, end_day, mode, color
+            FROM highlights
+            WHERE project_id=?
+              AND start_day <= ?
+              AND end_day >= ?
+            """,
+            (project_id, day, day),
+        ).fetchall()
+
+        if not rows:
+            return
+
+        now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+        for r in rows:
+            try:
+                s = dt.date.fromisoformat(r["start_day"])
+                e = dt.date.fromisoformat(r["end_day"])
+            except Exception:
+                continue
+
+            # exact single-day highlight
+            if s == target and e == target:
+                con.execute("DELETE FROM highlights WHERE id=?", (r["id"],))
+                continue
+
+            # shrink from left
+            if s == target and target < e:
+                ns = (target + dt.timedelta(days=1)).isoformat()
+                con.execute("UPDATE highlights SET start_day=? WHERE id=?", (ns, r["id"]))
+                continue
+
+            # shrink from right
+            if e == target and s < target:
+                ne = (target - dt.timedelta(days=1)).isoformat()
+                con.execute("UPDATE highlights SET end_day=? WHERE id=?", (ne, r["id"]))
+                continue
+
+            # split into two ranges: [s..target-1] and [target+1..e]
+            if s < target < e:
+                left_end = (target - dt.timedelta(days=1)).isoformat()
+                right_start = (target + dt.timedelta(days=1)).isoformat()
+
+                # update current row to be the left part
+                con.execute("UPDATE highlights SET end_day=? WHERE id=?", (left_end, r["id"]))
+
+                # insert right part as new row
+                con.execute(
+                    """
+                    INSERT INTO highlights(project_id, start_day, end_day, mode, color, created_at)
+                    VALUES(?,?,?,?,?,?)
+                    """,
+                    (project_id, right_start, e.isoformat(), r["mode"], r["color"], now),
+                )
 
 
 def upsert_note_append(project_id: int, day: str, content: str) -> None:
