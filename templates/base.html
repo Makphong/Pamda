@@ -15,12 +15,14 @@
     <div class="topbar__group topbar__group--projects" aria-label="Project picker">
       {% set is_all = request.endpoint in ['all_projects','all_projects_day'] %}
 
-      {% for p in all_projects %}
+      {% set tool_list = tool_projects if tool_projects is defined else all_projects %}
+      {% for p in tool_list %}
       <form class="inline" method="post" action="{{ url_for('tools_toggle_project', pid=p.id) }}">
-          <button class="btn btn--chip {{ 'is-on' if ((not is_all) and (p.id in visible_ids)) else '' }}" type="submit"
-                  title="Toggle {{ p.name }}">
-            {{ p.name }}
-          </button>      </form>
+        <button class="btn btn--chip {{ 'is-on' if ((not is_all) and (p.id in visible_ids)) else '' }}" type="submit"
+          title="Toggle {{ p.name }}">
+          {{ p.name }}
+        </button>
+      </form>
       {% endfor %}
     </div>
 

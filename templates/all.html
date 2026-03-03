@@ -33,12 +33,14 @@
             {% else %}
             {% set items = day_items.get(d.isoformat(), []) %}
             {% set gcal_n = gcal_counts.get(d.isoformat(), 0) %}
+            {% set fill = all_fill.get(d.isoformat()) %}
 
             <a class="day
               {{ 'has-note' if items|length > 0 else '' }}
-              {{ 'is-today' if d.isoformat()==today_iso else '' }}"
-              href="{{ url_for('all_projects_day', day=d.isoformat()) }}"
-              title="{{ d.isoformat() }}">
+              {{ 'is-today' if d.isoformat()==today_iso else '' }}
+              {{ 'hl' if fill else '' }}
+              {{ 'hl--fill' if fill else '' }}" {% if fill %}style="--hl: {{ fill }};" {% endif %}
+              href="{{ url_for('all_projects_day', day=d.isoformat()) }}" title="{{ d.isoformat() }}">
 
               <div class="day__top">
                 <div class="day__num">{{ d.day }}</div>
@@ -50,25 +52,24 @@
 
               <div class="day__items">
                 {% for i in range(5) %}
-                  {% if i < items|length %}
-                    <div class="day__item">{{ items[i].text }}</div>
+                {% if i < items|length %} <div class="day__item">{{ items[i].text }}</div>
 
-                  {% else %}
-                    <div class="day__item day__item--empty">&nbsp;</div>
-                  {% endif %}
-                {% endfor %}
-              </div>
-
-            </a>
-            {% endif %}
-            {% endfor %}
-            {% endfor %}
+              {% else %}
+              <div class="day__item day__item--empty">&nbsp;</div>
+              {% endif %}
+              {% endfor %}
           </div>
-        </section>
-        {% endfor %}
+
+          </a>
+          {% endif %}
+          {% endfor %}
+          {% endfor %}
       </div>
-    </article>
-  </div>
+</section>
+{% endfor %}
+</div>
+</article>
+</div>
 </section>
 
 {% endblock %}

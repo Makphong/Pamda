@@ -363,16 +363,17 @@ a{ color:inherit; text-decoration:none; }
   position: relative;
 }
 
-/* today = same style as has-note, just different color */
 .day.is-today{
-  box-shadow: inset 0 0 0 2px var(--today);
+  outline: 2px solid var(--today);
+  outline-offset: -2px;
+  box-shadow: none; /* avoid conflicts with .day.hl{box-shadow:none} */
 }
 
-/* if today is also has-note, keep today color (blue wins) */
+/* keep same behavior even when it also has-note */
 .day.is-today.has-note{
-  box-shadow: inset 0 0 0 2px var(--today);
+  outline: 2px solid var(--today);
+  outline-offset: -2px;
 }
-
 
 .theme-dark .day.is-today::before{
   box-shadow: inset 0 0 0 2px var(--today), 0 6px 14px rgba(0,0,0,.38);

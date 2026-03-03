@@ -127,7 +127,7 @@ def init_db() -> None:
             """
         )
 
-# --- lightweight migrations (keep existing instance DB working) ---
+        # --- lightweight migrations (keep existing instance DB working) ---
         try:
             con.execute("ALTER TABLE projects ADD COLUMN overview_note TEXT")
         except Exception:
@@ -173,7 +173,9 @@ def init_db() -> None:
                 if exists:
                     continue
 
-                lines = [ln.strip() for ln in (r["content"] or "").splitlines() if ln.strip()]
+                lines = [
+                    ln.strip() for ln in (r["content"] or "").splitlines() if ln.strip()
+                ]
                 if not lines:
                     continue
 
@@ -187,7 +189,6 @@ def init_db() -> None:
                     )
         except Exception:
             pass
-
 
         # Seed default projects if empty
         cur = con.execute("SELECT COUNT(*) AS c FROM projects WHERE is_deleted=0")
@@ -286,7 +287,8 @@ def list_projects(include_deleted: bool = False) -> List[sqlite3.Row]:
         return list(con.execute(q))
 
 
-def get_visible_project_ids() -> List[int]:
+def get_main_visible_project_ids() -> List[int]:
+    """Projects chosen in Manage screen (max 4). Persisted via DB/user_key."""
     # 1) try DB (persisted by user_key)
     user_key = session.get("user_key")
     if user_key:
@@ -314,10 +316,27 @@ def get_visible_project_ids() -> List[int]:
     return ids
 
 
+def get_visible_project_ids() -> List[int]:
+    """Current view projects.
+    - If user is in Focus mode => single project (stored in session)
+    - Otherwise => main visible selection (Manage screen, max 4)
+    """
+    focus_pid = session.get("focus_pid")
+    if focus_pid:
+        try:
+            return [int(focus_pid)]
+        except Exception:
+            session.pop("focus_pid", None)
+
+    return get_main_visible_project_ids()
+
+
 def set_visible_project_ids(ids: List[int]) -> None:
+    """Set main visible selection (Manage screen). Clears Focus mode."""
     # limit max 4
     ids = [int(x) for x in ids][:4]
     session["visible_projects"] = ids
+    session.pop("focus_pid", None)
 
     user_key = session.get("user_key")
     if not user_key:
@@ -335,28 +354,24 @@ def set_visible_project_ids(ids: List[int]) -> None:
 
 
 def toggle_project_visible(pid: int) -> None:
-    ids = get_visible_project_ids()
+    """Topbar chip behavior = Focus mode (does NOT rewrite main visible selection)."""
+    # ensure main visible list exists (so unfocus returns somewhere sensible)
+    _ = get_main_visible_project_ids()
 
-    # ค่าเริ่มต้น: แสดง 4 โปรเจกต์แรก (หรือน้อยกว่านั้นถ้ามีน้อยกว่า 4)
-    ps = list_projects()
-    default_ids = [int(p["id"]) for p in ps[:4]]
-
-    # โหมด Focus (กำลังแสดงโปรเจกต์เดี่ยว)
-    if len(ids) == 1:
-        # กดซ้ำโปรเจกต์เดิม -> กลับไปค่าเริ่มต้น 4 โปรเจกต์
-        if int(ids[0]) == int(pid):
-            set_visible_project_ids(default_ids)
-        # กดโปรเจกต์อื่น -> ย้าย focus ไปโปรเจกต์นั้นทันที
-        else:
-            set_visible_project_ids([pid])
+    cur_focus = session.get("focus_pid")
+    if cur_focus and int(cur_focus) == int(pid):
+        # click same project again => exit focus
+        session.pop("focus_pid", None)
         return
 
-    # โหมด 4 โปรเจกต์ (หรือกรณีแปลก ๆ ที่ไม่ใช่ 1) -> focus โปรเจกต์ที่กด
-    set_visible_project_ids([pid])
+    # focus the clicked project
+    session["focus_pid"] = int(pid)
 
 
 # ---------- note items (sub-notes) ----------
-def _note_item_label(start_time: Optional[str], end_time: Optional[str], text: str) -> str:
+def _note_item_label(
+    start_time: Optional[str], end_time: Optional[str], text: str
+) -> str:
     st = (start_time or "").strip()
     et = (end_time or "").strip()
     if st:
@@ -663,8 +678,6 @@ def remove_highlight_day(project_id: int, day: str) -> None:
                 )
 
 
-
-
 def get_highlight_map(
     project_ids: List[int], render_start: dt.date, render_end: dt.date
 ) -> Dict[Tuple[int, str], dict]:
@@ -948,6 +961,9 @@ def _bootstrap():
 def inject_globals():
     # Values needed by base layout across pages
     all_projects = list_projects()
+    main_visible_ids = set(get_main_visible_project_ids())
+    tool_projects = [p for p in all_projects if int(p["id"]) in main_visible_ids]
+
     visible_ids = set(get_visible_project_ids())
     gcal_ready = google_client_config_ok()
     gcal_linked = (
@@ -955,6 +971,7 @@ def inject_globals():
     )
     return {
         "all_projects": all_projects,
+        "tool_projects": tool_projects,
         "visible_ids": visible_ids,
         "gcal_ready": gcal_ready,
         "gcal_linked": gcal_linked,
@@ -1281,6 +1298,43 @@ def all_projects():
     # All note items across all projects, but show max 5 per day on calendar
     by_day = get_all_note_items_by_day_range(start_day, end_last)
     day_items = {day: items[:5] for day, items in by_day.items()}
+    # Highlights (fill colors) across all projects — used in All Project calendar cells
+    all_pids = [int(p["id"]) for p in list_projects()]
+    hl_map = get_highlight_map(all_pids, start_day, end_last)
+
+    def _merge_hl_fill(day_iso: str) -> Optional[str]:
+        colors: List[str] = []
+        for (pid, d_iso), hl in hl_map.items():
+            if d_iso != day_iso:
+                continue
+            if (hl.get("mode") or "") != "fill":
+                continue
+            c = hl.get("color")
+            if c and c not in colors:
+                colors.append(c)
+
+        if not colors:
+            return None
+        if len(colors) == 1:
+            return colors[0]
+
+        # multiple fills in same day => show a simple stripe gradient
+        step = 100 / len(colors)
+        stops = []
+        for i, c in enumerate(colors):
+            a = i * step
+            b = (i + 1) * step
+            stops.append(f"{c} {a:.0f}% {b:.0f}%")
+        return "linear-gradient(135deg, " + ", ".join(stops) + ")"
+
+    all_fill: Dict[str, str] = {}
+    cur = start_day
+    while cur <= end_last:
+        iso = cur.isoformat()
+        style = _merge_hl_fill(iso)
+        if style:
+            all_fill[iso] = style
+        cur += dt.timedelta(days=1)
 
     # Google events counts (same as /)
     gcal_linked = False
@@ -1295,7 +1349,9 @@ def all_projects():
                 token_put(session["user_key"], creds)
 
                 start_dt = dt.datetime.combine(start_day, dt.time.min)
-                end_dt = dt.datetime.combine(end_last + dt.timedelta(days=1), dt.time.min)
+                end_dt = dt.datetime.combine(
+                    end_last + dt.timedelta(days=1), dt.time.min
+                )
 
                 raw_by_day = gcal_events_by_day(creds, start_dt, end_dt)
                 norm_by_day = {
@@ -1328,6 +1384,7 @@ def all_projects():
         start=start,
         end=end,
         day_items=day_items,
+        all_fill=all_fill,
         gcal_counts=gcal_counts,
         gcal_ready=google_client_config_ok(),
         gcal_linked=gcal_linked,
@@ -1394,7 +1451,6 @@ def tools_toggle_all():
 
     # ถ้าไม่ได้อยู่หน้า All -> ไปหน้า All
     return redirect(url_for("all_projects", **params))
-
 
 
 @app.post("/tools/show_default")
@@ -1541,7 +1597,6 @@ def tools_bulk_clear_submit():
                 (pid, s.isoformat(), e.isoformat()),
             )
 
-
         # remove highlight on each day (same behavior as single-day clear)
         cur = s
         while cur <= e:
@@ -1597,8 +1652,8 @@ def manage_rename(pid: int):
 def manage_delete(pid: int):
     with db() as con:
         con.execute("UPDATE projects SET is_deleted=1 WHERE id=?", (pid,))
-    # Also remove from visible selection
-    ids = [x for x in get_visible_project_ids() if x != pid]
+    # Also remove from main visible selection (Manage screen)
+    ids = [x for x in get_main_visible_project_ids() if x != pid]
     set_visible_project_ids(ids)
     flash("Deleted project.", "ok")
     return redirect(url_for("manage"))
@@ -1679,7 +1734,6 @@ def note(pid: int, day: str):
             (pid, day),
         ).fetchall()
 
-
     # Google Calendar events for this day (stored in DB)
     gcal_events = gcal_load_day(session["user_key"], day)
 
@@ -1687,7 +1741,16 @@ def note(pid: int, day: str):
         "note.html",
         project=proj,
         day=day,
-        items=[{"id": int(r["id"]), "text": r["text"], "start_time": r["start_time"], "end_time": r["end_time"], "label": _note_item_label(r["start_time"], r["end_time"], r["text"])} for r in items],
+        items=[
+            {
+                "id": int(r["id"]),
+                "text": r["text"],
+                "start_time": r["start_time"],
+                "end_time": r["end_time"],
+                "label": _note_item_label(r["start_time"], r["end_time"], r["text"]),
+            }
+            for r in items
+        ],
         gcal_events=gcal_events,
         theme=get_theme(),
     )
@@ -1705,6 +1768,7 @@ def note_save(pid: int, day: str):
         return redirect(url_for("note", pid=pid, day=day))
 
     return redirect(url_for("note", pid=pid, day=day))
+
 
 @app.post("/note/<int:pid>/<day>/add")
 def note_add_item(pid: int, day: str):
@@ -1746,6 +1810,7 @@ def note_delete_item(pid: int, day: str, item_id: int):
 
     delete_note_item(pid, item_id)
     return redirect(url_for("note", pid=pid, day=day))
+
 
 # ---------- Google Calendar connect/disconnect ----------
 @app.post("/gcal/toggle")
@@ -1800,6 +1865,7 @@ def gcal_callback():
 @app.get("/health")
 def health():
     return {"ok": True}
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=True)
