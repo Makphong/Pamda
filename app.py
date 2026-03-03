@@ -69,6 +69,7 @@ def init_db() -> None:
                 project_id INTEGER NOT NULL,
                 day TEXT NOT NULL,         -- YYYY-MM-DD
                 text TEXT NOT NULL,
+                details TEXT,              -- optional extra description
                 start_time TEXT,           -- HH:MM (NULL/empty = all-day)
                 end_time TEXT,             -- HH:MM
                 sort_index INTEGER NOT NULL DEFAULT 0,
@@ -135,6 +136,11 @@ def init_db() -> None:
 
         try:
             con.execute("ALTER TABLE projects ADD COLUMN link_name TEXT")
+        except Exception:
+            pass
+
+        try:
+            con.execute("ALTER TABLE note_items ADD COLUMN details TEXT")
         except Exception:
             pass
 
@@ -425,7 +431,7 @@ def get_note_items_map(
 
     with db() as con:
         q = """
-            SELECT id, project_id, day, text, start_time, end_time, sort_index
+            SELECT id, project_id, day, text, details, start_time, end_time, sort_index
             FROM note_items
             WHERE project_id IN ({})
               AND day >= ?
@@ -450,6 +456,7 @@ def get_note_items_map(
             {
                 "id": int(r["id"]),
                 "text": r["text"],
+                "details": r["details"],
                 "start_time": r["start_time"],
                 "end_time": r["end_time"],
                 "label": _note_item_label(r["start_time"], r["end_time"], r["text"]),
@@ -462,6 +469,7 @@ def add_note_item(
     project_id: int,
     day: str,
     text: str,
+    details: Optional[str] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
 ) -> None:
@@ -469,6 +477,7 @@ def add_note_item(
     if not text:
         return
 
+    details = (details or "").strip() or None
     st = _clean_time_field(start_time)
     et = _clean_time_field(end_time)
 
@@ -491,10 +500,10 @@ def add_note_item(
 
         con.execute(
             """
-            INSERT INTO note_items(project_id, day, text, start_time, end_time, sort_index, created_at, updated_at)
-            VALUES(?,?,?,?,?,?,?,?)
+            INSERT INTO note_items(project_id, day, text, details, start_time, end_time, sort_index, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?)
             """,
-            (project_id, day, text, st, et, int(nxt), now, now),
+            (project_id, day, text, details, st, et, int(nxt), now, now),
         )
 
 
@@ -502,12 +511,14 @@ def edit_note_item(
     project_id: int,
     item_id: int,
     text: str,
+    details: Optional[str] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
 ) -> None:
     text = (text or "").strip()
     now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
+    details = (details or "").strip() or None
     st = _clean_time_field(start_time)
     et = _clean_time_field(end_time)
 
@@ -520,10 +531,10 @@ def edit_note_item(
             con.execute(
                 """
                 UPDATE note_items
-                SET text=?, start_time=?, end_time=?, updated_at=?
+                SET text=?, details=?, start_time=?, end_time=?, updated_at=?
                 WHERE id=? AND project_id=?
                 """,
-                (text, st, et, now, item_id, project_id),
+                (text, details, st, et, now, item_id, project_id),
             )
         else:
             # empty text => delete
@@ -1720,7 +1731,7 @@ def note(pid: int, day: str):
 
         items = con.execute(
             """
-            SELECT id, text, start_time, end_time
+            SELECT id, text, details, start_time, end_time
             FROM note_items
             WHERE project_id=? AND day=?
             ORDER BY
@@ -1745,6 +1756,7 @@ def note(pid: int, day: str):
             {
                 "id": int(r["id"]),
                 "text": r["text"],
+                "details": r["details"],
                 "start_time": r["start_time"],
                 "end_time": r["end_time"],
                 "label": _note_item_label(r["start_time"], r["end_time"], r["text"]),
@@ -1778,11 +1790,14 @@ def note_add_item(pid: int, day: str):
         return redirect(url_for("index"))
 
     text = (request.form.get("text") or "").strip()
+    details = (request.form.get("details") or "").strip() or None
     start_time = request.form.get("start_time")
     end_time = request.form.get("end_time")
 
     if text:
-        add_note_item(pid, day, text, start_time=start_time, end_time=end_time)
+        add_note_item(
+            pid, day, text, details=details, start_time=start_time, end_time=end_time
+        )
     return redirect(url_for("note", pid=pid, day=day))
 
 
@@ -1794,10 +1809,13 @@ def note_edit_item(pid: int, day: str, item_id: int):
         return redirect(url_for("index"))
 
     text = (request.form.get("text") or "").strip()
+    details = (request.form.get("details") or "").strip() or None
     start_time = request.form.get("start_time")
     end_time = request.form.get("end_time")
 
-    edit_note_item(pid, item_id, text, start_time=start_time, end_time=end_time)
+    edit_note_item(
+        pid, item_id, text, details=details, start_time=start_time, end_time=end_time
+    )
     return redirect(url_for("note", pid=pid, day=day))
 
 

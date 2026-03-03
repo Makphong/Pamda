@@ -31,17 +31,22 @@
       <div class="note__list">
         {% for it in items %}
         <div class="note__item">
-          <form method="post" action="{{ url_for('note_edit_item', pid=project.id, day=day, item_id=it.id) }}"
-            class="row note__item-row">
+          <form method="post"
+                action="{{ url_for('note_edit_item', pid=project.id, day=day, item_id=it.id) }}"
+                class="row note__item-row">
             <input class="input input--time" type="time" name="start_time" value="{{ it.start_time or '' }}" />
             <input class="input input--time" type="time" name="end_time" value="{{ it.end_time or '' }}" />
             <input class="input note__item-input" name="text" value="{{ it.text }}" maxlength="200" />
+            <textarea class="input note__item-details"
+                      name="details"
+                      rows="2"
+                      placeholder="คำอธิบายเพิ่มเติม (ไม่บังคับ)">{{ it.details or '' }}</textarea>
             <button class="btn btn--ghost" type="submit">Save</button>
           </form>
 
-
-          <form method="post" action="{{ url_for('note_delete_item', pid=project.id, day=day, item_id=it.id) }}"
-            class="inline">
+          <form method="post"
+                action="{{ url_for('note_delete_item', pid=project.id, day=day, item_id=it.id) }}"
+                class="inline">
             <button class="btn btn--danger" type="submit">Delete</button>
           </form>
         </div>
@@ -54,10 +59,14 @@
     <div class="note__pane note__pane--bottom">
       <div class="note__section-title">เพิ่มรายการย่อย</div>
 
-<form method="post" action="{{ url_for('note_add_item', pid=project.id, day=day) }}" class="row note__add">
+      <form method="post" action="{{ url_for('note_add_item', pid=project.id, day=day) }}" class="row note__add">
         <input class="input input--time" type="time" name="start_time" aria-label="Start time" />
         <input class="input input--time" type="time" name="end_time" aria-label="End time" />
         <input class="input note__add-input" name="text" placeholder="พิมพ์รายการย่อย" maxlength="200" aria-label="Item text" />
+        <textarea class="input note__add-details"
+                  name="details"
+                  rows="2"
+                  placeholder="คำอธิบายเพิ่มเติม (ไม่บังคับ)"></textarea>
 
         <button class="btn btn--primary btn--compact" type="submit" aria-label="Add item">
           <span class="btn__icon">＋</span>
@@ -74,7 +83,6 @@
           <span class="btn__text">Clear</span>
         </button>
       </form>
-
     </div>
   </div>
 </section>
