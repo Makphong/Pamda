@@ -1731,7 +1731,7 @@ def tools_bulk_note_submit():
 
     # allow empty content ONLY for fill mode (highlight-only)
     if mode != "fill" and not content.strip():
-        flash("Note can't be empty.", "error")
+        # flash("Note can't be empty.", "error")
         return redirect(url_for("tools_bulk_note"))
 
     start_str = (request.form.get("start_day") or "").strip()
@@ -1742,7 +1742,7 @@ def tools_bulk_note_submit():
         s = dt.date.fromisoformat(start_str)
         e = dt.date.fromisoformat(end_str)
     except Exception:
-        flash("Invalid date.", "error")
+        # flash("Invalid date.", "error")
         return redirect(url_for("tools_bulk_note"))
 
     if e < s:
@@ -1763,7 +1763,7 @@ def tools_bulk_note_submit():
             pids = []
 
     if not pids:
-        flash("Select a project.", "error")
+        # flash("Select a project.", "error")
         return redirect(url_for("tools_bulk_note"))
 
     for pid in pids:
@@ -1776,7 +1776,7 @@ def tools_bulk_note_submit():
                 add_note_items_append(pid, cur.isoformat(), content)
                 cur += dt.timedelta(days=1)
 
-    flash("Added note.", "ok")
+    # flash("Added note.", "ok")
     return redirect(url_for("index"))
 
 
@@ -1789,7 +1789,7 @@ def tools_bulk_clear_submit():
         s = dt.date.fromisoformat(start_str)
         e = dt.date.fromisoformat(end_str)
     except Exception:
-        flash("Invalid date.", "error")
+        # flash("Invalid date.", "error")
         return redirect(url_for("tools_bulk_note"))
 
     if e < s:
@@ -1808,7 +1808,7 @@ def tools_bulk_clear_submit():
             pids = []
 
     if not pids:
-        flash("Select a project.", "error")
+        # flash("Select a project.", "error")
         return redirect(url_for("tools_bulk_note"))
 
     for pid in pids:
@@ -1833,7 +1833,7 @@ def tools_bulk_clear_submit():
                 pass
             cur += dt.timedelta(days=1)
 
-    flash("Cleared notes.", "ok")
+    # flash("Cleared notes.", "ok")
     return redirect(url_for("index"))
 
 
@@ -1853,11 +1853,11 @@ def manage():
 def manage_add():
     name = (request.form.get("name") or "").strip()
     if not name:
-        flash("Project name can't be empty.", "error")
+        # flash("Project name can't be empty.", "error")
         return redirect(url_for("manage"))
     with db() as con:
         con.execute("INSERT INTO projects(name) VALUES(?)", (name,))
-    flash("Added project.", "ok")
+    # flash("Added project.", "ok")
     return redirect(url_for("manage"))
 
 
@@ -1865,13 +1865,13 @@ def manage_add():
 def manage_rename(pid: int):
     name = (request.form.get("name") or "").strip()
     if not name:
-        flash("Project name can't be empty.", "error")
+        # flash("Project name can't be empty.", "error")
         return redirect(url_for("manage"))
     with db() as con:
         con.execute(
             "UPDATE projects SET name=? WHERE id=? AND is_deleted=0", (name, pid)
         )
-    flash("Renamed project.", "ok")
+    # flash("Renamed project.", "ok")
     return redirect(url_for("manage"))
 
 
@@ -1882,7 +1882,7 @@ def manage_delete(pid: int):
     # Also remove from main visible selection (Manage screen)
     ids = [x for x in get_main_visible_project_ids() if x != pid]
     set_visible_project_ids(ids)
-    flash("Deleted project.", "ok")
+    # flash("Deleted project.", "ok")
     return redirect(url_for("manage"))
 
 
@@ -1890,7 +1890,7 @@ def manage_delete(pid: int):
 def manage_visible():
     ids = request.form.getlist("visible_ids")
     set_visible_project_ids([int(x) for x in ids])
-    flash("Updated visible projects.", "ok")
+    # flash("Updated visible projects.", "ok")
     return redirect(url_for("manage"))
 
 
@@ -1903,7 +1903,7 @@ def project_overview(pid: int):
             "UPDATE projects SET overview_note=? WHERE id=? AND is_deleted=0",
             (text, pid),
         )
-    flash("Saved.", "ok")
+    # flash("Saved.", "ok")
     return redirect(request.referrer or url_for("index"))
 
 
@@ -1927,7 +1927,7 @@ def project_link(pid: int):
             (name, url, pid),
         )
 
-    flash("Saved.", "ok")
+    # flash("Saved.", "ok")
     return redirect(request.referrer or url_for("index"))
 
 
@@ -2053,11 +2053,11 @@ def gcal_toggle():
     if token_get(user_key):
         token_delete(user_key)
         gcal_clear_user(user_key)
-        flash("Google Calendar disconnected.", "ok")
+        # flash("Google Calendar disconnected.", "ok")
         return redirect(url_for("index"))
 
     if not google_client_config_ok():
-        flash("Missing Google OAuth client_secret.json. See README.", "error")
+        # flash("Missing Google OAuth client_secret.json. See README.", "error")
         return redirect(url_for("index"))
 
     # Allow OAuth over HTTP only for local development (localhost/127.0.0.1)
@@ -2077,7 +2077,7 @@ def gcal_toggle():
 @app.get("/gcal/oauth2callback")
 def gcal_callback():
     if not google_client_config_ok():
-        flash("Missing Google OAuth client_secret.json. See README.", "error")
+        # flash("Missing Google OAuth client_secret.json. See README.", "error")
         return redirect(url_for("index"))
 
     state = session.get("gcal_state")
@@ -2092,7 +2092,7 @@ def gcal_callback():
 
     creds = flow.credentials
     token_put(session["user_key"], creds)
-    flash("Google Calendar linked.", "ok")
+    # flash("Google Calendar linked.", "ok")
     return redirect(url_for("index"))
 
 
