@@ -9,6 +9,14 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 
+# Optional: PostgreSQL (Cloud SQL)
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except Exception:  # pragma: no cover
+    psycopg = None
+    dict_row = None
+
 # Google Calendar (server-side OAuth)
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -19,6 +27,14 @@ from googleapiclient.discovery import build
 APP_DIR = os.path.abspath(os.path.dirname(__file__))
 INSTANCE_DIR = os.path.join(APP_DIR, "instance")
 DB_PATH = os.path.join(INSTANCE_DIR, "app.db")
+
+# Cloud SQL / Postgres env (used on Cloud Run)
+DB_NAME = os.environ.get("DB_NAME")
+DB_USER = os.environ.get("DB_USER")
+DB_PASS = os.environ.get("DB_PASS")
+INSTANCE_CONNECTION_NAME = os.environ.get("INSTANCE_CONNECTION_NAME")
+
+USE_POSTGRES = bool(DB_NAME and DB_USER and DB_PASS and INSTANCE_CONNECTION_NAME)
 
 # ---- Flask app ----
 app = Flask(__name__)
@@ -33,13 +49,203 @@ CLIENT_SECRETS_FILE = os.path.join(APP_DIR, "secrets", "client_secret.json")
 
 
 # ---------- DB helpers ----------
-def db() -> sqlite3.Connection:
+class DBConn:
+    """Small wrapper to keep the existing sqlite-style code working on Postgres.
+
+    - SQLite uses '?' placeholders.
+    - psycopg (PostgreSQL) uses '%s' placeholders.
+    This wrapper converts placeholders automatically when USE_POSTGRES=True.
+    """
+
+    def __init__(self, con, use_postgres: bool):
+        self._con = con
+        self._use_postgres = use_postgres
+
+    def _adapt_sql(self, sql: str) -> str:
+        if not self._use_postgres:
+            return sql
+        # Best-effort conversion: sqlite '?' -> psycopg '%s'
+        return sql.replace("?", "%s")
+
+    def execute(self, sql: str, params=None):
+        return self._con.execute(self._adapt_sql(sql), params or ())
+
+    def executemany(self, sql: str, seq_of_params):
+        return self._con.executemany(self._adapt_sql(sql), seq_of_params)
+
+    def executescript(self, script: str):
+        # Only used for SQLite init_db(). For Postgres we don't call this.
+        return self._con.executescript(script)
+
+    def commit(self):
+        return self._con.commit()
+
+    def rollback(self):
+        return self._con.rollback()
+
+    def close(self):
+        return self._con.close()
+
+    def __enter__(self):
+        self._con.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._con.__exit__(exc_type, exc, tb)
+
+
+def db() -> DBConn:
+    """Return a DB connection wrapper.
+
+    - Local/dev: SQLite at instance/app.db
+    - Cloud Run: PostgreSQL (Cloud SQL) when required env vars exist
+    """
+    if USE_POSTGRES:
+        if psycopg is None:
+            raise RuntimeError(
+                "psycopg is required for PostgreSQL but is not installed."
+            )
+        host_dir = f"/cloudsql/{INSTANCE_CONNECTION_NAME}"
+        con = psycopg.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS,
+            host=host_dir,  # Unix socket directory (Cloud Run + Cloud SQL connection)
+            port=int(os.environ.get("DB_PORT", "5432")),
+            row_factory=dict_row,
+            connect_timeout=10,
+        )
+        return DBConn(con, use_postgres=True)
+
+    os.makedirs(INSTANCE_DIR, exist_ok=True)
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
-    return con
+    return DBConn(con, use_postgres=False)
 
 
 def init_db() -> None:
+    # On Cloud Run + Cloud SQL (Postgres), create schema in Postgres.
+    if USE_POSTGRES:
+        with db() as con:
+            # --- Core tables ---
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS projects (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    is_deleted INTEGER NOT NULL DEFAULT 0,
+                    overview_note TEXT,
+                    link_name TEXT,
+                    link_url TEXT
+                );
+                """
+            )
+
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notes (
+                    id BIGSERIAL PRIMARY KEY,
+                    project_id BIGINT NOT NULL,
+                    day TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(project_id, day),
+                    FOREIGN KEY(project_id) REFERENCES projects(id)
+                );
+                """
+            )
+
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS note_items (
+                    id BIGSERIAL PRIMARY KEY,
+                    project_id BIGINT NOT NULL,
+                    day TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    details TEXT,
+                    start_time TEXT,
+                    end_time TEXT,
+                    sort_index INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id) REFERENCES projects(id)
+                );
+                """
+            )
+
+            con.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_note_items_pid_day
+                  ON note_items(project_id, day);
+                """
+            )
+
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_visible_projects (
+                    user_key TEXT NOT NULL,
+                    project_id BIGINT NOT NULL,
+                    sort_index INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(user_key, project_id),
+                    FOREIGN KEY(project_id) REFERENCES projects(id)
+                );
+                """
+            )
+
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS highlights (
+                    id BIGSERIAL PRIMARY KEY,
+                    project_id BIGINT NOT NULL,
+                    start_day TEXT NOT NULL,
+                    end_day TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id) REFERENCES projects(id)
+                );
+                """
+            )
+
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS day_colors (
+                    id BIGSERIAL PRIMARY KEY,
+                    project_id BIGINT NOT NULL,
+                    day TEXT NOT NULL,
+                    color_key TEXT NOT NULL,
+                    UNIQUE(project_id, day),
+                    FOREIGN KEY(project_id) REFERENCES projects(id)
+                );
+                """
+            )
+
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS oauth_tokens (
+                    user_key TEXT PRIMARY KEY,
+                    token_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """
+            )
+
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS gcal_day_events (
+                    user_key TEXT NOT NULL,
+                    day TEXT NOT NULL,
+                    events_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_key, day)
+                );
+                """
+            )
+
+            con.commit()
+        return
+
+    # Local/dev SQLite: keep the existing behavior
     os.makedirs(INSTANCE_DIR, exist_ok=True)
     with db() as con:
         con.executescript(
@@ -158,7 +364,6 @@ def init_db() -> None:
             con.execute("ALTER TABLE projects ADD COLUMN link_url TEXT")
         except Exception:
             pass
-
         # --- migrate legacy notes
         try:
             now = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
