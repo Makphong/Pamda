@@ -68,10 +68,21 @@ class DBConn:
         return sql.replace("?", "%s")
 
     def execute(self, sql: str, params=None):
-        return self._con.execute(self._adapt_sql(sql), params or ())
+        sql2 = self._adapt_sql(sql)
+        if self._use_postgres:
+            cur = self._con.cursor()
+            cur.execute(sql2, params or ())
+            return cur
+        return self._con.execute(sql2, params or ())
 
     def executemany(self, sql: str, seq_of_params):
-        return self._con.executemany(self._adapt_sql(sql), seq_of_params)
+        sql2 = self._adapt_sql(sql)
+        if self._use_postgres:
+            cur = self._con.cursor()
+            # psycopg v3: executemany อยู่บน cursor
+            cur.executemany(sql2, list(seq_of_params))
+            return cur
+        return self._con.executemany(sql2, seq_of_params)
 
     def executescript(self, script: str):
         # Only used for SQLite init_db(). For Postgres we don't call this.
