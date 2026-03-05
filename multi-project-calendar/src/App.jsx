@@ -110,7 +110,7 @@ const getAccountDbKey = (userId) => `${ACCOUNT_DB_PREFIX}${userId}`;
 
 const postAuthApi = async (path, payload) => {
   if (!AUTH_API_BASE_URL) {
-    throw new Error('AUTH_API_NOT_CONFIGURED');
+    throw new Error('Auth API is not configured. Please set VITE_AUTH_API_BASE_URL.');
   }
 
   const response = await fetch(`${AUTH_API_BASE_URL}${path}`, {
@@ -350,7 +350,6 @@ function AuthScreen({ onAuthSuccess }) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
-  const [localOtpCode, setLocalOtpCode] = useState('');
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [acceptTerms, setAcceptTerms] = useState(false);
@@ -367,7 +366,6 @@ function AuthScreen({ onAuthSuccess }) {
     setPassword('');
     setConfirmPassword('');
     setOtpCode('');
-    setLocalOtpCode('');
     setIsOtpSent(false);
     setRememberMe(true);
     setAcceptTerms(false);
@@ -406,50 +404,6 @@ function AuthScreen({ onAuthSuccess }) {
     }
   };
 
-  const signInWithGoogleProfile = ({ email: rawEmail, name: rawName, picture: rawPicture }) => {
-    const userEmail = String(rawEmail || '').trim().toLowerCase();
-    if (!userEmail) throw new Error('Google account email is missing.');
-
-    const users = getLocalUsers();
-    let matchedUser = users.find((entry) => entry.email === userEmail);
-
-    if (!matchedUser) {
-      const baseUsername = String(rawName || userEmail.split('@')[0] || 'google_user')
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, '_')
-        .replace(/[^a-z0-9_]/g, '');
-      const uniqueSuffix = generateId().slice(0, 4);
-      const uniqueUsername = users.some((entry) => entry.username === baseUsername)
-        ? `${baseUsername}_${uniqueSuffix}`
-        : baseUsername;
-
-      matchedUser = {
-        id: `google-${generateId()}`,
-        username: uniqueUsername,
-        email: userEmail,
-        avatarUrl: String(rawPicture || '').trim(),
-        password: '',
-      };
-      saveLocalUsers([...users, matchedUser]);
-    } else if (rawPicture && matchedUser.avatarUrl !== rawPicture) {
-      const updatedUsers = users.map((entry) =>
-        entry.id === matchedUser.id ? { ...entry, avatarUrl: rawPicture } : entry
-      );
-      saveLocalUsers(updatedUsers);
-      matchedUser = { ...matchedUser, avatarUrl: rawPicture };
-    }
-
-    onAuthSuccess(matchedUser);
-  };
-
-  const decodeGoogleCredential = (credential) => {
-    const payloadBase64 = credential.split('.')[1];
-    const normalized = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
-    const decoded = atob(normalized);
-    return JSON.parse(decoded);
-  };
-
   const handleGoogleCredential = async (response) => {
     const idToken = response?.credential;
     if (!idToken) {
@@ -462,19 +416,9 @@ function AuthScreen({ onAuthSuccess }) {
     setSuccess('');
 
     try {
-      if (AUTH_API_BASE_URL) {
-        const result = await postAuthApi('/auth/google', { idToken });
-        syncUserToLocalCache(result.user);
-        onAuthSuccess(result.user);
-        return;
-      }
-
-      const payload = decodeGoogleCredential(idToken);
-      signInWithGoogleProfile({
-        email: payload.email,
-        name: payload.name,
-        picture: payload.picture,
-      });
+      const result = await postAuthApi('/auth/google', { idToken });
+      syncUserToLocalCache(result.user);
+      onAuthSuccess(result.user);
     } catch (err) {
       setError(err.message || 'Google sign-in failed.');
     } finally {
@@ -486,54 +430,34 @@ function AuthScreen({ onAuthSuccess }) {
     setError('');
     setSuccess('');
 
-    if (GOOGLE_CLIENT_ID && window.google?.accounts?.id) {
-      window.google.accounts.id.prompt();
+    if (!GOOGLE_CLIENT_ID) {
+      setError('Google OAuth is not configured.');
       return;
     }
 
-    const demoEmail = window.prompt('Enter Google email (demo mode)');
-    if (!demoEmail) return;
-
-    const normalizedDemoEmail = demoEmail.trim().toLowerCase();
-    if (!normalizedDemoEmail.includes('@')) {
-      setError('Invalid email format.');
+    if (!window.google?.accounts?.id) {
+      setError('Google SDK is loading. Please try again.');
       return;
     }
 
-    try {
-      signInWithGoogleProfile({
-        email: normalizedDemoEmail,
-        name: normalizedDemoEmail.split('@')[0],
-        picture: '',
-      });
-    } catch (err) {
-      setError(err.message || 'Google sign-in failed.');
-    }
+    window.google.accounts.id.prompt();
   };
 
   useEffect(() => {
     if (!GOOGLE_CLIENT_ID || !googleButtonRef.current) return;
 
     let isCancelled = false;
-    const renderGoogleButton = () => {
+    const initializeGoogle = () => {
       if (isCancelled || !window.google?.accounts?.id || !googleButtonRef.current) return;
 
-      googleButtonRef.current.innerHTML = '';
       window.google.accounts.id.initialize({
         client_id: GOOGLE_CLIENT_ID,
         callback: handleGoogleCredential,
       });
-      window.google.accounts.id.renderButton(googleButtonRef.current, {
-        theme: 'outline',
-        size: 'large',
-        width: 360,
-        text: isLoginMode ? 'signin_with' : 'signup_with',
-        shape: 'pill',
-      });
     };
 
     if (window.google?.accounts?.id) {
-      renderGoogleButton();
+      initializeGoogle();
       return () => {
         isCancelled = true;
       };
@@ -543,7 +467,7 @@ function AuthScreen({ onAuthSuccess }) {
     script.src = 'https://accounts.google.com/gsi/client';
     script.async = true;
     script.defer = true;
-    script.onload = renderGoogleButton;
+    script.onload = initializeGoogle;
     document.head.appendChild(script);
 
     return () => {
@@ -563,14 +487,8 @@ function AuthScreen({ onAuthSuccess }) {
     setSuccess('');
 
     try {
-      if (AUTH_API_BASE_URL) {
-        const result = await postAuthApi('/auth/send-otp', { email: normalizedEmail });
-        setSuccess(result.message || 'OTP has been sent to your email.');
-      } else {
-        const generated = String(Math.floor(100000 + Math.random() * 900000));
-        setLocalOtpCode(generated);
-        setSuccess(`Demo mode OTP: ${generated}`);
-      }
+      const result = await postAuthApi('/auth/send-otp', { email: normalizedEmail });
+      setSuccess(result.message || 'OTP has been sent to your email.');
       setIsOtpSent(true);
     } catch (err) {
       setError(err.message || 'Failed to send OTP.');
@@ -586,34 +504,18 @@ function AuthScreen({ onAuthSuccess }) {
     setIsSubmitting(true);
 
     try {
-      const users = getLocalUsers();
-
       if (isLoginMode) {
         const normalizedIdentifier = identifier.trim().toLowerCase();
         if (!normalizedIdentifier || !password) {
           throw new Error('Please enter username/email and password.');
         }
 
-        if (AUTH_API_BASE_URL) {
-          const result = await postAuthApi('/auth/login', {
-            identifier: normalizedIdentifier,
-            password,
-          });
-          syncUserToLocalCache(result.user);
-          onAuthSuccess(result.user);
-          return;
-        }
-
-        const matchedUser = users.find(
-          (u) =>
-            (u.email === normalizedIdentifier || u.username === normalizedIdentifier) &&
-            u.password === password
-        );
-        if (!matchedUser) {
-          throw new Error('Invalid username/email or password.');
-        }
-
-        onAuthSuccess(matchedUser);
+        const result = await postAuthApi('/auth/login', {
+          identifier: normalizedIdentifier,
+          password,
+        });
+        syncUserToLocalCache(result.user);
+        onAuthSuccess(result.user);
         return;
       }
 
@@ -639,38 +541,14 @@ function AuthScreen({ onAuthSuccess }) {
         throw new Error('Please enter OTP code.');
       }
 
-      if (AUTH_API_BASE_URL) {
-        const result = await postAuthApi('/auth/register', {
-          username: normalizedUsername,
-          email: normalizedEmail,
-          password,
-          otp: otpCode.trim(),
-        });
-        syncUserToLocalCache(result.user);
-        onAuthSuccess(result.user);
-        return;
-      }
-
-      if (users.some((u) => u.username === normalizedUsername)) {
-        throw new Error('This username is already taken.');
-      }
-      if (users.some((u) => u.email === normalizedEmail)) {
-        throw new Error('This email is already registered.');
-      }
-      if (!localOtpCode || otpCode.trim() !== localOtpCode) {
-        throw new Error('Invalid OTP code.');
-      }
-
-      const newUser = {
-        id: generateId(),
+      const result = await postAuthApi('/auth/register', {
         username: normalizedUsername,
         email: normalizedEmail,
-        avatarUrl: '',
         password,
-      };
-
-      saveLocalUsers([...users, newUser]);
-      onAuthSuccess(newUser);
+        otp: otpCode.trim(),
+      });
+      syncUserToLocalCache(result.user);
+      onAuthSuccess(result.user);
     } catch (err) {
       setError(err.message || 'Authentication failed.');
     } finally {
