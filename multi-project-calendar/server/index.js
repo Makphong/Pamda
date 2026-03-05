@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import { OAuth2Client } from 'google-auth-library';
 import { Firestore } from '@google-cloud/firestore';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 dotenv.config();
 
@@ -34,13 +35,32 @@ app.use(
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
 const USERS_COLLECTION = String(process.env.FIRESTORE_USERS_COLLECTION || 'users').trim();
 const OTP_COLLECTION = String(process.env.FIRESTORE_OTP_COLLECTION || 'auth_otps').trim();
-const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+const GOOGLE_OAUTH_JSON_PATH = String(process.env.GOOGLE_OAUTH_JSON_PATH || '').trim();
+
+const loadGoogleClientIdFromJson = (filePath) => {
+  if (!filePath) return '';
+
+  try {
+    const raw = readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return String(parsed?.web?.client_id || parsed?.installed?.client_id || '').trim();
+  } catch (error) {
+    console.warn(`Failed to read Google OAuth JSON from ${filePath}: ${error.message}`);
+    return '';
+  }
+};
+
+const GOOGLE_CLIENT_ID =
+  String(process.env.GOOGLE_CLIENT_ID || '').trim() || loadGoogleClientIdFromJson(GOOGLE_OAUTH_JSON_PATH);
 
 const sanitizeEmail = (value) => String(value || '').trim().toLowerCase();
 const sanitizeUsername = (value) => String(value || '').trim().toLowerCase();
 
-const requiredEnv = ['GMAIL_USER', 'GMAIL_APP_PASSWORD', 'OTP_FROM_EMAIL', 'GOOGLE_CLIENT_ID'];
+const requiredEnv = ['GMAIL_USER', 'GMAIL_APP_PASSWORD', 'OTP_FROM_EMAIL'];
 const missingEnv = requiredEnv.filter((key) => !String(process.env[key] || '').trim());
+if (!GOOGLE_CLIENT_ID) {
+  missingEnv.push('GOOGLE_CLIENT_ID or GOOGLE_OAUTH_JSON_PATH');
+}
 if (missingEnv.length > 0) {
   console.warn(`Missing required env: ${missingEnv.join(', ')}`);
 }
@@ -137,6 +157,7 @@ app.get('/health', (_req, res) => {
     service: 'pm-calendar-auth-server',
     firestoreCollectionUsers: USERS_COLLECTION,
     firestoreCollectionOtp: OTP_COLLECTION,
+    googleClientConfigured: Boolean(GOOGLE_CLIENT_ID),
   });
 });
 
@@ -256,7 +277,9 @@ app.post('/auth/login', async (req, res) => {
 app.post('/auth/google', async (req, res) => {
   try {
     if (!oauthClient || !GOOGLE_CLIENT_ID) {
-      return res.status(500).json({ message: 'GOOGLE_CLIENT_ID is not configured on server.' });
+      return res.status(500).json({
+        message: 'Google OAuth is not configured. Set GOOGLE_CLIENT_ID or GOOGLE_OAUTH_JSON_PATH.',
+      });
     }
 
     const idToken = String(req.body?.idToken || '');
