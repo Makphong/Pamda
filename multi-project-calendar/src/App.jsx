@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Calendar, 
   Plus, 
@@ -34,7 +34,9 @@ import {
   Bold,
   Italic,
   Underline,
-  Flag
+  Flag,
+  LogOut,
+  Loader2
 } from 'lucide-react';
 
 // --- Constants & Helpers ---
@@ -55,9 +57,1121 @@ const PROJECT_COLORS = [
 ];
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
+const AUTH_USER_KEY = 'pm_calendar_auth_user';
+const AUTH_USERS_KEY = 'pm_calendar_users';
+const ACCOUNT_DB_PREFIX = 'pm_calendar_db_';
+const AUTH_API_BASE_URL = String(import.meta.env.VITE_AUTH_API_BASE_URL || '').trim().replace(/\/+$/, '');
+const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
+
+const getLocalUsers = () => {
+  try {
+    const data = localStorage.getItem(AUTH_USERS_KEY);
+    if (!data) return [];
+
+    const users = JSON.parse(data);
+    return Array.isArray(users)
+      ? users.map((user) => ({
+          ...user,
+          username: String(user.username || user.name || user.email || '').trim().toLowerCase(),
+          email: String(user.email || '').trim().toLowerCase(),
+          avatarUrl: String(user.avatarUrl || '').trim(),
+        }))
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveLocalUsers = (users) => {
+  const normalizedUsers = users.map((user) => ({
+    ...user,
+    username: String(user.username || user.name || user.email || '').trim().toLowerCase(),
+    email: String(user.email || '').trim().toLowerCase(),
+    avatarUrl: String(user.avatarUrl || '').trim(),
+  }));
+  localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(normalizedUsers));
+};
+
+const normalizeAuthUser = (user) => {
+  if (!user) return null;
+
+  const username = String(user.username || user.name || user.email || '').trim().toLowerCase();
+  const email = String(user.email || '').trim().toLowerCase();
+
+  return {
+    id: user.id || `legacy-${username || email || generateId()}`,
+    username,
+    email,
+    avatarUrl: String(user.avatarUrl || '').trim(),
+  };
+};
+
+const getAccountDbKey = (userId) => `${ACCOUNT_DB_PREFIX}${userId}`;
+
+const postAuthApi = async (path, payload) => {
+  if (!AUTH_API_BASE_URL) {
+    throw new Error('AUTH_API_NOT_CONFIGURED');
+  }
+
+  const response = await fetch(`${AUTH_API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  let result = null;
+  try {
+    result = await response.json();
+  } catch {
+    result = null;
+  }
+
+  if (!response.ok) {
+    const message = result?.message || 'Authentication request failed.';
+    throw new Error(message);
+  }
+
+  return result;
+};
+
+const migrateProjectUsername = (project, oldUsername, newUsername) => {
+  const normalizedOld = String(oldUsername || '').trim().toLowerCase();
+  const normalizedNew = String(newUsername || '').trim().toLowerCase();
+  if (!normalizedOld || !normalizedNew || normalizedOld === normalizedNew) return project;
+
+  const ownerUsername =
+    String(project.ownerUsername || '').trim().toLowerCase() === normalizedOld
+      ? normalizedNew
+      : String(project.ownerUsername || '').trim().toLowerCase();
+
+  const members = Array.isArray(project.members)
+    ? Array.from(
+        new Set(
+          project.members
+            .map((member) => String(member || '').trim().toLowerCase())
+            .map((member) => (member === normalizedOld ? normalizedNew : member))
+            .filter(Boolean)
+        )
+      )
+    : [ownerUsername];
+
+  const teamMembers = Array.isArray(project.teamMembers)
+    ? project.teamMembers.map((member) => {
+        const memberUsername = String(member?.username || member?.name || '')
+          .trim()
+          .toLowerCase();
+        if (memberUsername !== normalizedOld) return member;
+
+        const displayName = String(member?.name || '').trim().toLowerCase() === normalizedOld
+          ? normalizedNew
+          : member?.name;
+
+        return {
+          ...member,
+          username: normalizedNew,
+          name: displayName || normalizedNew,
+        };
+      })
+    : project.teamMembers;
+
+  return {
+    ...project,
+    ownerUsername,
+    members,
+    teamMembers,
+  };
+};
+
+const ensureProjectOwnership = (project, owner) => {
+  const members = Array.isArray(project.members) ? project.members.filter(Boolean) : [];
+  const ownerUsername = project.ownerUsername || owner.username;
+  const mergedMembers = members.includes(ownerUsername) ? members : [ownerUsername, ...members];
+
+  return {
+    ...project,
+    ownerId: project.ownerId || owner.id,
+    ownerUsername,
+    members: Array.from(new Set(mergedMembers)),
+  };
+};
+
+const MEMBER_COLORS = [
+  'bg-blue-600',
+  'bg-purple-500',
+  'bg-orange-500',
+  'bg-green-500',
+  'bg-pink-500',
+  'bg-teal-500',
+  'bg-indigo-500',
+];
+
+const normalizeRoles = (roles) =>
+  Array.from(
+    new Set(
+      (Array.isArray(roles) ? roles : [])
+        .map((role) => String(role || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+const normalizeDepartments = (departments) =>
+  Array.from(
+    new Set(
+      (Array.isArray(departments) ? departments : [])
+        .map((department) => String(department || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+const getInitials = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return '?';
+
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  }
+
+  return text.slice(0, 2).toUpperCase();
+};
+
+const getRoleLevel = (role, isOwner = false) => {
+  if (isOwner) return 1;
+
+  const normalizedRole = String(role || '').toLowerCase();
+  if (
+    normalizedRole.includes('owner') ||
+    normalizedRole.includes('approver') ||
+    normalizedRole.includes('manager') ||
+    normalizedRole.includes('lead')
+  ) {
+    return 2;
+  }
+
+  return 3;
+};
+
+const buildMemberFromUsername = (username, index, ownerUsername, existingMember = null) => {
+  const normalizedUsername = String(username || existingMember?.username || existingMember?.name || '')
+    .trim()
+    .toLowerCase();
+  const safeUsername = normalizedUsername || `member-${index + 1}`;
+  const displayName = String(existingMember?.name || safeUsername).trim() || safeUsername;
+  const isOwner = safeUsername === ownerUsername;
+  const position = String(existingMember?.position || existingMember?.role || (isOwner ? 'Project Owner' : '')).trim();
+  const department = String(existingMember?.department || 'Unassigned').trim() || 'Unassigned';
+  const reportsToId = existingMember?.reportsToId || null;
+
+  return {
+    id: existingMember?.id || `member-${safeUsername.replace(/\s+/g, '-')}`,
+    username: safeUsername,
+    name: displayName,
+    position,
+    role: position, // Backward compatibility for old UI paths
+    department,
+    reportsToId,
+    initials: existingMember?.initials || getInitials(displayName),
+    color: existingMember?.color || MEMBER_COLORS[index % MEMBER_COLORS.length],
+    level: existingMember?.level || getRoleLevel(position, isOwner),
+  };
+};
+
+const normalizeProjectTeamMembers = (project) => {
+  const ownerUsername = String(project.ownerUsername || '').trim().toLowerCase();
+  const storedMembers = Array.isArray(project.teamMembers) ? project.teamMembers : [];
+  const projectMembers = Array.isArray(project.members) ? project.members : [];
+
+  const allUsernames = Array.from(
+    new Set(
+      [ownerUsername, ...projectMembers, ...storedMembers.map((member) => member.username || member.name)]
+        .map((value) => String(value || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+
+  const membersByUsername = new Map();
+  storedMembers.forEach((member) => {
+    const key = String(member?.username || member?.name || '').trim().toLowerCase();
+    if (!key || membersByUsername.has(key)) return;
+    membersByUsername.set(key, member);
+  });
+
+  return allUsernames.map((username, index) =>
+    buildMemberFromUsername(username, index, ownerUsername, membersByUsername.get(username))
+  );
+};
 
 // --- Main Application Component ---
 export default function App() {
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const data = localStorage.getItem(AUTH_USER_KEY);
+      return data ? normalizeAuthUser(JSON.parse(data)) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const handleAuthSuccess = (user) => {
+    const safeUser = normalizeAuthUser(user);
+    setCurrentUser(safeUser);
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(safeUser));
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem(AUTH_USER_KEY);
+  };
+
+  const handleCurrentUserUpdate = (user) => {
+    const safeUser = normalizeAuthUser(user);
+    setCurrentUser(safeUser);
+    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(safeUser));
+  };
+
+  if (!currentUser) {
+    return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
+  }
+
+  return (
+    <CalendarApp
+      currentUser={currentUser}
+      onLogout={handleLogout}
+      onUpdateCurrentUser={handleCurrentUserUpdate}
+    />
+  );
+}
+
+function AuthScreen({ onAuthSuccess }) {
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [localOtpCode, setLocalOtpCode] = useState('');
+  const [isOtpSent, setIsOtpSent] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const googleButtonRef = useRef(null);
+
+  const resetForm = () => {
+    setUsername('');
+    setEmail('');
+    setIdentifier('');
+    setPassword('');
+    setConfirmPassword('');
+    setOtpCode('');
+    setLocalOtpCode('');
+    setIsOtpSent(false);
+    setRememberMe(true);
+    setAcceptTerms(false);
+    setIsSubmitting(false);
+    setIsSendingOtp(false);
+    setError('');
+    setSuccess('');
+  };
+
+  const switchMode = (loginMode) => {
+    setIsLoginMode(loginMode);
+    resetForm();
+  };
+
+  const syncUserToLocalCache = (user) => {
+    const normalized = normalizeAuthUser(user);
+    if (!normalized) return;
+
+    const users = getLocalUsers();
+    const existingIndex = users.findIndex((entry) => entry.id === normalized.id);
+    const nextUserRecord = {
+      ...(existingIndex >= 0 ? users[existingIndex] : {}),
+      id: normalized.id,
+      username: normalized.username,
+      email: normalized.email,
+      avatarUrl: normalized.avatarUrl || '',
+      password: existingIndex >= 0 ? users[existingIndex].password || '' : '',
+    };
+
+    if (existingIndex >= 0) {
+      const updated = [...users];
+      updated[existingIndex] = nextUserRecord;
+      saveLocalUsers(updated);
+    } else {
+      saveLocalUsers([...users, nextUserRecord]);
+    }
+  };
+
+  const signInWithGoogleProfile = ({ email: rawEmail, name: rawName, picture: rawPicture }) => {
+    const userEmail = String(rawEmail || '').trim().toLowerCase();
+    if (!userEmail) throw new Error('Google account email is missing.');
+
+    const users = getLocalUsers();
+    let matchedUser = users.find((entry) => entry.email === userEmail);
+
+    if (!matchedUser) {
+      const baseUsername = String(rawName || userEmail.split('@')[0] || 'google_user')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_]/g, '');
+      const uniqueSuffix = generateId().slice(0, 4);
+      const uniqueUsername = users.some((entry) => entry.username === baseUsername)
+        ? `${baseUsername}_${uniqueSuffix}`
+        : baseUsername;
+
+      matchedUser = {
+        id: `google-${generateId()}`,
+        username: uniqueUsername,
+        email: userEmail,
+        avatarUrl: String(rawPicture || '').trim(),
+        password: '',
+      };
+      saveLocalUsers([...users, matchedUser]);
+    } else if (rawPicture && matchedUser.avatarUrl !== rawPicture) {
+      const updatedUsers = users.map((entry) =>
+        entry.id === matchedUser.id ? { ...entry, avatarUrl: rawPicture } : entry
+      );
+      saveLocalUsers(updatedUsers);
+      matchedUser = { ...matchedUser, avatarUrl: rawPicture };
+    }
+
+    onAuthSuccess(matchedUser);
+  };
+
+  const decodeGoogleCredential = (credential) => {
+    const payloadBase64 = credential.split('.')[1];
+    const normalized = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = atob(normalized);
+    return JSON.parse(decoded);
+  };
+
+  const handleGoogleCredential = async (response) => {
+    const idToken = response?.credential;
+    if (!idToken) {
+      setError('Google sign-in failed. Please try again.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      if (AUTH_API_BASE_URL) {
+        const result = await postAuthApi('/auth/google', { idToken });
+        syncUserToLocalCache(result.user);
+        onAuthSuccess(result.user);
+        return;
+      }
+
+      const payload = decodeGoogleCredential(idToken);
+      signInWithGoogleProfile({
+        email: payload.email,
+        name: payload.name,
+        picture: payload.picture,
+      });
+    } catch (err) {
+      setError(err.message || 'Google sign-in failed.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleButtonClick = () => {
+    setError('');
+    setSuccess('');
+
+    if (GOOGLE_CLIENT_ID && window.google?.accounts?.id) {
+      window.google.accounts.id.prompt();
+      return;
+    }
+
+    const demoEmail = window.prompt('Enter Google email (demo mode)');
+    if (!demoEmail) return;
+
+    const normalizedDemoEmail = demoEmail.trim().toLowerCase();
+    if (!normalizedDemoEmail.includes('@')) {
+      setError('Invalid email format.');
+      return;
+    }
+
+    try {
+      signInWithGoogleProfile({
+        email: normalizedDemoEmail,
+        name: normalizedDemoEmail.split('@')[0],
+        picture: '',
+      });
+    } catch (err) {
+      setError(err.message || 'Google sign-in failed.');
+    }
+  };
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID || !googleButtonRef.current) return;
+
+    let isCancelled = false;
+    const renderGoogleButton = () => {
+      if (isCancelled || !window.google?.accounts?.id || !googleButtonRef.current) return;
+
+      googleButtonRef.current.innerHTML = '';
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: handleGoogleCredential,
+      });
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        theme: 'outline',
+        size: 'large',
+        width: 360,
+        text: isLoginMode ? 'signin_with' : 'signup_with',
+        shape: 'pill',
+      });
+    };
+
+    if (window.google?.accounts?.id) {
+      renderGoogleButton();
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = renderGoogleButton;
+    document.head.appendChild(script);
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isLoginMode]);
+
+  const handleSendOtp = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setError('Please enter your email before requesting OTP.');
+      return;
+    }
+
+    setIsSendingOtp(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      if (AUTH_API_BASE_URL) {
+        const result = await postAuthApi('/auth/send-otp', { email: normalizedEmail });
+        setSuccess(result.message || 'OTP has been sent to your email.');
+      } else {
+        const generated = String(Math.floor(100000 + Math.random() * 900000));
+        setLocalOtpCode(generated);
+        setSuccess(`Demo mode OTP: ${generated}`);
+      }
+      setIsOtpSent(true);
+    } catch (err) {
+      setError(err.message || 'Failed to send OTP.');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+    setIsSubmitting(true);
+
+    try {
+      const users = getLocalUsers();
+
+      if (isLoginMode) {
+        const normalizedIdentifier = identifier.trim().toLowerCase();
+        if (!normalizedIdentifier || !password) {
+          throw new Error('Please enter username/email and password.');
+        }
+
+        if (AUTH_API_BASE_URL) {
+          const result = await postAuthApi('/auth/login', {
+            identifier: normalizedIdentifier,
+            password,
+          });
+          syncUserToLocalCache(result.user);
+          onAuthSuccess(result.user);
+          return;
+        }
+
+        const matchedUser = users.find(
+          (u) =>
+            (u.email === normalizedIdentifier || u.username === normalizedIdentifier) &&
+            u.password === password
+        );
+        if (!matchedUser) {
+          throw new Error('Invalid username/email or password.');
+        }
+
+        onAuthSuccess(matchedUser);
+        return;
+      }
+
+      const normalizedUsername = username.trim().toLowerCase();
+      const normalizedEmail = email.trim().toLowerCase();
+
+      if (!normalizedUsername || !normalizedEmail || !password) {
+        throw new Error('Please fill in all required fields.');
+      }
+      if (password.length < 6) {
+        throw new Error('Password must be at least 6 characters.');
+      }
+      if (password !== confirmPassword) {
+        throw new Error('Passwords do not match.');
+      }
+      if (!acceptTerms) {
+        throw new Error('Please accept terms and privacy policy.');
+      }
+      if (!isOtpSent) {
+        throw new Error('Please send OTP to verify your email first.');
+      }
+      if (!otpCode.trim()) {
+        throw new Error('Please enter OTP code.');
+      }
+
+      if (AUTH_API_BASE_URL) {
+        const result = await postAuthApi('/auth/register', {
+          username: normalizedUsername,
+          email: normalizedEmail,
+          password,
+          otp: otpCode.trim(),
+        });
+        syncUserToLocalCache(result.user);
+        onAuthSuccess(result.user);
+        return;
+      }
+
+      if (users.some((u) => u.username === normalizedUsername)) {
+        throw new Error('This username is already taken.');
+      }
+      if (users.some((u) => u.email === normalizedEmail)) {
+        throw new Error('This email is already registered.');
+      }
+      if (!localOtpCode || otpCode.trim() !== localOtpCode) {
+        throw new Error('Invalid OTP code.');
+      }
+
+      const newUser = {
+        id: generateId(),
+        username: normalizedUsername,
+        email: normalizedEmail,
+        avatarUrl: '',
+        password,
+      };
+
+      saveLocalUsers([...users, newUser]);
+      onAuthSuccess(newUser);
+    } catch (err) {
+      setError(err.message || 'Authentication failed.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-100 via-slate-100 to-cyan-100 flex items-center justify-center p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-blue-100 overflow-hidden">
+        <div className="bg-blue-600 px-6 py-5 text-white">
+          <h1 className="text-2xl font-bold">PM Calendar</h1>
+          <p className="text-blue-100 text-sm mt-1">
+            {isLoginMode ? 'Sign in to continue' : 'Create account with email verification'}
+          </p>
+        </div>
+
+        <div className="p-6">
+          <div className="grid grid-cols-2 rounded-lg bg-gray-100 p-1 mb-4">
+            <button
+              type="button"
+              onClick={() => switchMode(true)}
+              className={`py-2 rounded-md text-sm font-medium transition-colors ${
+                isLoginMode ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'
+              }`}
+            >
+              Login
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode(false)}
+              className={`py-2 rounded-md text-sm font-medium transition-colors ${
+                !isLoginMode ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'
+              }`}
+            >
+              Register
+            </button>
+          </div>
+
+          <div className="space-y-2 mb-4">
+            <div ref={googleButtonRef} className="hidden" />
+            <button
+              type="button"
+              onClick={handleGoogleButtonClick}
+              className="w-full h-11 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-medium flex items-center justify-center gap-2 transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 18 18" aria-hidden="true">
+                <path
+                  fill="#4285F4"
+                  d="M17.64 9.2045c0-.638-.0573-1.2518-.1636-1.8409H9v3.4818h4.8436c-.2087 1.125-.8427 2.0782-1.7964 2.7164v2.2582h2.9082c1.7018-1.5664 2.6846-3.8727 2.6846-6.6155z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M9 18c2.43 0 4.4673-.8064 5.9564-2.1791l-2.9082-2.2582c-.8064.54-1.8409.8591-3.0482.8591-2.3441 0-4.3282-1.5827-5.0364-3.7091H.9573v2.3327C2.4382 15.9836 5.4818 18 9 18z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M3.9636 10.7127c-.18-.54-.2836-1.1168-.2836-1.7127s.1036-1.1727.2836-1.7127V4.9545H.9573C.3477 6.1691 0 7.5409 0 9s.3477 2.8309.9573 4.0455l3.0063-2.3328z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M9 3.5795c1.3214 0 2.5078.4541 3.4405 1.3459l2.5814-2.5814C13.4632.8918 11.4268 0 9 0 5.4818 0 2.4382 2.0164.9573 4.9545l3.0063 2.3328c.7082-2.1264 2.6923-3.7091 5.0364-3.7091z"
+                />
+              </svg>
+              <span>{isLoginMode ? 'Login with Google' : 'Register with Google'}</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 mb-4">
+            <div className="h-px bg-gray-200 flex-1" />
+            <span className="text-[11px] text-gray-400 uppercase tracking-wider">or</span>
+            <div className="h-px bg-gray-200 flex-1" />
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-3">
+            {isLoginMode ? (
+              <>
+                <input
+                  type="text"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  placeholder="Email or Username"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+                <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  Remember me
+                </label>
+              </>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Username"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Email"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm password"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+                <div className="grid grid-cols-[1fr,auto] gap-2">
+                  <input
+                    type="text"
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value)}
+                    placeholder="OTP Code"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendOtp}
+                    disabled={isSendingOtp || isSubmitting}
+                    className="px-4 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 disabled:opacity-60"
+                  >
+                    {isSendingOtp ? 'Sending...' : isOtpSent ? 'Resend OTP' : 'Send OTP'}
+                  </button>
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={acceptTerms}
+                    onChange={(e) => setAcceptTerms(e.target.checked)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  I accept Terms of Service and Privacy Policy.
+                </label>
+              </>
+            )}
+
+            {error && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {error}
+              </p>
+            )}
+
+            {success && (
+              <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                {success}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={isSubmitting || isSendingOtp}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold rounded-lg py-2.5 transition-colors inline-flex items-center justify-center gap-2"
+            >
+              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              {isLoginMode ? 'Login' : 'Create account'}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UserAvatar({ user, sizeClass = 'w-9 h-9', textClass = 'text-xs', ringClass = 'ring-2 ring-white' }) {
+  const avatarUrl = String(user?.avatarUrl || '').trim();
+  const [hasImageError, setHasImageError] = useState(false);
+
+  useEffect(() => {
+    setHasImageError(false);
+  }, [avatarUrl]);
+
+  if (avatarUrl && !hasImageError) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={user?.username || user?.email || 'User avatar'}
+        className={`${sizeClass} rounded-full object-cover bg-white ${ringClass}`}
+        onError={() => setHasImageError(true)}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`${sizeClass} rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 text-white flex items-center justify-center font-semibold uppercase ${ringClass}`}
+    >
+      <span className={textClass}>{getInitials(user?.username || user?.email || 'U')}</span>
+    </div>
+  );
+}
+
+function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassword }) {
+  const [username, setUsername] = useState(currentUser.username || '');
+  const [email, setEmail] = useState(currentUser.email || '');
+  const [avatarUrl, setAvatarUrl] = useState(currentUser.avatarUrl || '');
+  const [isPasswordPopupOpen, setIsPasswordPopupOpen] = useState(false);
+  const [profileResult, setProfileResult] = useState(null);
+
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [passwordResult, setPasswordResult] = useState(null);
+
+  useEffect(() => {
+    setUsername(currentUser.username || '');
+    setEmail(currentUser.email || '');
+    setAvatarUrl(currentUser.avatarUrl || '');
+  }, [currentUser.id, currentUser.username, currentUser.email, currentUser.avatarUrl]);
+
+  const handleAvatarUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setProfileResult({ ok: false, message: 'Please select an image file only.' });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAvatarUrl(String(reader.result || ''));
+      setProfileResult(null);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleProfileSubmit = (e) => {
+    e.preventDefault();
+    const result = onSaveProfile({ username, email, avatarUrl });
+    setProfileResult(result);
+  };
+
+  const handlePasswordSubmit = () => {
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      setPasswordResult({ ok: false, message: 'Please fill in all password fields.' });
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setPasswordResult({ ok: false, message: 'New password and confirm password do not match.' });
+      return;
+    }
+
+    const result = onChangePassword({ currentPassword, newPassword });
+    setPasswordResult(result);
+
+    if (result?.ok) {
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setIsPasswordPopupOpen(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-cyan-50 p-4 md:p-8">
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to calendar
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[300px,1fr] gap-6">
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 h-fit">
+            <div className="flex flex-col items-center text-center">
+              <UserAvatar
+                user={{ ...currentUser, username, email, avatarUrl }}
+                sizeClass="w-24 h-24"
+                textClass="text-2xl"
+                ringClass="ring-4 ring-white shadow-sm"
+              />
+              <h2 className="mt-4 text-lg font-semibold text-gray-800 break-all">{username || 'username'}</h2>
+              <p className="text-sm text-gray-500 break-all">{email || 'email@example.com'}</p>
+              <p className="text-xs text-gray-400 mt-3 leading-relaxed">
+                Manage your profile information and account security in one place.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <form
+              onSubmit={handleProfileSubmit}
+              className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-800">Profile</h3>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label className="space-y-1">
+                  <span className="text-sm font-medium text-gray-600">Username</span>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full border border-gray-300 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="username"
+                    required
+                  />
+                </label>
+
+                <label className="space-y-1">
+                  <span className="text-sm font-medium text-gray-600">Email</span>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full border border-gray-300 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="name@company.com"
+                    required
+                  />
+                </label>
+              </div>
+
+              <label className="space-y-1 block">
+                <span className="text-sm font-medium text-gray-600">Avatar image URL</span>
+                <input
+                  type="url"
+                  value={avatarUrl}
+                  onChange={(e) => setAvatarUrl(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="https://example.com/avatar.jpg"
+                />
+              </label>
+
+              {profileResult && (
+                <p
+                  className={`text-sm rounded-lg px-3 py-2 border ${
+                    profileResult.ok
+                      ? 'bg-green-50 text-green-700 border-green-200'
+                      : 'bg-red-50 text-red-600 border-red-200'
+                  }`}
+                >
+                  {profileResult.message}
+                </p>
+              )}
+
+              <input
+                id="profile-avatar-upload"
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarUpload}
+                className="hidden"
+              />
+
+              <div className="flex flex-wrap items-center gap-3">
+                <label
+                  htmlFor="profile-avatar-upload"
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors text-sm font-medium"
+                >
+                  <ImageIcon className="w-4 h-4" /> Upload image
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setAvatarUrl('')}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors text-sm font-medium"
+                >
+                  <Trash2 className="w-4 h-4" /> Remove image
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPasswordResult(null);
+                    setCurrentPassword('');
+                    setNewPassword('');
+                    setConfirmNewPassword('');
+                    setIsPasswordPopupOpen(true);
+                  }}
+                  className="inline-flex items-center gap-2 bg-gray-900 hover:bg-black text-white rounded-lg px-4 py-2.5 font-medium transition-colors"
+                >
+                  <Lock className="w-4 h-4" /> Change password
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2.5 font-medium transition-colors"
+                >
+                  <Check className="w-4 h-4" /> Save profile
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {isPasswordPopupOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-800">Change password</h3>
+              <button
+                type="button"
+                onClick={() => setIsPasswordPopupOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <label className="space-y-1 block">
+                <span className="text-sm font-medium text-gray-600">Current password</span>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <label className="space-y-1 block">
+                  <span className="text-sm font-medium text-gray-600">New password</span>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full border border-gray-300 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    minLength={6}
+                  />
+                </label>
+                <label className="space-y-1 block">
+                  <span className="text-sm font-medium text-gray-600">Confirm new password</span>
+                  <input
+                    type="password"
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    className="w-full border border-gray-300 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    minLength={6}
+                  />
+                </label>
+              </div>
+
+              {passwordResult && (
+                <p
+                  className={`text-sm rounded-lg px-3 py-2 border ${
+                    passwordResult.ok
+                      ? 'bg-green-50 text-green-700 border-green-200'
+                      : 'bg-red-50 text-red-600 border-red-200'
+                  }`}
+                >
+                  {passwordResult.message}
+                </p>
+              )}
+            </div>
+            <div className="px-5 py-4 border-t border-gray-100 bg-gray-50 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsPasswordPopupOpen(false)}
+                className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePasswordSubmit}
+                className="px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-black"
+              >
+                Save password
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   // --- State ---
   const [projects, setProjects] = useState([
     { 
@@ -105,12 +1219,16 @@ export default function App() {
     }
   ]);
 
+  const accountDbKey = useMemo(() => getAccountDbKey(currentUser.id), [currentUser.id]);
+  const [isAccountDataHydrated, setIsAccountDataHydrated] = useState(false);
+
   const [isMergeView, setIsMergeView] = useState(false);
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   
   // Project Dashboard Navigation
   const [activeDashboardProjectId, setActiveDashboardProjectId] = useState(null);
+  const [isProfileViewOpen, setIsProfileViewOpen] = useState(false);
 
   // Data for Event Modal
   const [editingEvent, setEditingEvent] = useState(null);
@@ -126,6 +1244,56 @@ export default function App() {
     return { start, end };
   });
   const [hidePastWeeks, setHidePastWeeks] = useState(true);
+
+  useEffect(() => {
+    setIsAccountDataHydrated(false);
+
+    try {
+      const rawData = localStorage.getItem(accountDbKey);
+      if (!rawData) {
+        setProjects((prev) => prev.map((project) => ensureProjectOwnership(project, currentUser)));
+        setIsAccountDataHydrated(true);
+        return;
+      }
+
+      const parsed = JSON.parse(rawData);
+
+      if (Array.isArray(parsed.projects)) {
+        setProjects(parsed.projects.map((project) => ensureProjectOwnership(project, currentUser)));
+      } else {
+        setProjects((prev) => prev.map((project) => ensureProjectOwnership(project, currentUser)));
+      }
+
+      if (Array.isArray(parsed.events)) {
+        setEvents(parsed.events);
+      }
+
+      if (parsed.displayRange?.start && parsed.displayRange?.end) {
+        setDisplayRange(parsed.displayRange);
+      }
+
+      if (typeof parsed.hidePastWeeks === 'boolean') {
+        setHidePastWeeks(parsed.hidePastWeeks);
+      }
+    } catch {
+      setProjects((prev) => prev.map((project) => ensureProjectOwnership(project, currentUser)));
+    } finally {
+      setIsAccountDataHydrated(true);
+    }
+  }, [accountDbKey, currentUser]);
+
+  useEffect(() => {
+    if (!isAccountDataHydrated) return;
+
+    const dbPayload = {
+      projects,
+      events,
+      displayRange,
+      hidePastWeeks,
+    };
+
+    localStorage.setItem(accountDbKey, JSON.stringify(dbPayload));
+  }, [isAccountDataHydrated, accountDbKey, projects, events, displayRange, hidePastWeeks]);
 
   // Current week calculation
   const currentWeekStart = useMemo(() => {
@@ -230,7 +1398,18 @@ export default function App() {
 
   const saveProject = (projectData) => {
     if (projectData.id) {
-      setProjects(projects.map(p => p.id === projectData.id ? { ...p, ...projectData } : p));
+      const targetProject = projects.find((project) => project.id === projectData.id);
+      if (targetProject && targetProject.ownerId !== currentUser.id) {
+        alert('Only the project creator can edit this project.');
+        return;
+      }
+
+      setProjects(
+        projects.map((project) => {
+          if (project.id !== projectData.id) return project;
+          return ensureProjectOwnership({ ...project, ...projectData }, currentUser);
+        })
+      );
     } else {
       const newProject = { 
         ...projectData, 
@@ -238,21 +1417,190 @@ export default function App() {
         isVisible: visibleProjects.length < 4,
         status: 'on_track',
         description: '',
-        milestones: []
+        milestones: [],
+        ownerId: currentUser.id,
+        ownerUsername: currentUser.username,
+        members: [currentUser.username]
       };
       setProjects([...projects, newProject]);
     }
   };
 
   const updateProjectDetails = (projectId, updates) => {
-    setProjects(projects.map(p => p.id === projectId ? { ...p, ...updates } : p));
+    setProjects(
+      projects.map((project) => {
+        if (project.id !== projectId) return project;
+        return ensureProjectOwnership({ ...project, ...updates }, currentUser);
+      })
+    );
   };
 
   const deleteProject = (projectId) => {
+    const projectToDelete = projects.find((project) => project.id === projectId);
+    if (!projectToDelete) return;
+
+    if (projectToDelete.ownerId !== currentUser.id) {
+      alert('Only the project creator can delete this project.');
+      return;
+    }
+
     setProjects(projects.filter(p => p.id !== projectId));
     setEvents(events.filter(ev => ev.projectId !== projectId)); // Cascade delete
     if (activeDashboardProjectId === projectId) setActiveDashboardProjectId(null);
   };
+
+  const inviteMemberToProject = (projectId, identifier) => {
+    const normalizedIdentifier = String(identifier || '').trim().toLowerCase();
+    if (!normalizedIdentifier) {
+      return { ok: false, message: 'Please enter username or email to invite.' };
+    }
+
+    const allUsers = getLocalUsers();
+    const invitedUser = allUsers.find(
+      (user) => user.email === normalizedIdentifier || user.username === normalizedIdentifier
+    );
+
+    if (!invitedUser) {
+      return { ok: false, message: 'This user does not exist.' };
+    }
+
+    let response = { ok: false, message: 'Project not found.' };
+
+    setProjects((prevProjects) =>
+      prevProjects.map((project) => {
+        if (project.id !== projectId) return project;
+
+        if (project.ownerId !== currentUser.id) {
+          response = { ok: false, message: 'Only the project creator can invite members.' };
+          return project;
+        }
+
+        const nextProject = ensureProjectOwnership(project, currentUser);
+        if (nextProject.members.includes(invitedUser.username)) {
+          response = { ok: false, message: 'This user is already in the project.' };
+          return nextProject;
+        }
+
+        response = {
+          ok: true,
+          message: `Invited ${invitedUser.username} to ${project.name}.`,
+        };
+
+        return {
+          ...nextProject,
+          members: [...nextProject.members, invitedUser.username],
+        };
+      })
+    );
+
+    return response;
+  };
+
+  const handleSaveProfile = ({ username, email, avatarUrl }) => {
+    const normalizedUsername = String(username || '').trim().toLowerCase();
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const normalizedAvatarUrl = String(avatarUrl || '').trim();
+
+    if (!normalizedUsername || !normalizedEmail) {
+      return { ok: false, message: 'Username and email are required.' };
+    }
+
+    const users = getLocalUsers();
+    const existingUser = users.find((user) => user.id === currentUser.id);
+    if (!existingUser) {
+      return { ok: false, message: 'Current user record not found.' };
+    }
+
+    if (users.some((user) => user.id !== currentUser.id && user.username === normalizedUsername)) {
+      return { ok: false, message: 'This username is already taken.' };
+    }
+
+    if (users.some((user) => user.id !== currentUser.id && user.email === normalizedEmail)) {
+      return { ok: false, message: 'This email is already registered.' };
+    }
+
+    const oldUsername = String(existingUser.username || '').trim().toLowerCase();
+    const nextUsers = users.map((user) =>
+      user.id === currentUser.id
+        ? { ...user, username: normalizedUsername, email: normalizedEmail, avatarUrl: normalizedAvatarUrl }
+        : user
+    );
+    saveLocalUsers(nextUsers);
+
+    const nextCurrentUser = normalizeAuthUser({
+      ...existingUser,
+      username: normalizedUsername,
+      email: normalizedEmail,
+      avatarUrl: normalizedAvatarUrl,
+    });
+    onUpdateCurrentUser(nextCurrentUser);
+    const usernameChanged = Boolean(oldUsername && oldUsername !== normalizedUsername);
+    const nextProjects = usernameChanged
+      ? projects.map((project) =>
+          ensureProjectOwnership(
+            migrateProjectUsername(project, oldUsername, normalizedUsername),
+            nextCurrentUser
+          )
+        )
+      : projects;
+
+    if (usernameChanged) {
+      setProjects(nextProjects);
+    }
+
+    localStorage.setItem(
+      accountDbKey,
+      JSON.stringify({
+        projects: nextProjects,
+        events,
+        displayRange,
+        hidePastWeeks,
+      })
+    );
+
+    return { ok: true, message: 'Profile updated successfully.' };
+  };
+
+  const handleChangePassword = ({ currentPassword, newPassword }) => {
+    const normalizedCurrentPassword = String(currentPassword || '');
+    const normalizedNewPassword = String(newPassword || '');
+
+    if (!normalizedCurrentPassword || !normalizedNewPassword) {
+      return { ok: false, message: 'Please fill in current and new password.' };
+    }
+
+    if (normalizedNewPassword.length < 6) {
+      return { ok: false, message: 'New password must be at least 6 characters.' };
+    }
+
+    const users = getLocalUsers();
+    const existingUser = users.find((user) => user.id === currentUser.id);
+    if (!existingUser) {
+      return { ok: false, message: 'Current user record not found.' };
+    }
+
+    if (existingUser.password !== normalizedCurrentPassword) {
+      return { ok: false, message: 'Current password is incorrect.' };
+    }
+
+    const nextUsers = users.map((user) =>
+      user.id === currentUser.id ? { ...user, password: normalizedNewPassword } : user
+    );
+    saveLocalUsers(nextUsers);
+
+    return { ok: true, message: 'Password changed successfully.' };
+  };
+
+  if (isProfileViewOpen) {
+    return (
+      <ProfileSettingsView
+        currentUser={currentUser}
+        onBack={() => setIsProfileViewOpen(false)}
+        onSaveProfile={handleSaveProfile}
+        onChangePassword={handleChangePassword}
+      />
+    );
+  }
 
   // --- Render App View vs Project Dashboard View ---
   if (activeDashboardProjectId) {
@@ -261,6 +1609,7 @@ export default function App() {
       return (
         <ProjectDashboard 
           project={activeProject} 
+          currentUser={currentUser}
           events={events.filter(e => e.projectId === activeProject.id)}
           onBack={() => setActiveDashboardProjectId(null)} 
           onUpdateEvent={updateEvent}
@@ -326,6 +1675,32 @@ export default function App() {
             <Settings className="w-4 h-4" />
             <span>จัดการ Project</span>
           </button>
+
+          <div className="w-px h-6 bg-gray-300"></div>
+
+          <button
+            type="button"
+            onClick={() => setIsProfileViewOpen(true)}
+            className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-gray-100 transition-colors"
+            title="Open profile settings"
+          >
+            <UserAvatar user={currentUser} sizeClass="w-8 h-8" textClass="text-[11px]" />
+            <div className="hidden md:flex flex-col leading-tight text-left">
+              <span className="text-[11px] text-gray-400">Signed in as</span>
+              <span className="text-sm font-semibold text-gray-700 truncate max-w-[180px]">
+                {currentUser.username || currentUser.email}
+              </span>
+            </div>
+          </button>
+
+          <button
+            onClick={onLogout}
+            className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200 px-3 py-2 rounded-lg font-medium transition-colors"
+            title="Logout"
+          >
+            <LogOut className="w-4 h-4" />
+            <span className="hidden sm:inline">Logout</span>
+          </button>
         </div>
       </header>
 
@@ -390,6 +1765,7 @@ export default function App() {
                             month={month} 
                             projects={visibleProjects} 
                             events={events}
+                            showEventTime
                             onDayClick={(dateStr) => handleDayClick(dateStr, null)}
                             onEventClick={handleEventClick}
                             hidePastWeeks={hidePastWeeks}
@@ -405,6 +1781,7 @@ export default function App() {
                               month={month} 
                               projects={[project]} 
                               events={events.filter(e => e.projectId === project.id)}
+                              showEventTime={false}
                               onDayClick={(dateStr) => handleDayClick(dateStr, project.id)}
                               onEventClick={handleEventClick}
                               hidePastWeeks={hidePastWeeks}
@@ -426,10 +1803,12 @@ export default function App() {
       {showProjectModal && (
         <ProjectManagerModal 
           projects={projects}
+          currentUser={currentUser}
           onClose={() => setShowProjectModal(false)}
           onToggleVisibility={toggleProjectVisibility}
           onSaveProject={saveProject}
           onDeleteProject={deleteProject}
+          onInviteMember={inviteMemberToProject}
           displayRange={displayRange}
           setDisplayRange={setDisplayRange}
           hidePastWeeks={hidePastWeeks}
@@ -527,7 +1906,7 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
 };
 
 // --- Project Dashboard View (Like Asana) ---
-function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, onDeleteTask, onUpdateProject }) {
+function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent, onSaveTask, onDeleteTask, onUpdateProject }) {
   // เปลี่ยนค่าเริ่มต้นให้เปิดหน้า Project Organization เป็นอันดับแรก
   const [activeTab, setActiveTab] = useState('organization'); 
   const projectColor = PROJECT_COLORS[project.colorIndex] || PROJECT_COLORS[0];
@@ -544,17 +1923,23 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
   
   // Local state for Team Notes
   const [noteSection, setNoteSection] = useState('department'); // 'department' | 'member'
-  const [activeNoteId, setActiveNoteId] = useState('Management');
-  const [notesContent, setNotesContent] = useState({});
+  const [activeNoteId, setActiveNoteId] = useState('Unassigned');
+  const [notesContent, setNotesContent] = useState(project.notesContent || {});
+  const [teamMembers, setTeamMembers] = useState(() => normalizeProjectTeamMembers(project));
+  const [projectPositions, setProjectPositions] = useState(() => normalizeRoles(project.positions || project.roles));
+  const [projectDepartments, setProjectDepartments] = useState(() => normalizeDepartments(project.departments));
+  const [isOrgEditMode, setIsOrgEditMode] = useState(false);
+  const [optionsPopupType, setOptionsPopupType] = useState(null); // 'position' | 'department' | null
+  const [newOptionValue, setNewOptionValue] = useState('');
+  const [editingOptionOriginal, setEditingOptionOriginal] = useState('');
+  const [editingOptionValue, setEditingOptionValue] = useState('');
 
-  // Local state for Team Management mock data
-  const [teamMembers, setTeamMembers] = useState([
-    { id: 'u1', name: 'Admin Manager', role: 'Project Owner', initials: 'AM', color: 'bg-blue-600', level: 1 },
-    { id: 'u2', name: 'Design Ops', role: 'Approver', initials: 'DO', color: 'bg-purple-500', level: 2 },
-    { id: 'u3', name: 'Tech Lead', role: 'Manager', initials: 'TL', color: 'bg-orange-400', level: 2 },
-    { id: 'u4', name: 'Frontend Dev', role: 'Contributor', initials: 'FD', color: 'bg-green-500', level: 3 },
-    { id: 'u5', name: 'QA Engineer', role: 'Contributor', initials: 'QA', color: 'bg-pink-500', level: 3 },
-  ]);
+  useEffect(() => {
+    setTeamMembers(normalizeProjectTeamMembers(project));
+    setProjectPositions(normalizeRoles(project.positions || project.roles));
+    setProjectDepartments(normalizeDepartments(project.departments));
+    setNotesContent(project.notesContent || {});
+  }, [project.id, project.teamMembers, project.positions, project.roles, project.departments, project.notesContent, project.members, project.ownerUsername]);
   
   const statusConfig = {
     on_track: { label: 'On Track (ตามแผน)', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
@@ -568,16 +1953,381 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
     { id: 'team', icon: Users, label: 'Team Management' },
     { id: 'notes', icon: FileText, label: 'Team Notes' }
   ];
+  const canManageMembers = currentUser?.username === project.ownerUsername;
+
+  const persistTeamManagement = (
+    membersInput,
+    positionsInput = projectPositions,
+    departmentsInput = projectDepartments
+  ) => {
+    const ownerUsername = String(project.ownerUsername || '').trim().toLowerCase();
+    const membersByUsername = new Map();
+
+    (Array.isArray(membersInput) ? membersInput : []).forEach((member) => {
+      const username = String(member?.username || member?.name || '').trim().toLowerCase();
+      if (!username || membersByUsername.has(username)) return;
+      membersByUsername.set(username, member);
+    });
+
+    const usernames = Array.from(new Set([ownerUsername, ...membersByUsername.keys()].filter(Boolean)));
+    const normalizedMembers = usernames.map((username, index) =>
+      buildMemberFromUsername(username, index, ownerUsername, membersByUsername.get(username))
+    );
+    const normalizedPositions = normalizeRoles(positionsInput);
+    const normalizedDepartments = normalizeDepartments([
+      ...departmentsInput,
+      ...normalizedMembers.map((member) => member.department || 'Unassigned'),
+      'Unassigned',
+    ]);
+    const memberUsernames = normalizedMembers.map((member) => member.username);
+
+    setTeamMembers(normalizedMembers);
+    setProjectPositions(normalizedPositions);
+    setProjectDepartments(normalizedDepartments);
+
+    onUpdateProject(project.id, {
+      members: memberUsernames,
+      teamMembers: normalizedMembers,
+      positions: normalizedPositions,
+      roles: normalizedPositions, // Backward compatibility for old records
+      departments: normalizedDepartments,
+    });
+  };
+
+  const CREATE_POSITION_OPTION = '__create_position__';
+  const CREATE_DEPARTMENT_OPTION = '__create_department__';
+
+  const handleCreatePosition = (memberId = null, optionName = '') => {
+    if (!canManageMembers) {
+      alert('Only project owner can manage positions.');
+      return null;
+    }
+
+    const positionName = optionName || window.prompt('Create new position');
+    if (!positionName) return null;
+
+    const trimmedPosition = positionName.trim();
+    if (!trimmedPosition) return null;
+
+    const duplicated = projectPositions.some(
+      (position) => position.toLowerCase() === trimmedPosition.toLowerCase()
+    );
+    if (duplicated) {
+      alert('This position already exists.');
+      return null;
+    }
+
+    const nextPositions = [...projectPositions, trimmedPosition];
+    const nextMembers = memberId
+      ? teamMembers.map((member) => {
+          if (member.id !== memberId) return member;
+          const isOwner = member.username === project.ownerUsername;
+          return {
+            ...member,
+            position: trimmedPosition,
+            role: trimmedPosition,
+            level: getRoleLevel(trimmedPosition, isOwner),
+          };
+        })
+      : teamMembers;
+
+    persistTeamManagement(nextMembers, nextPositions, projectDepartments);
+    return trimmedPosition;
+  };
+
+  const handleCreateDepartment = (memberId = null, optionName = '') => {
+    if (!canManageMembers) {
+      alert('Only project owner can manage departments.');
+      return null;
+    }
+
+    const departmentName = optionName || window.prompt('Create new department');
+    if (!departmentName) return null;
+
+    const trimmedDepartment = departmentName.trim();
+    if (!trimmedDepartment) return null;
+
+    const duplicated = projectDepartments.some(
+      (department) => department.toLowerCase() === trimmedDepartment.toLowerCase()
+    );
+    if (duplicated) {
+      alert('This department already exists.');
+      return null;
+    }
+
+    const nextDepartments = normalizeDepartments([...projectDepartments, trimmedDepartment, 'Unassigned']);
+    const nextMembers = memberId
+      ? teamMembers.map((member) =>
+          member.id === memberId ? { ...member, department: trimmedDepartment } : member
+        )
+      : teamMembers;
+
+    persistTeamManagement(nextMembers, projectPositions, nextDepartments);
+    return trimmedDepartment;
+  };
+
+  const handleAssignPosition = (memberId, selectedPosition) => {
+    if (!canManageMembers) {
+      alert('Only project owner can manage positions.');
+      return;
+    }
+
+    if (selectedPosition === CREATE_POSITION_OPTION) {
+      handleCreatePosition(memberId);
+      return;
+    }
+
+    const nextMembers = teamMembers.map((member) => {
+      if (member.id !== memberId) return member;
+
+      const isOwner = member.username === project.ownerUsername;
+      return {
+        ...member,
+        position: selectedPosition,
+        role: selectedPosition,
+        level: getRoleLevel(selectedPosition, isOwner),
+      };
+    });
+
+    persistTeamManagement(nextMembers, projectPositions, projectDepartments);
+  };
+
+  const handleAssignDepartment = (memberId, selectedDepartment) => {
+    if (!canManageMembers) {
+      alert('Only project owner can manage departments.');
+      return;
+    }
+
+    if (selectedDepartment === CREATE_DEPARTMENT_OPTION) {
+      handleCreateDepartment(memberId);
+      return;
+    }
+
+    const nextMembers = teamMembers.map((member) =>
+      member.id === memberId ? { ...member, department: selectedDepartment } : member
+    );
+
+    persistTeamManagement(nextMembers, projectPositions, projectDepartments);
+  };
+
+  const handleDeletePositionOption = (positionName) => {
+    if (!canManageMembers) {
+      alert('Only project owner can manage positions.');
+      return;
+    }
+
+    const normalizedTarget = String(positionName || '').trim().toLowerCase();
+    if (!normalizedTarget) return;
+
+    if (!window.confirm(`Delete position "${positionName}"?`)) return;
+
+    const nextPositions = projectPositions.filter(
+      (position) => String(position || '').trim().toLowerCase() !== normalizedTarget
+    );
+    const nextMembers = teamMembers.map((member) => {
+      if (String(member.position || '').trim().toLowerCase() !== normalizedTarget) return member;
+
+      const fallbackPosition = member.username === project.ownerUsername ? 'Project Owner' : '';
+      return {
+        ...member,
+        position: fallbackPosition,
+        role: fallbackPosition,
+        level: getRoleLevel(fallbackPosition, member.username === project.ownerUsername),
+      };
+    });
+
+    persistTeamManagement(nextMembers, nextPositions, projectDepartments);
+  };
+
+  const handleDeleteDepartmentOption = (departmentName) => {
+    if (!canManageMembers) {
+      alert('Only project owner can manage departments.');
+      return;
+    }
+
+    const normalizedTarget = String(departmentName || '').trim().toLowerCase();
+    if (!normalizedTarget || normalizedTarget === 'unassigned') return;
+
+    if (!window.confirm(`Delete department "${departmentName}"?`)) return;
+
+    const nextDepartments = projectDepartments.filter(
+      (department) => String(department || '').trim().toLowerCase() !== normalizedTarget
+    );
+    const nextMembers = teamMembers.map((member) =>
+      String(member.department || '').trim().toLowerCase() === normalizedTarget
+        ? { ...member, department: 'Unassigned' }
+        : member
+    );
+
+    persistTeamManagement(nextMembers, projectPositions, nextDepartments);
+  };
+
+  const handleRenamePositionOption = (currentName, nextName) => {
+    if (!canManageMembers) {
+      alert('Only project owner can manage positions.');
+      return false;
+    }
+
+    const currentTrimmed = String(currentName || '').trim();
+    const nextTrimmed = String(nextName || '').trim();
+    if (!currentTrimmed || !nextTrimmed) return false;
+    if (currentTrimmed.toLowerCase() === nextTrimmed.toLowerCase()) return false;
+
+    const duplicated = projectPositions.some(
+      (position) =>
+        String(position || '').trim().toLowerCase() === nextTrimmed.toLowerCase() &&
+        String(position || '').trim().toLowerCase() !== currentTrimmed.toLowerCase()
+    );
+    if (duplicated) {
+      alert('This position already exists.');
+      return false;
+    }
+
+    const nextPositions = projectPositions.map((position) =>
+      String(position || '').trim().toLowerCase() === currentTrimmed.toLowerCase() ? nextTrimmed : position
+    );
+    const nextMembers = teamMembers.map((member) => {
+      if (String(member.position || '').trim().toLowerCase() !== currentTrimmed.toLowerCase()) return member;
+      const isOwner = member.username === project.ownerUsername;
+      return {
+        ...member,
+        position: nextTrimmed,
+        role: nextTrimmed,
+        level: getRoleLevel(nextTrimmed, isOwner),
+      };
+    });
+
+    persistTeamManagement(nextMembers, nextPositions, projectDepartments);
+    return true;
+  };
+
+  const handleRenameDepartmentOption = (currentName, nextName) => {
+    if (!canManageMembers) {
+      alert('Only project owner can manage departments.');
+      return false;
+    }
+
+    const currentTrimmed = String(currentName || '').trim();
+    const nextTrimmed = String(nextName || '').trim();
+    if (!currentTrimmed || !nextTrimmed) return false;
+    if (currentTrimmed.toLowerCase() === 'unassigned') return false;
+    if (currentTrimmed.toLowerCase() === nextTrimmed.toLowerCase()) return false;
+
+    const duplicated = projectDepartments.some(
+      (department) =>
+        String(department || '').trim().toLowerCase() === nextTrimmed.toLowerCase() &&
+        String(department || '').trim().toLowerCase() !== currentTrimmed.toLowerCase()
+    );
+    if (duplicated) {
+      alert('This department already exists.');
+      return false;
+    }
+
+    const nextDepartments = projectDepartments.map((department) =>
+      String(department || '').trim().toLowerCase() === currentTrimmed.toLowerCase() ? nextTrimmed : department
+    );
+    const nextMembers = teamMembers.map((member) =>
+      String(member.department || '').trim().toLowerCase() === currentTrimmed.toLowerCase()
+        ? { ...member, department: nextTrimmed }
+        : member
+    );
+
+    persistTeamManagement(nextMembers, projectPositions, nextDepartments);
+    return true;
+  };
+
+  const openOptionsPopup = (type) => {
+    if (!canManageMembers) return;
+    setOptionsPopupType(type);
+    setNewOptionValue('');
+    setEditingOptionOriginal('');
+    setEditingOptionValue('');
+  };
+
+  const closeOptionsPopup = () => {
+    setOptionsPopupType(null);
+    setNewOptionValue('');
+    setEditingOptionOriginal('');
+    setEditingOptionValue('');
+  };
+
+  const handleAddMember = () => {
+    if (!canManageMembers) {
+      alert('Only project owner can invite members.');
+      return;
+    }
+
+    const identifier = window.prompt('Invite member by username or email');
+    if (!identifier) return;
+
+    const normalizedIdentifier = identifier.trim().toLowerCase();
+    if (!normalizedIdentifier) return;
+
+    const users = getLocalUsers();
+    const foundUser = users.find(
+      (user) => user.username === normalizedIdentifier || user.email === normalizedIdentifier
+    );
+
+    if (!foundUser) {
+      alert('User not found.');
+      return;
+    }
+
+    if (teamMembers.some((member) => member.username === foundUser.username)) {
+      alert('This member is already in the project.');
+      return;
+    }
+
+    const nextMembers = [
+      ...teamMembers,
+      buildMemberFromUsername(
+        foundUser.username,
+        teamMembers.length,
+        project.ownerUsername,
+        { username: foundUser.username, name: foundUser.username }
+      ),
+    ];
+
+    persistTeamManagement(nextMembers, projectPositions, projectDepartments);
+  };
 
   const removeMember = (id) => {
-    if (window.confirm('ยืนยันการลบสมาชิกคนนี้ออกจากโปรเจกต์?')) {
-      setTeamMembers(teamMembers.filter(m => m.id !== id));
+    if (!canManageMembers) {
+      alert('Only project owner can remove members.');
+      return;
+    }
+
+    const targetMember = teamMembers.find((member) => member.id === id);
+    if (!targetMember) return;
+
+    if (targetMember.username === project.ownerUsername) {
+      alert('Cannot remove project owner.');
+      return;
+    }
+
+    if (window.confirm('Remove this member from the project?')) {
+      const nextMembers = teamMembers.filter((member) => member.id !== id);
+      persistTeamManagement(nextMembers, projectPositions, projectDepartments);
     }
   };
 
   // --- Task Management View Logic ---
   const TASK_STATUSES = ['To Do', 'In Progress', 'Review', 'Done'];
-  const DEPARTMENTS = ['Management', 'Marketing', 'Design', 'Development', 'QA', 'Unassigned'];
+  const DEPARTMENTS = useMemo(
+    () =>
+      normalizeDepartments([
+        ...projectDepartments,
+        ...teamMembers.map((member) => member.department || 'Unassigned'),
+        'Unassigned',
+      ]),
+    [projectDepartments, teamMembers]
+  );
+  const optionsPopupItems =
+    optionsPopupType === 'position'
+      ? projectPositions
+      : optionsPopupType === 'department'
+      ? projectDepartments
+      : [];
 
   const [taskView, setTaskView] = useState('table');
   const [statusFilter, setStatusFilter] = useState([]);
@@ -600,7 +2350,14 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
     }
   };
 
-  const getAssignee = (id) => teamMembers.find(m => m.id === id) || { name: 'Unassigned', initials: '?', color: 'bg-gray-400', role: '' };
+  const getAssignee = (id) =>
+    teamMembers.find((member) => member.id === id) || {
+      name: 'Unassigned',
+      initials: '?',
+      color: 'bg-gray-400',
+      position: '',
+      role: '',
+    };
 
   const openTaskDetail = (task) => {
     setPaneTask(task);
@@ -610,6 +2367,73 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
   const openAddTask = () => {
     setPaneTask(null);
     setIsPaneOpen(true);
+  };
+
+  const memberMapById = useMemo(() => {
+    const map = {};
+    teamMembers.forEach((member) => {
+      map[member.id] = member;
+    });
+    return map;
+  }, [teamMembers]);
+
+  const orgTree = useMemo(() => {
+    const childrenMap = {};
+    const roots = [];
+
+    teamMembers.forEach((member) => {
+      childrenMap[member.id] = [];
+    });
+
+    teamMembers.forEach((member) => {
+      const managerId = member.reportsToId;
+      if (!managerId || !memberMapById[managerId] || managerId === member.id) {
+        roots.push(member);
+      } else {
+        childrenMap[managerId].push(member);
+      }
+    });
+
+    return { roots, childrenMap };
+  }, [teamMembers, memberMapById]);
+
+  const handleChangeMemberManager = (memberId, managerId) => {
+    if (!canManageMembers) {
+      alert('Only project owner can edit organization structure.');
+      return;
+    }
+
+    if (memberId === managerId) {
+      alert('A member cannot report to themselves.');
+      return;
+    }
+
+    const nextMembers = teamMembers.map((member) => {
+      if (member.id !== memberId) return member;
+      return {
+        ...member,
+        reportsToId: managerId || null,
+      };
+    });
+
+    persistTeamManagement(nextMembers, projectPositions, projectDepartments);
+  };
+
+  const renderOrgTree = (member, depth = 0) => {
+    const children = orgTree.childrenMap[member.id] || [];
+    return (
+      <div key={member.id} className="w-full">
+        <div className="flex items-start gap-3">
+          <div style={{ width: `${depth * 24}px` }} />
+          <OrgNode member={member} />
+        </div>
+        {children.length > 0 && (
+          <div className="mt-3 space-y-3">
+            {children.map((child) => renderOrgTree(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -656,10 +2480,40 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
         <main className="flex-1 overflow-y-auto bg-white p-8">
           <div className="max-w-6xl mx-auto">
             
-            <div className="mb-6 pb-4 border-b">
+            <div className="mb-6 pb-4 border-b flex items-center justify-between gap-4">
               <h2 className="text-2xl font-bold text-gray-800">
                 {TABS.find(t => t.id === activeTab)?.label}
               </h2>
+              {activeTab === 'notes' && (
+                <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200 shrink-0">
+                  <button
+                    onClick={() => {
+                      setNoteSection('department');
+                      setActiveNoteId(DEPARTMENTS[0]);
+                    }}
+                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      noteSection === 'department'
+                        ? 'bg-white shadow-sm text-blue-700'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    แยกตามฝ่าย
+                  </button>
+                  <button
+                    onClick={() => {
+                      setNoteSection('member');
+                      setActiveNoteId(teamMembers.length > 0 ? teamMembers[0].id : '');
+                    }}
+                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      noteSection === 'member'
+                        ? 'bg-white shadow-sm text-blue-700'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    แยกตามแต่ละคน
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Content Mockups Based on Active Tab */}
@@ -1095,7 +2949,7 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
                                 <div className={`w-7 h-7 rounded-full ${assignee.color} text-white flex items-center justify-center text-[10px] font-bold shadow-sm`}>{assignee.initials}</div>
                                 <div className="flex-1 overflow-hidden">
                                   <span className="text-sm text-gray-700 font-medium block truncate">{assignee.name}</span>
-                                  <span className="text-[10px] text-gray-400 block truncate">{assignee.role || 'Team Member'}</span>
+                                  <span className="text-[10px] text-gray-400 block truncate">{assignee.position || assignee.role || 'Team Member'}</span>
                                 </div>
                               </div>
                             </div>
@@ -1110,26 +2964,64 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
 
             {activeTab === 'team' && (
               <div className="space-y-8">
-                
-                {/* Section: Member List */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                   <div className="p-6 border-b border-gray-100 flex justify-between items-center">
                     <div>
-                      <h3 className="text-lg font-semibold text-gray-800">รายชื่อสมาชิกโปรเจกต์</h3>
-                      <p className="text-sm text-gray-500 mt-1">จัดการรายชื่อผู้ที่สามารถเข้าถึงและทำงานในโปรเจกต์นี้</p>
+                      <h3 className="text-lg font-semibold text-gray-800">Project Members</h3>
+                      <p className="text-sm text-gray-500 mt-1">Manage member, position and department from one place.</p>
                     </div>
-                    <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm">
-                      <Plus className="w-4 h-4" /> เพิ่มสมาชิก
+                    <button
+                      onClick={handleAddMember}
+                      disabled={!canManageMembers}
+                      title={canManageMembers ? 'Invite member' : 'Only owner can invite members'}
+                      className={`flex items-center gap-2 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm ${canManageMembers ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-300 cursor-not-allowed'}`}
+                    >
+                      <Plus className="w-4 h-4" /> Add member
                     </button>
                   </div>
-                  
+
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead className="bg-gray-50 text-gray-600">
                         <tr>
-                          <th className="px-6 py-4 font-medium w-1/2">ชื่อสมาชิก</th>
-                          <th className="px-6 py-4 font-medium">บทบาท (Role)</th>
-                          <th className="px-6 py-4 font-medium text-right">จัดการ</th>
+                          <th className="px-6 py-4 font-medium w-[34%]">Member</th>
+                          <th className="px-6 py-4 font-medium w-[25%]">
+                            <span className="inline-flex items-center gap-1.5">
+                              Position
+                              <button
+                                type="button"
+                                onClick={() => openOptionsPopup('position')}
+                                disabled={!canManageMembers}
+                                className={`p-1 rounded-md ${
+                                  canManageMembers
+                                    ? 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                                    : 'text-gray-300 cursor-not-allowed'
+                                }`}
+                                title={canManageMembers ? 'Manage position options' : 'Only owner can manage'}
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            </span>
+                          </th>
+                          <th className="px-6 py-4 font-medium w-[25%]">
+                            <span className="inline-flex items-center gap-1.5">
+                              Department
+                              <button
+                                type="button"
+                                onClick={() => openOptionsPopup('department')}
+                                disabled={!canManageMembers}
+                                className={`p-1 rounded-md ${
+                                  canManageMembers
+                                    ? 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                                    : 'text-gray-300 cursor-not-allowed'
+                                }`}
+                                title={canManageMembers ? 'Manage department options' : 'Only owner can manage'}
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            </span>
+                          </th>
+                          <th className="px-6 py-4 font-medium text-right w-[16%]"></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -1142,20 +3034,65 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
                               <span className="font-medium text-gray-800">{member.name}</span>
                             </td>
                             <td className="px-6 py-4">
-                              <span className={`inline-block px-2.5 py-1 rounded-full text-[11px] font-medium 
-                                ${member.role === 'Project Owner' ? 'bg-blue-100 text-blue-700' : 
-                                  member.role === 'Approver' ? 'bg-purple-100 text-purple-700' : 
-                                  member.role === 'Manager' ? 'bg-orange-100 text-orange-700' : 
-                                  'bg-gray-100 text-gray-700'}`}
-                              >
-                                {member.role}
-                              </span>
+                              {projectPositions.length === 0 ? (
+                                <button
+                                  onClick={() => handleCreatePosition()}
+                                  disabled={!canManageMembers}
+                                  className={`text-xs border px-3 py-1.5 rounded-lg font-medium transition-colors ${canManageMembers ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`}
+                                >
+                                  Add position
+                                </button>
+                              ) : (
+                                <select
+                                  value={member.position || ''}
+                                  onChange={(e) => handleAssignPosition(member.id, e.target.value)}
+                                  disabled={!canManageMembers}
+                                  className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                  {!member.position && <option value="">Select position</option>}
+                                  {member.position && !projectPositions.includes(member.position) && (
+                                    <option value={member.position}>{member.position}</option>
+                                  )}
+                                  {projectPositions.map((position) => (
+                                    <option key={position} value={position}>
+                                      {position}
+                                    </option>
+                                  ))}
+                                  <option value={CREATE_POSITION_OPTION}>+ Create new position</option>
+                                </select>
+                              )}
+                            </td>
+                            <td className="px-6 py-4">
+                              {projectDepartments.length === 0 ? (
+                                <button
+                                  onClick={() => handleCreateDepartment()}
+                                  disabled={!canManageMembers}
+                                  className={`text-xs border px-3 py-1.5 rounded-lg font-medium transition-colors ${canManageMembers ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`}
+                                >
+                                  Add department
+                                </button>
+                              ) : (
+                                <select
+                                  value={member.department || 'Unassigned'}
+                                  onChange={(e) => handleAssignDepartment(member.id, e.target.value)}
+                                  disabled={!canManageMembers}
+                                  className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                  {DEPARTMENTS.map((department) => (
+                                    <option key={department} value={department}>
+                                      {department}
+                                    </option>
+                                  ))}
+                                  <option value={CREATE_DEPARTMENT_OPTION}>+ Create new department</option>
+                                </select>
+                              )}
                             </td>
                             <td className="px-6 py-4 text-right">
-                              <button 
+                              <button
                                 onClick={() => removeMember(member.id)}
-                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                                title="ลบสมาชิก"
+                                disabled={!canManageMembers}
+                                className={`p-2 rounded-lg transition-all ${canManageMembers ? 'text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100' : 'text-gray-300 cursor-not-allowed opacity-40'}`}
+                                title="Remove member"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -1167,102 +3104,58 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
                   </div>
                 </div>
 
-                {/* Section: Organizational Chart */}
                 <div className="bg-gray-50 rounded-xl border border-gray-200 shadow-sm p-8 overflow-hidden relative">
                   <div className="flex justify-between items-center mb-8">
-                    <h3 className="text-lg font-semibold text-gray-800">ผังองค์กร (Organizational Chart)</h3>
-                    <button className="text-sm font-medium text-gray-500 hover:text-blue-600 flex items-center gap-1 bg-white border px-3 py-1.5 rounded-lg shadow-sm">
-                      <Edit2 className="w-4 h-4" /> แก้ไขโครงสร้าง
+                    <h3 className="text-lg font-semibold text-gray-800">Organization Structure</h3>
+                    <button
+                      onClick={() => setIsOrgEditMode((prev) => !prev)}
+                      disabled={!canManageMembers}
+                      className={`text-sm font-medium flex items-center gap-1 bg-white border px-3 py-1.5 rounded-lg shadow-sm ${canManageMembers ? 'text-gray-500 hover:text-blue-600' : 'text-gray-300 cursor-not-allowed'}`}
+                    >
+                      <Edit2 className="w-4 h-4" /> {isOrgEditMode ? 'Done' : 'Edit structure'}
                     </button>
                   </div>
 
-                  {/* Visual Org Chart Structure using Flexbox */}
-                  <div className="flex flex-col items-center">
-                    
-                    {/* Level 1: Owner */}
-                    {teamMembers.filter(m => m.level === 1).map(owner => (
-                      <div key={owner.id} className="flex flex-col items-center">
-                        <OrgNode member={owner} />
-                        <div className="w-px h-8 bg-gray-300"></div> {/* Vertical line down */}
-                      </div>
-                    ))}
-
-                    {/* Level 2: Managers/Approvers */}
-                    <div className="relative flex justify-center w-full">
-                      {/* Horizontal connecting line */}
-                      <div className="absolute top-0 w-1/2 h-px bg-gray-300"></div>
-                      
-                      <div className="flex justify-center gap-16 md:gap-32 w-full pt-8 relative">
-                        {teamMembers.filter(m => m.level === 2).map((manager, idx, arr) => (
-                          <div key={manager.id} className="flex flex-col items-center relative">
-                            {/* Vertical line up to horizontal line */}
-                            <div className="absolute -top-8 w-px h-8 bg-gray-300"></div>
-                            
-                            <OrgNode member={manager} />
-                            
-                            {/* If this manager has level 3 staff under them, draw line down. 
-                                For this mockup, we put all level 3s under the Tech Lead (u3) */}
-                            {manager.id === 'u3' && (
-                               <div className="w-px h-8 bg-gray-300"></div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                  {isOrgEditMode && canManageMembers && (
+                    <div className="mb-8 p-4 bg-white border border-gray-200 rounded-lg space-y-3">
+                      {teamMembers.map((member) => (
+                        <div key={`manager-${member.id}`} className="grid grid-cols-1 md:grid-cols-[1fr,1fr] gap-3 items-center">
+                          <span className="text-sm font-medium text-gray-700 truncate">{member.name}</span>
+                          <select
+                            value={member.reportsToId || ''}
+                            onChange={(e) => handleChangeMemberManager(member.id, e.target.value)}
+                            className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">No manager (root)</option>
+                            {teamMembers
+                              .filter((candidate) => candidate.id !== member.id)
+                              .map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>
+                                  {candidate.name}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      ))}
                     </div>
+                  )}
 
-                    {/* Level 3: Contributors (Mockup placed under Tech Lead) */}
-                    <div className="relative flex justify-center w-full mt-0">
-                      <div className="flex justify-center gap-8 w-full pt-8 relative">
-                         {/* Horizontal line for level 3 */}
-                         <div className="absolute top-0 w-1/4 h-px bg-gray-300"></div>
-                         
-                         {teamMembers.filter(m => m.level === 3).map(staff => (
-                            <div key={staff.id} className="flex flex-col items-center relative">
-                               <div className="absolute -top-8 w-px h-8 bg-gray-300"></div>
-                               <OrgNode member={staff} />
-                            </div>
-                         ))}
-                      </div>
-                    </div>
-
+                  <div className="space-y-4">
+                    {orgTree.roots.length === 0 ? (
+                      <div className="text-sm text-gray-500 italic">No member in structure yet.</div>
+                    ) : (
+                      orgTree.roots.map((rootMember) => renderOrgTree(rootMember))
+                    )}
                   </div>
                 </div>
-
               </div>
             )}
-
             {activeTab === 'notes' && (
               <div className="flex flex-col h-[calc(100vh-180px)]">
-                 {/* Top Toggle */}
-                 <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-200 shrink-0">
-                    <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                      <FileText className="w-6 h-6 text-blue-600" /> Team Notes
-                    </h3>
-                    <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200">
-                      <button 
-                        onClick={() => { setNoteSection('department'); setActiveNoteId(DEPARTMENTS[0]); }}
-                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${noteSection === 'department' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        แยกตามฝ่าย
-                      </button>
-                      <button 
-                        onClick={() => { setNoteSection('member'); setActiveNoteId(teamMembers.length > 0 ? teamMembers[0].id : ''); }}
-                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${noteSection === 'member' ? 'bg-white shadow-sm text-blue-700' : 'text-gray-500 hover:text-gray-700'}`}
-                      >
-                        แยกตามแต่ละคน
-                      </button>
-                    </div>
-                 </div>
-
                  {/* Content Area */}
                  <div className="flex gap-6 flex-1 min-h-0">
                     {/* Sidebar List */}
                     <div className="w-64 bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col shrink-0">
-                      <div className="p-4 border-b border-gray-100 bg-gray-50 rounded-t-xl">
-                         <h4 className="font-semibold text-gray-700 text-sm">
-                           {noteSection === 'department' ? 'เลือกฝ่าย (Departments)' : 'เลือกสมาชิก (Members)'}
-                         </h4>
-                      </div>
                       <div className="flex-1 overflow-y-auto p-2 space-y-1">
                          {noteSection === 'department' ? (
                            DEPARTMENTS.map(dept => (
@@ -1286,7 +3179,7 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
                                </div>
                                <div className="flex-1 overflow-hidden text-left">
                                  <span className="truncate block leading-tight">{member.name}</span>
-                                 <span className="text-[10px] opacity-70 truncate block">{member.role}</span>
+                                 <span className="text-[10px] opacity-70 truncate block">{member.position || 'No position'}</span>
                                </div>
                              </button>
                            ))
@@ -1301,7 +3194,11 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
                           noteId={activeNoteId} 
                           noteTitle={noteSection === 'department' ? `บันทึกของฝ่าย: ${activeNoteId}` : `บันทึกของ: ${teamMembers.find(m => m.id === activeNoteId)?.name || 'Unknown'}`}
                           initialContent={notesContent[activeNoteId] || ''}
-                          onSave={(id, content) => setNotesContent(prev => ({ ...prev, [id]: content }))}
+                          onSave={(id, content) => {
+                            const nextNotes = { ...notesContent, [id]: content };
+                            setNotesContent(nextNotes);
+                            onUpdateProject(project.id, { notesContent: nextNotes });
+                          }}
                         />
                       ) : (
                         <div className="h-full flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl text-gray-400 bg-gray-50/50">
@@ -1339,6 +3236,160 @@ function ProjectDashboard({ project, events, onBack, onUpdateEvent, onSaveTask, 
         TASK_STATUSES={TASK_STATUSES}
         DEPARTMENTS={DEPARTMENTS}
       />
+
+      {optionsPopupType && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-800">
+                {optionsPopupType === 'position' ? 'Manage Positions' : 'Manage Departments'}
+              </h3>
+              <button
+                type="button"
+                onClick={closeOptionsPopup}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={newOptionValue}
+                  onChange={(e) => setNewOptionValue(e.target.value)}
+                  placeholder={optionsPopupType === 'position' ? 'New position' : 'New department'}
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (optionsPopupType === 'position') {
+                      const created = handleCreatePosition(null, newOptionValue);
+                      if (created) setNewOptionValue('');
+                    } else {
+                      const created = handleCreateDepartment(null, newOptionValue);
+                      if (created) setNewOptionValue('');
+                    }
+                  }}
+                  className="px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  Add
+                </button>
+              </div>
+
+              <div className="border border-gray-200 rounded-xl overflow-hidden">
+                {optionsPopupItems.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm text-gray-400">
+                    {optionsPopupType === 'position' ? 'No positions yet' : 'No departments yet'}
+                  </div>
+                ) : (
+                  <div className="max-h-72 overflow-y-auto divide-y divide-gray-100">
+                    {optionsPopupItems.map((optionValue) => {
+                      const normalizedValue = String(optionValue || '').trim().toLowerCase();
+                      const isLockedOption =
+                        optionsPopupType === 'department' && normalizedValue === 'unassigned';
+                      const isEditing =
+                        String(editingOptionOriginal || '').trim().toLowerCase() === normalizedValue;
+
+                      return (
+                        <div key={`${optionsPopupType}-${optionValue}`} className="px-4 py-3 flex items-center gap-2">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editingOptionValue}
+                              onChange={(e) => setEditingOptionValue(e.target.value)}
+                              className="flex-1 border border-gray-300 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                              autoFocus
+                            />
+                          ) : (
+                            <span className={`flex-1 text-sm ${isLockedOption ? 'text-gray-400' : 'text-gray-700'}`}>
+                              {optionValue}
+                            </span>
+                          )}
+
+                          {isEditing ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated =
+                                    optionsPopupType === 'position'
+                                      ? handleRenamePositionOption(editingOptionOriginal, editingOptionValue)
+                                      : handleRenameDepartmentOption(editingOptionOriginal, editingOptionValue);
+
+                                  if (updated) {
+                                    setEditingOptionOriginal('');
+                                    setEditingOptionValue('');
+                                  }
+                                }}
+                                className="p-1.5 rounded-md text-green-600 hover:bg-green-50"
+                                title="Save"
+                              >
+                                <Check className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingOptionOriginal('');
+                                  setEditingOptionValue('');
+                                }}
+                                className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100"
+                                title="Cancel"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingOptionOriginal(optionValue);
+                                  setEditingOptionValue(optionValue);
+                                }}
+                                disabled={isLockedOption}
+                                className={`p-1.5 rounded-md ${
+                                  isLockedOption
+                                    ? 'text-gray-300 cursor-not-allowed'
+                                    : 'text-gray-500 hover:text-blue-600 hover:bg-blue-50'
+                                }`}
+                                title={isLockedOption ? 'Cannot edit this option' : 'Edit'}
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (optionsPopupType === 'position') {
+                                    handleDeletePositionOption(optionValue);
+                                  } else {
+                                    handleDeleteDepartmentOption(optionValue);
+                                  }
+                                }}
+                                disabled={isLockedOption}
+                                className={`p-1.5 rounded-md ${
+                                  isLockedOption
+                                    ? 'text-gray-300 cursor-not-allowed'
+                                    : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
+                                }`}
+                                title={isLockedOption ? 'Cannot delete this option' : 'Delete'}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1611,7 +3662,7 @@ function OrgNode({ member }) {
         {member.initials}
       </div>
       <p className="font-bold text-gray-800 text-sm truncate w-full">{member.name}</p>
-      <p className="text-xs text-gray-500 mt-0.5 truncate w-full">{member.role}</p>
+      <p className="text-xs text-gray-500 mt-0.5 truncate w-full">{member.position || member.role || '-'}</p>
     </div>
   );
 }
@@ -1686,7 +3737,22 @@ function NoteEditor({ noteId, noteTitle, initialContent, onSave }) {
   )
 }
 
-function MonthGrid({ year, month, projects, events, onDayClick, onEventClick, hidePastWeeks, currentWeekStart }) {
+function MonthGrid({
+  year,
+  month,
+  projects,
+  events,
+  showEventTime = false,
+  onDayClick,
+  onEventClick,
+  hidePastWeeks,
+  currentWeekStart,
+}) {
+  const toDateStr = (date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+      date.getDate()
+    ).padStart(2, '0')}`;
+
   // Date calculations
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -1696,7 +3762,8 @@ function MonthGrid({ year, month, projects, events, onDayClick, onEventClick, hi
   
   // Empty cells before the 1st day
   for (let i = 0; i < firstDay; i++) {
-    currentWeek.push({ empty: true, key: `empty-start-${i}`, date: new Date(year, month, i - firstDay + 1) });
+    const d = new Date(year, month, i - firstDay + 1);
+    currentWeek.push({ empty: true, key: `empty-start-${i}`, date: d, dateStr: toDateStr(d) });
   }
 
   // Days of the month
@@ -1715,7 +3782,8 @@ function MonthGrid({ year, month, projects, events, onDayClick, onEventClick, hi
   if (currentWeek.length > 0) {
     let i = 0;
     while (currentWeek.length < 7) {
-      currentWeek.push({ empty: true, key: `empty-end-${i}`, date: new Date(year, month + 1, i + 1) });
+      const d = new Date(year, month + 1, i + 1);
+      currentWeek.push({ empty: true, key: `empty-end-${i}`, date: d, dateStr: toDateStr(d) });
       i++;
     }
     weekRows.push(currentWeek);
@@ -1725,61 +3793,14 @@ function MonthGrid({ year, month, projects, events, onDayClick, onEventClick, hi
   const visibleWeeks = weekRows.filter(week => {
     if (!hidePastWeeks) return true;
     // The last day of the week is Saturday
-    const weekEndDate = week[6].empty ? week[6].date : week[6].dateObj;
+    const weekEndDate = week[6].dateObj || week[6].date;
     return weekEndDate >= currentWeekStart;
   });
 
   if (visibleWeeks.length === 0) return null;
 
-  const cells = [];
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-  visibleWeeks.forEach(week => {
-    week.forEach(dayData => {
-      if (dayData.empty) {
-        cells.push(<div key={dayData.key} className="min-h-[100px] border border-gray-100 bg-gray-50/50"></div>);
-      } else {
-        // Find events for this day
-        const dayEvents = events.filter(e => {
-          return dayData.dateStr >= e.startDate && dayData.dateStr <= e.endDate;
-        });
-
-        const isToday = todayStr === dayData.dateStr;
-
-        cells.push(
-          <div 
-            key={dayData.key} 
-            className={`min-h-[100px] border border-gray-100 p-1 cursor-pointer transition-colors hover:bg-blue-50 group flex flex-col`}
-            onClick={() => onDayClick(dayData.dateStr)}
-          >
-            <div className={`text-right text-xs mb-1 font-medium ${isToday ? 'text-blue-600' : 'text-gray-500'}`}>
-              <span className={isToday ? 'bg-blue-100 px-1.5 py-0.5 rounded-full' : ''}>{dayData.day}</span>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto space-y-1 scrollbar-hide">
-              {dayEvents.map(event => {
-                const project = projects.find(p => p.id === event.projectId) || projects[0];
-                const color = PROJECT_COLORS[project.colorIndex] || PROJECT_COLORS[0];
-                
-                return (
-                  <div 
-                    key={event.id}
-                    onClick={(e) => onEventClick(event, e)}
-                    className={`text-[10px] md:text-xs truncate px-1.5 py-0.5 rounded border ${color.lightBg} ${color.text} ${color.border} hover:opacity-80 transition-opacity`}
-                    title={`${event.title} (${event.startTime} - ${event.endTime})`}
-                  >
-                    {event.startDate === dayData.dateStr && <span className="font-semibold mr-1">{event.startTime}</span>}
-                    {event.title}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      }
-    });
-  });
 
   return (
     <div className="flex flex-col h-full">
@@ -1792,20 +3813,158 @@ function MonthGrid({ year, month, projects, events, onDayClick, onEventClick, hi
         ))}
       </div>
       {/* Calendar Grid */}
-      <div className="grid grid-cols-7 flex-1 content-start">
-        {cells}
+      <div className="flex-1">
+        {visibleWeeks.map((week, weekIdx) => {
+          const hasEventByDay = week.map((dayData) =>
+            !dayData.empty &&
+            events.some((event) => dayData.dateStr >= event.startDate && dayData.dateStr <= event.endDate)
+          );
+
+          const weekSegments = events
+            .map((event) => {
+              const coveredIndices = week
+                .map((dayData, idx) =>
+                  !dayData.empty && dayData.dateStr >= event.startDate && dayData.dateStr <= event.endDate
+                    ? idx
+                    : -1
+                )
+                .filter((idx) => idx >= 0);
+
+              if (coveredIndices.length === 0) return null;
+
+              const startIdx = coveredIndices[0];
+              const endIdx = coveredIndices[coveredIndices.length - 1];
+              const project = projects.find((p) => p.id === event.projectId) || projects[0];
+              const color = PROJECT_COLORS[project?.colorIndex ?? 0] || PROJECT_COLORS[0];
+
+              return {
+                event,
+                startIdx,
+                endIdx,
+                startDate: week[startIdx].dateStr,
+                color,
+              };
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.startIdx - b.startIdx || (b.endIdx - b.startIdx) - (a.endIdx - a.startIdx));
+
+          const laneEnds = [];
+          weekSegments.forEach((segment) => {
+            let lane = 0;
+            while (laneEnds[lane] !== undefined && laneEnds[lane] >= segment.startIdx) {
+              lane += 1;
+            }
+            laneEnds[lane] = segment.endIdx;
+            segment.lane = lane;
+          });
+
+          const laneHeight = 22;
+          const rowMinHeight = 96 + laneEnds.length * laneHeight;
+
+          return (
+            <div key={`week-${weekIdx}`} className="relative">
+              <div className="grid grid-cols-7">
+                {week.map((dayData, dayIndex) => {
+                  const isToday = todayStr === dayData.dateStr;
+                  const hasEvents = hasEventByDay[dayIndex];
+                  const hasPrevEvent = dayIndex > 0 && hasEventByDay[dayIndex - 1];
+                  const hasNextEvent = dayIndex < 6 && hasEventByDay[dayIndex + 1];
+
+                  const mergedBorderStyle = hasEvents
+                    ? {
+                        borderTopColor: '#fca5a5',
+                        borderBottomColor: '#fca5a5',
+                        borderLeftColor: hasPrevEvent ? 'transparent' : '#fca5a5',
+                        borderRightColor: hasNextEvent ? 'transparent' : '#fca5a5',
+                      }
+                    : undefined;
+
+                  return (
+                    <div
+                      key={dayData.key}
+                      className={`border p-1 group flex flex-col transition-colors ${
+                        dayData.empty
+                          ? 'bg-gray-50/60 border-gray-100'
+                          : `cursor-pointer hover:bg-blue-50 ${hasEvents ? 'bg-red-50/20 border-red-300' : 'border-gray-100'}`
+                      }`}
+                      style={{ minHeight: `${rowMinHeight}px`, ...mergedBorderStyle }}
+                      onClick={dayData.empty ? undefined : () => onDayClick(dayData.dateStr)}
+                    >
+                      {!dayData.empty && (
+                        <div className={`text-right text-xs mb-1 font-medium ${isToday ? 'text-blue-600' : 'text-gray-500'}`}>
+                          <span className={isToday ? 'bg-blue-100 px-1.5 py-0.5 rounded-full' : ''}>{dayData.day}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {weekSegments.length > 0 && (
+                <div className="pointer-events-none absolute left-0 right-0 top-6 px-[2px]">
+                  {weekSegments.map((segment, segmentIndex) => {
+                    const leftPercent = (segment.startIdx / 7) * 100;
+                    const widthPercent = ((segment.endIdx - segment.startIdx + 1) / 7) * 100;
+                    const showTimePrefix = showEventTime && segment.event.startDate === segment.startDate;
+                    const title = showTimePrefix
+                      ? `${segment.event.startTime} ${segment.event.title}`
+                      : segment.event.title;
+
+                    return (
+                      <button
+                        key={`${segment.event.id}-${weekIdx}-${segmentIndex}`}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEventClick(segment.event, e);
+                        }}
+                        className={`pointer-events-auto absolute text-[10px] md:text-xs truncate px-2 h-5 rounded-md border shadow-sm flex items-center ${segment.color.lightBg} ${segment.color.text} ${segment.color.border} hover:opacity-80 transition-opacity`}
+                        style={{
+                          left: `calc(${leftPercent}% + 2px)`,
+                          width: `calc(${widthPercent}% - 4px)`,
+                          top: `${segment.lane * laneHeight}px`,
+                        }}
+                        title={`${segment.event.title} (${segment.event.startTime} - ${segment.event.endTime})`}
+                      >
+                        {title}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
 // --- Project Manager Modal ---
-function ProjectManagerModal({ projects, onClose, onToggleVisibility, onSaveProject, onDeleteProject, displayRange, setDisplayRange, hidePastWeeks, setHidePastWeeks }) {
+function ProjectManagerModal({
+  projects,
+  currentUser,
+  onClose,
+  onToggleVisibility,
+  onSaveProject,
+  onDeleteProject,
+  onInviteMember,
+  displayRange,
+  setDisplayRange,
+  hidePastWeeks,
+  setHidePastWeeks,
+}) {
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
   const [editColorIndex, setEditColorIndex] = useState(0);
+  const [inviteInputs, setInviteInputs] = useState({});
 
   const startEdit = (project) => {
+    if (project.ownerId !== currentUser.id) {
+      alert('Only the project creator can edit this project.');
+      return;
+    }
+
     setEditingId(project.id);
     setEditName(project.name);
     setEditColorIndex(project.colorIndex);
@@ -1813,101 +3972,169 @@ function ProjectManagerModal({ projects, onClose, onToggleVisibility, onSaveProj
 
   const handleSave = () => {
     if (!editName.trim()) return;
-    onSaveProject({
-      id: editingId,
+
+    const payload = {
       name: editName,
-      colorIndex: editColorIndex
-    });
+      colorIndex: editColorIndex,
+    };
+
+    if (editingId && editingId !== 'new') {
+      payload.id = editingId;
+    }
+
+    onSaveProject(payload);
+
     setEditingId(null);
     setEditName('');
   };
 
-  const visibleCount = projects.filter(p => p.isVisible).length;
+  const handleInvite = (projectId) => {
+    const inputValue = inviteInputs[projectId] || '';
+    const result = onInviteMember(projectId, inputValue);
+
+    if (result?.message) {
+      alert(result.message);
+    }
+
+    if (result?.ok) {
+      setInviteInputs((prev) => ({ ...prev, [projectId]: '' }));
+    }
+  };
+
+  const visibleCount = projects.filter((project) => project.isVisible).length;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
         <div className="flex justify-between items-center p-4 border-b bg-gray-50">
           <h2 className="text-lg font-bold flex items-center gap-2">
-            <Settings className="w-5 h-5" /> จัดการ Project
+            <Settings className="w-5 h-5" /> Manage Projects
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <div className="p-4 overflow-y-auto flex-1">
           <p className="text-sm text-gray-500 mb-4">
-            เลือกโปรเจกต์ที่จะแสดงบนหน้าจอหลัก (เลือกได้สูงสุด 4 โปรเจกต์) <br/>
-            ปัจจุบันเลือกแล้ว: <span className={`font-bold ${visibleCount === 4 ? 'text-orange-500' : 'text-blue-600'}`}>{visibleCount}/4</span>
+            Choose projects to show on main board (max 4). Current:
+            <span className={`font-bold ${visibleCount === 4 ? 'text-orange-500' : 'text-blue-600'}`}> {visibleCount}/4</span>
           </p>
 
           <div className="space-y-3">
-            {projects.map(project => (
-              <div key={project.id} className="flex items-center justify-between p-3 border rounded-lg hover:border-blue-300 transition-colors">
-                
-                {editingId === project.id ? (
-                  // Edit Mode
-                  <div className="flex-1 flex flex-col gap-2">
-                    <input 
-                      type="text" 
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      className="border rounded px-2 py-1 w-full text-sm focus:outline-blue-500"
-                      autoFocus
-                    />
-                    <div className="flex gap-1">
-                      {PROJECT_COLORS.map((c, i) => (
-                        <button 
-                          key={i} 
-                          onClick={() => setEditColorIndex(i)}
-                          className={`w-6 h-6 rounded-full ${c.bg} flex items-center justify-center ${editColorIndex === i ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`}
-                        >
-                          {editColorIndex === i && <Check className="w-4 h-4 text-white" />}
+            {projects.map((project) => {
+              const isOwner = project.ownerId === currentUser.id;
+              const members = Array.isArray(project.members) ? project.members : [];
+
+              return (
+                <div key={project.id} className="p-3 border rounded-lg hover:border-blue-300 transition-colors space-y-2">
+                  {editingId === project.id ? (
+                    <div className="flex-1 flex flex-col gap-2">
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="border rounded px-2 py-1 w-full text-sm focus:outline-blue-500"
+                        autoFocus
+                      />
+                      <div className="flex gap-1">
+                        {PROJECT_COLORS.map((color, index) => (
+                          <button
+                            key={index}
+                            onClick={() => setEditColorIndex(index)}
+                            className={`w-6 h-6 rounded-full ${color.bg} flex items-center justify-center ${editColorIndex === index ? 'ring-2 ring-offset-1 ring-blue-500' : ''}`}
+                          >
+                            {editColorIndex === index && <Check className="w-4 h-4 text-white" />}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex gap-2 mt-1">
+                        <button onClick={handleSave} className="text-xs bg-blue-600 text-white px-3 py-1 rounded">
+                          Save
                         </button>
-                      ))}
+                        <button onClick={() => setEditingId(null)} className="text-xs bg-gray-200 px-3 py-1 rounded">
+                          Cancel
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex gap-2 mt-1">
-                      <button onClick={handleSave} className="text-xs bg-blue-600 text-white px-3 py-1 rounded">บันทึก</button>
-                      <button onClick={() => setEditingId(null)} className="text-xs bg-gray-200 px-3 py-1 rounded">ยกเลิก</button>
-                    </div>
-                  </div>
-                ) : (
-                  // View Mode
-                  <>
-                    <div className="flex items-center gap-3 flex-1">
-                      <button 
-                        onClick={() => onToggleVisibility(project.id)}
-                        className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${project.isVisible ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'}`}
-                      >
-                        {project.isVisible && <Check className="w-3.5 h-3.5 text-white" />}
-                      </button>
-                      <div className={`w-3 h-3 rounded-full ${PROJECT_COLORS[project.colorIndex].bg}`}></div>
-                      <span className="font-medium truncate max-w-[150px]">{project.name}</span>
-                    </div>
-                    
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => startEdit(project)} className="p-1.5 text-gray-400 hover:text-blue-600 rounded-md hover:bg-blue-50">
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button 
-                        onClick={() => {
-                          if (window.confirm(`ต้องการลบโปรเจกต์ "${project.name}" และ Event ทั้งหมดในโปรเจกต์นี้ใช่หรือไม่?`)) {
-                            onDeleteProject(project.id);
-                          }
-                        }}
-                        className="p-1.5 text-gray-400 hover:text-red-600 rounded-md hover:bg-red-50"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <button
+                            onClick={() => onToggleVisibility(project.id)}
+                            className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${project.isVisible ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'}`}
+                          >
+                            {project.isVisible && <Check className="w-3.5 h-3.5 text-white" />}
+                          </button>
+                          <div className={`w-3 h-3 rounded-full ${PROJECT_COLORS[project.colorIndex].bg}`}></div>
+                          <span className="font-medium truncate">{project.name}</span>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          {isOwner && (
+                            <button
+                              onClick={() => startEdit(project)}
+                              className="p-1.5 text-gray-400 hover:text-blue-600 rounded-md hover:bg-blue-50"
+                              title="Edit project"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Delete project "${project.name}" and all related events?`)) {
+                                onDeleteProject(project.id);
+                              }
+                            }}
+                            disabled={!isOwner}
+                            title={isOwner ? 'Delete project' : 'Only creator can delete'}
+                            className={`p-1.5 rounded-md ${isOwner ? 'text-gray-400 hover:text-red-600 hover:bg-red-50' : 'text-gray-300 cursor-not-allowed'}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-gray-500">
+                        Owner: <span className="font-semibold text-gray-700">{project.ownerUsername || '-'}</span>
+                        <span className="mx-2">|</span>
+                        Members: <span className="font-semibold text-gray-700">{members.length}</span>
+                      </div>
+
+                      {isOwner ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={inviteInputs[project.id] || ''}
+                            onChange={(e) =>
+                              setInviteInputs((prev) => ({
+                                ...prev,
+                                [project.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Invite by username or email"
+                            className="flex-1 border rounded px-2 py-1.5 text-sm focus:outline-blue-500"
+                          />
+                          <button
+                            onClick={() => handleInvite(project.id)}
+                            className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded"
+                          >
+                            Invite
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400">Only creator can invite project members.</p>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
-          {/* Add New Button */}
           {editingId !== 'new' && (
-            <button 
+            <button
               onClick={() => {
                 setEditingId('new');
                 setEditName('');
@@ -1915,71 +4142,74 @@ function ProjectManagerModal({ projects, onClose, onToggleVisibility, onSaveProj
               }}
               className="mt-4 w-full py-2 border-2 border-dashed border-gray-300 text-gray-500 rounded-lg hover:border-blue-400 hover:text-blue-500 flex items-center justify-center gap-2 font-medium transition-colors"
             >
-              <Plus className="w-4 h-4" /> เพิ่ม Project ใหม่
+              <Plus className="w-4 h-4" /> New Project
             </button>
           )}
 
-          {/* New Project Form */}
           {editingId === 'new' && (
-             <div className="mt-4 p-3 border rounded-lg bg-blue-50/50 flex flex-col gap-3">
-               <h3 className="font-semibold text-sm">สร้าง Project ใหม่</h3>
-               <input 
-                  type="text" 
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  placeholder="ชื่อโปรเจกต์..."
-                  className="border rounded px-3 py-2 w-full text-sm focus:outline-blue-500"
-                  autoFocus
-                />
-                <div className="flex gap-1.5">
-                  {PROJECT_COLORS.map((c, i) => (
-                    <button 
-                      key={i} 
-                      onClick={() => setEditColorIndex(i)}
-                      className={`w-7 h-7 rounded-full ${c.bg} flex items-center justify-center ${editColorIndex === i ? 'ring-2 ring-offset-2 ring-blue-500' : ''}`}
-                    >
-                      {editColorIndex === i && <Check className="w-4 h-4 text-white" />}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex gap-2 mt-2">
-                  <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-medium">เพิ่มโปรเจกต์</button>
-                  <button onClick={() => setEditingId(null)} className="flex-1 bg-white border border-gray-300 text-gray-700 py-2 rounded font-medium">ยกเลิก</button>
-                </div>
-             </div>
+            <div className="mt-4 p-3 border rounded-lg bg-blue-50/50 flex flex-col gap-3">
+              <h3 className="font-semibold text-sm">Create New Project</h3>
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="Project name..."
+                className="border rounded px-3 py-2 w-full text-sm focus:outline-blue-500"
+                autoFocus
+              />
+              <div className="flex gap-1.5">
+                {PROJECT_COLORS.map((color, index) => (
+                  <button
+                    key={index}
+                    onClick={() => setEditColorIndex(index)}
+                    className={`w-7 h-7 rounded-full ${color.bg} flex items-center justify-center ${editColorIndex === index ? 'ring-2 ring-offset-2 ring-blue-500' : ''}`}
+                  >
+                    {editColorIndex === index && <Check className="w-4 h-4 text-white" />}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-medium">
+                  Add Project
+                </button>
+                <button onClick={() => setEditingId(null)} className="flex-1 bg-white border border-gray-300 text-gray-700 py-2 rounded font-medium">
+                  Cancel
+                </button>
+              </div>
+            </div>
           )}
 
-          {/* --- Display Settings --- */}
           <div className="mt-6 pt-5 border-t border-gray-200 flex flex-col gap-3">
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
-              <CalendarDays className="w-5 h-5 text-gray-500" /> ตั้งค่าการแสดงผล
+              <CalendarDays className="w-5 h-5 text-gray-500" /> Display Settings
             </h3>
             <div className="flex items-center gap-2 text-sm">
-               <input
-                 type="month"
-                 value={displayRange.start}
-                 onChange={(e) => setDisplayRange(prev => ({ ...prev, start: e.target.value }))}
-                 className="border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500 outline-none flex-1 bg-gray-50"
-               />
-               <span className="text-gray-500 font-medium">ถึง</span>
-               <input
-                 type="month"
-                 value={displayRange.end}
-                 onChange={(e) => setDisplayRange(prev => ({ ...prev, end: e.target.value }))}
-                 className="border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500 outline-none flex-1 bg-gray-50"
-               />
+              <input
+                type="month"
+                value={displayRange.start}
+                onChange={(e) => setDisplayRange((prev) => ({ ...prev, start: e.target.value }))}
+                className="border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500 outline-none flex-1 bg-gray-50"
+              />
+              <span className="text-gray-500 font-medium">to</span>
+              <input
+                type="month"
+                value={displayRange.end}
+                onChange={(e) => setDisplayRange((prev) => ({ ...prev, end: e.target.value }))}
+                className="border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500 outline-none flex-1 bg-gray-50"
+              />
             </div>
             <label className="flex items-start gap-3 text-sm text-gray-700 cursor-pointer mt-2 p-2 rounded-md hover:bg-gray-50 transition-colors">
-               <input
-                 type="checkbox"
-                 checked={hidePastWeeks}
-                 onChange={(e) => setHidePastWeeks(e.target.checked)}
-                 className="mt-1 w-4 h-4 text-blue-600 rounded focus:ring-blue-500 border-gray-300 cursor-pointer"
-               />
-               <span>
-                 <span className="font-medium text-gray-800">ซ่อนสัปดาห์และเดือนที่ผ่านมาแล้ว</span><br/>
-                 <span className="text-xs text-gray-500">แสดงเฉพาะสัปดาห์ปัจจุบันถึงอนาคตเท่านั้น</span>
-               </span>
+              <input
+                type="checkbox"
+                checked={hidePastWeeks}
+                onChange={(e) => setHidePastWeeks(e.target.checked)}
+                className="mt-1 w-4 h-4 text-blue-600 rounded focus:ring-blue-500 border-gray-300 cursor-pointer"
+              />
+              <span>
+                <span className="font-medium text-gray-800">Hide past weeks/months</span>
+                <br />
+                <span className="text-xs text-gray-500">Show only current and future timeline.</span>
+              </span>
             </label>
           </div>
         </div>
@@ -1987,7 +4217,6 @@ function ProjectManagerModal({ projects, onClose, onToggleVisibility, onSaveProj
     </div>
   );
 }
-
 // --- Event Form Modal ---
 function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, onSave, onDelete }) {
   const [title, setTitle] = useState(event?.title || '');
@@ -2138,3 +4367,15 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
