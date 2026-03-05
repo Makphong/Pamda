@@ -14,6 +14,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-เปิดเว็บ: `http://127.0.0.1:5000/`
+เปิดเว็บ: `http://127.0.0.1:8080`
+
 
 ---
