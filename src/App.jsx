@@ -60,6 +60,13 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 const AUTH_USER_KEY = 'pm_calendar_auth_user';
 const AUTH_USERS_KEY = 'pm_calendar_users';
 const ACCOUNT_DB_PREFIX = 'pm_calendar_db_';
+const PROJECT_INVITES_KEY = 'pm_calendar_project_invites';
+const PROJECT_INVITE_STATUSES = {
+  PENDING: 'pending',
+  ACCEPTED: 'accepted',
+  DECLINED: 'declined',
+};
+const VALID_PROJECT_INVITE_STATUSES = new Set(Object.values(PROJECT_INVITE_STATUSES));
 const STARTUP_VIEW_MODES = {
   CALENDAR: 'calendar',
   PROJECT: 'project',
@@ -120,6 +127,59 @@ const saveLocalUsers = (users) => {
   localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(normalizedUsers));
 };
 
+const LOCAL_TEST_USERS = [
+  {
+    id: 'local-test-user-1',
+    username: 'test_pm_1',
+    email: 'test_pm_1@local.pm',
+    password: '123456',
+    avatarUrl: '',
+  },
+  {
+    id: 'local-test-user-2',
+    username: 'test_pm_2',
+    email: 'test_pm_2@local.pm',
+    password: '123456',
+    avatarUrl: '',
+  },
+  {
+    id: 'local-test-user-3',
+    username: 'test_pm_3',
+    email: 'test_pm_3@local.pm',
+    password: '123456',
+    avatarUrl: '',
+  },
+];
+
+const ensureLocalTestUsers = () => {
+  if (typeof window === 'undefined' || AUTH_API_BASE_URL) return;
+
+  const existingUsers = getLocalUsers();
+  const nextUsers = [...existingUsers];
+  let hasUpdates = false;
+
+  LOCAL_TEST_USERS.forEach((seedUser) => {
+    const username = String(seedUser.username || '').trim().toLowerCase();
+    const email = String(seedUser.email || '').trim().toLowerCase();
+
+    const duplicated = nextUsers.some(
+      (user) => String(user.username || '').trim().toLowerCase() === username || String(user.email || '').trim().toLowerCase() === email
+    );
+    if (duplicated) return;
+
+    nextUsers.push({
+      ...seedUser,
+      username,
+      email,
+    });
+    hasUpdates = true;
+  });
+
+  if (hasUpdates) {
+    saveLocalUsers(nextUsers);
+  }
+};
+
 const normalizeAuthUser = (user) => {
   if (!user) return null;
 
@@ -135,6 +195,82 @@ const normalizeAuthUser = (user) => {
 };
 
 const getAccountDbKey = (userId) => `${ACCOUNT_DB_PREFIX}${userId}`;
+
+const readAccountDbPayload = (userId) => {
+  const key = getAccountDbKey(userId);
+  try {
+    const rawData = localStorage.getItem(key);
+    if (!rawData) return {};
+    const parsed = JSON.parse(rawData);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeAccountDbPayload = (userId, payload) => {
+  const key = getAccountDbKey(userId);
+  const safePayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  localStorage.setItem(key, JSON.stringify(safePayload));
+};
+
+const normalizeProjectInvite = (invite) => {
+  const status = VALID_PROJECT_INVITE_STATUSES.has(invite?.status)
+    ? invite.status
+    : PROJECT_INVITE_STATUSES.PENDING;
+
+  return {
+    id: String(invite?.id || generateId()),
+    projectId: String(invite?.projectId || '').trim(),
+    projectName: String(invite?.projectName || '').trim(),
+    ownerId: String(invite?.ownerId || '').trim(),
+    ownerUsername: String(invite?.ownerUsername || '').trim().toLowerCase(),
+    invitedUserId: String(invite?.invitedUserId || '').trim() || null,
+    invitedUsername: String(invite?.invitedUsername || '').trim().toLowerCase(),
+    invitedEmail: String(invite?.invitedEmail || '').trim().toLowerCase(),
+    status,
+    createdAt: String(invite?.createdAt || new Date().toISOString()),
+    respondedAt: invite?.respondedAt ? String(invite.respondedAt) : null,
+  };
+};
+
+const getProjectInvites = () => {
+  try {
+    const rawData = localStorage.getItem(PROJECT_INVITES_KEY);
+    if (!rawData) return [];
+
+    const parsed = JSON.parse(rawData);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map(normalizeProjectInvite)
+      .filter(
+        (invite) =>
+          invite.projectId &&
+          invite.ownerId &&
+          (invite.invitedUserId || invite.invitedUsername || invite.invitedEmail)
+      );
+  } catch {
+    return [];
+  }
+};
+
+const saveProjectInvites = (invites) => {
+  const normalized = (Array.isArray(invites) ? invites : []).map(normalizeProjectInvite);
+  localStorage.setItem(PROJECT_INVITES_KEY, JSON.stringify(normalized));
+};
+
+const isInviteForUser = (invite, user) => {
+  const userId = String(user?.id || '').trim();
+  const username = String(user?.username || '').trim().toLowerCase();
+  const email = String(user?.email || '').trim().toLowerCase();
+  if (!invite || !user) return false;
+
+  if (invite.invitedUserId && userId && invite.invitedUserId === userId) return true;
+  if (invite.invitedUsername && username && invite.invitedUsername === username) return true;
+  if (invite.invitedEmail && email && invite.invitedEmail === email) return true;
+  return false;
+};
 
 const normalizeLastVisitedView = (value) => {
   if (!value || typeof value !== 'object') {
@@ -562,6 +698,67 @@ const normalizeProjectTeamMembers = (project) => {
   });
 };
 
+const addProjectMemberRecord = (project, memberUser) => {
+  const ownerUsername = String(project?.ownerUsername || '').trim().toLowerCase();
+  const normalizedUsername = String(memberUser?.username || '').trim().toLowerCase();
+  if (!normalizedUsername) return project;
+
+  const members = Array.isArray(project?.members)
+    ? project.members.map((member) => String(member || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const memberSet = new Set([ownerUsername, ...members].filter(Boolean));
+  memberSet.add(normalizedUsername);
+
+  const existingTeamMembers = Array.isArray(project?.teamMembers) ? project.teamMembers : [];
+  const hasTeamMember = existingTeamMembers.some(
+    (member) => String(member?.username || member?.name || '').trim().toLowerCase() === normalizedUsername
+  );
+  const normalizedProfile = normalizeAuthUser(memberUser);
+  const nextTeamMembers = hasTeamMember
+    ? existingTeamMembers
+    : [
+        ...existingTeamMembers,
+        buildMemberFromUsername(
+          normalizedUsername,
+          existingTeamMembers.length,
+          ownerUsername,
+          { username: normalizedUsername, name: normalizedUsername },
+          normalizedProfile
+        ),
+      ];
+
+  return {
+    ...project,
+    members: Array.from(memberSet),
+    teamMembers: nextTeamMembers,
+  };
+};
+
+const removeProjectMemberRecord = (project, usernameToRemove) => {
+  const normalizedUsername = String(usernameToRemove || '').trim().toLowerCase();
+  const ownerUsername = String(project?.ownerUsername || '').trim().toLowerCase();
+  if (!normalizedUsername || normalizedUsername === ownerUsername) return project;
+
+  const members = Array.isArray(project?.members)
+    ? project.members
+        .map((member) => String(member || '').trim().toLowerCase())
+        .filter((member) => member && member !== normalizedUsername)
+    : [];
+  const nextMembers = Array.from(new Set([ownerUsername, ...members].filter(Boolean)));
+
+  const nextTeamMembers = Array.isArray(project?.teamMembers)
+    ? project.teamMembers.filter(
+        (member) => String(member?.username || member?.name || '').trim().toLowerCase() !== normalizedUsername
+      )
+    : project?.teamMembers;
+
+  return {
+    ...project,
+    members: nextMembers,
+    teamMembers: nextTeamMembers,
+  };
+};
+
 // --- Main Application Component ---
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
@@ -572,6 +769,10 @@ export default function App() {
       return null;
     }
   });
+
+  useEffect(() => {
+    ensureLocalTestUsers();
+  }, []);
 
   const handleAuthSuccess = (user) => {
     const safeUser = normalizeAuthUser(user);
@@ -1106,12 +1307,20 @@ function UserAvatar({ user, sizeClass = 'w-9 h-9', textClass = 'text-xs', ringCl
   );
 }
 
-function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassword }) {
+function ProfileSettingsView({
+  currentUser,
+  onBack,
+  onSaveProfile,
+  onChangePassword,
+  projectInvitations = [],
+  onRespondToProjectInvite,
+}) {
   const [username, setUsername] = useState(currentUser.username || '');
   const [email, setEmail] = useState(currentUser.email || '');
   const [avatarUrl, setAvatarUrl] = useState(currentUser.avatarUrl || '');
   const [isPasswordPopupOpen, setIsPasswordPopupOpen] = useState(false);
   const [profileResult, setProfileResult] = useState(null);
+  const [inviteResult, setInviteResult] = useState(null);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -1122,6 +1331,7 @@ function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassw
     setUsername(currentUser.username || '');
     setEmail(currentUser.email || '');
     setAvatarUrl(currentUser.avatarUrl || '');
+    setInviteResult(null);
   }, [currentUser.id, currentUser.username, currentUser.email, currentUser.avatarUrl]);
 
   const handleAvatarUpload = (e) => {
@@ -1167,6 +1377,12 @@ function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassw
       setConfirmNewPassword('');
       setIsPasswordPopupOpen(false);
     }
+  };
+
+  const handleInvitationResponse = (inviteId, decision) => {
+    if (!onRespondToProjectInvite) return;
+    const result = onRespondToProjectInvite(inviteId, decision);
+    setInviteResult(result || null);
   };
 
   return (
@@ -1233,17 +1449,6 @@ function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassw
                 </label>
               </div>
 
-              <label className="space-y-1 block">
-                <span className="text-sm font-medium text-gray-600">Avatar image URL</span>
-                <input
-                  type="url"
-                  value={avatarUrl}
-                  onChange={(e) => setAvatarUrl(e.target.value)}
-                  className="w-full border border-gray-300 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="https://example.com/avatar.jpg"
-                />
-              </label>
-
               {profileResult && (
                 <p
                   className={`text-sm rounded-lg px-3 py-2 border ${
@@ -1264,17 +1469,17 @@ function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassw
                 className="hidden"
               />
 
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                 <label
                   htmlFor="profile-avatar-upload"
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors text-sm font-medium"
+                  className="w-full h-11 inline-flex items-center justify-center gap-2 px-3 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100 transition-colors text-sm font-medium"
                 >
                   <ImageIcon className="w-4 h-4" /> Upload image
                 </label>
                 <button
                   type="button"
                   onClick={() => setAvatarUrl('')}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors text-sm font-medium"
+                  className="w-full h-11 inline-flex items-center justify-center gap-2 px-3 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 transition-colors text-sm font-medium"
                 >
                   <Trash2 className="w-4 h-4" /> Remove image
                 </button>
@@ -1287,18 +1492,73 @@ function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassw
                     setConfirmNewPassword('');
                     setIsPasswordPopupOpen(true);
                   }}
-                  className="inline-flex items-center gap-2 bg-gray-900 hover:bg-black text-white rounded-lg px-4 py-2.5 font-medium transition-colors"
+                  className="w-full h-11 inline-flex items-center justify-center gap-2 bg-gray-900 hover:bg-black text-white rounded-lg px-4 font-medium transition-colors"
                 >
                   <Lock className="w-4 h-4" /> Change password
                 </button>
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2.5 font-medium transition-colors"
+                  className="w-full h-11 inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 font-medium transition-colors"
                 >
                   <Check className="w-4 h-4" /> Save profile
                 </button>
               </div>
             </form>
+
+            {projectInvitations.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-gray-800">Project Invitations</h3>
+                  <span className="text-xs font-medium rounded-full bg-blue-50 text-blue-700 px-2.5 py-1 border border-blue-200">
+                    Pending {projectInvitations.length}
+                  </span>
+                </div>
+
+                {inviteResult?.message && (
+                  <p
+                    className={`text-sm rounded-lg px-3 py-2 border ${
+                      inviteResult.ok
+                        ? 'bg-green-50 text-green-700 border-green-200'
+                        : 'bg-red-50 text-red-600 border-red-200'
+                    }`}
+                  >
+                    {inviteResult.message}
+                  </p>
+                )}
+
+                <div className="space-y-3">
+                  {projectInvitations.map((invite) => (
+                    <div
+                      key={invite.id}
+                      className="rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3 flex flex-col gap-3"
+                    >
+                      <div>
+                        <p className="text-sm font-semibold text-gray-800 truncate">{invite.projectName || 'Untitled project'}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Invited by <span className="font-medium text-gray-700">{invite.ownerUsername || '-'}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.ACCEPTED)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium"
+                        >
+                          <Check className="w-3.5 h-3.5" /> Accept
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.DECLINED)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs font-medium"
+                        >
+                          <X className="w-3.5 h-3.5" /> Decline
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1419,10 +1679,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [startupView, setStartupView] = useState(STARTUP_VIEW_MODES.CALENDAR);
   const [lastVisitedView, setLastVisitedView] = useState(() => ({ ...DEFAULT_LAST_VISITED_VIEW }));
   const [hasAppliedStartupView, setHasAppliedStartupView] = useState(false);
+  const [projectInvitations, setProjectInvitations] = useState(() => getProjectInvites());
 
   useEffect(() => {
     setIsAccountDataHydrated(false);
     setHasAppliedStartupView(false);
+    setProjectInvitations(getProjectInvites());
 
     try {
       const rawData = localStorage.getItem(accountDbKey);
@@ -1473,6 +1735,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       setIsAccountDataHydrated(true);
     }
   }, [accountDbKey, currentUser]);
+
+  useEffect(() => {
+    if (!isProfileViewOpen) return;
+    setProjectInvitations(getProjectInvites());
+  }, [isProfileViewOpen]);
 
   useEffect(() => {
     if (!isAccountDataHydrated) return;
@@ -1583,6 +1850,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
   // Derived state
   const visibleProjects = projects.filter(p => p.isVisible);
+  const pendingProjectInvitations = useMemo(
+    () =>
+      projectInvitations.filter(
+        (invite) =>
+          invite.status === PROJECT_INVITE_STATUSES.PENDING && isInviteForUser(invite, currentUser)
+      ),
+    [projectInvitations, currentUser]
+  );
 
   // --- Handlers ---
   const handleDayClick = (dateStr, projectId) => {
@@ -1703,6 +1978,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return;
     }
 
+    setProjectInvitations((prevInvites) => {
+      const nextInvites = prevInvites.filter(
+        (invite) => !(invite.projectId === projectId && invite.ownerId === currentUser.id)
+      );
+      saveProjectInvites(nextInvites);
+      return nextInvites;
+    });
+
     setProjects(projects.filter(p => p.id !== projectId));
     setEvents(events.filter(ev => ev.projectId !== projectId)); // Cascade delete
     if (activeDashboardProjectId === projectId) setActiveDashboardProjectId(null);
@@ -1722,37 +2005,195 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!invitedUser) {
       return { ok: false, message: 'This user does not exist.' };
     }
+    if (invitedUser.id === currentUser.id) {
+      return { ok: false, message: 'You cannot invite yourself.' };
+    }
 
-    let response = { ok: false, message: 'Project not found.' };
+    const targetProject = projects.find((project) => project.id === projectId);
+    if (!targetProject) {
+      return { ok: false, message: 'Project not found.' };
+    }
 
-    setProjects((prevProjects) =>
-      prevProjects.map((project) => {
-        if (project.id !== projectId) return project;
+    if (targetProject.ownerId !== currentUser.id) {
+      return { ok: false, message: 'Only the project creator can invite members.' };
+    }
 
-        if (project.ownerId !== currentUser.id) {
-          response = { ok: false, message: 'Only the project creator can invite members.' };
-          return project;
-        }
+    const normalizedProject = ensureProjectOwnership(targetProject, currentUser);
+    if (normalizedProject.members.includes(invitedUser.username)) {
+      return { ok: false, message: 'This user is already in the project.' };
+    }
 
-        const nextProject = ensureProjectOwnership(project, currentUser);
-        if (nextProject.members.includes(invitedUser.username)) {
-          response = { ok: false, message: 'This user is already in the project.' };
-          return nextProject;
-        }
-
-        response = {
-          ok: true,
-          message: `Invited ${invitedUser.username} to ${project.name}.`,
-        };
-
-        return {
-          ...nextProject,
-          members: [...nextProject.members, invitedUser.username],
-        };
-      })
+    const allInvites = getProjectInvites();
+    const duplicatedPendingInvite = allInvites.some(
+      (invite) =>
+        invite.status === PROJECT_INVITE_STATUSES.PENDING &&
+        invite.projectId === projectId &&
+        invite.ownerId === currentUser.id &&
+        ((invite.invitedUserId && invite.invitedUserId === invitedUser.id) ||
+          invite.invitedUsername === invitedUser.username ||
+          invite.invitedEmail === invitedUser.email)
     );
+    if (duplicatedPendingInvite) {
+      return { ok: false, message: 'This user already has a pending invitation for this project.' };
+    }
 
-    return response;
+    const nextInvites = [
+      ...allInvites,
+      normalizeProjectInvite({
+        id: generateId(),
+        projectId,
+        projectName: normalizedProject.name,
+        ownerId: currentUser.id,
+        ownerUsername: currentUser.username,
+        invitedUserId: invitedUser.id,
+        invitedUsername: invitedUser.username,
+        invitedEmail: invitedUser.email,
+        status: PROJECT_INVITE_STATUSES.PENDING,
+        createdAt: new Date().toISOString(),
+      }),
+    ];
+
+    saveProjectInvites(nextInvites);
+    setProjectInvitations(nextInvites);
+
+    return {
+      ok: true,
+      message: `Invitation sent to ${invitedUser.username}. They can accept it in Profile settings.`,
+    };
+  };
+
+  const respondToProjectInvite = (inviteId, decision) => {
+    const nextStatus =
+      decision === PROJECT_INVITE_STATUSES.ACCEPTED
+        ? PROJECT_INVITE_STATUSES.ACCEPTED
+        : PROJECT_INVITE_STATUSES.DECLINED;
+
+    const latestInvites = getProjectInvites();
+    const inviteIndex = latestInvites.findIndex((invite) => invite.id === inviteId);
+    if (inviteIndex < 0) {
+      return { ok: false, message: 'Invitation not found.' };
+    }
+
+    const targetInvite = latestInvites[inviteIndex];
+    if (!isInviteForUser(targetInvite, currentUser)) {
+      return { ok: false, message: 'You cannot respond to this invitation.' };
+    }
+
+    if (targetInvite.status !== PROJECT_INVITE_STATUSES.PENDING) {
+      return { ok: false, message: 'This invitation has already been answered.' };
+    }
+
+    if (nextStatus === PROJECT_INVITE_STATUSES.ACCEPTED) {
+      const ownerPayload = readAccountDbPayload(targetInvite.ownerId);
+      const ownerProjects = Array.isArray(ownerPayload.projects) ? ownerPayload.projects : [];
+      const ownerEvents = Array.isArray(ownerPayload.events) ? ownerPayload.events : [];
+
+      let acceptedProject = null;
+      const nextOwnerProjects = ownerProjects.map((project) => {
+        if (project.id !== targetInvite.projectId) return project;
+        const updatedProject = addProjectMemberRecord(project, currentUser);
+        acceptedProject = updatedProject;
+        return updatedProject;
+      });
+
+      if (!acceptedProject) {
+        return { ok: false, message: 'Project was not found. It may have been deleted by the owner.' };
+      }
+
+      writeAccountDbPayload(targetInvite.ownerId, {
+        ...ownerPayload,
+        projects: nextOwnerProjects,
+      });
+
+      const ownerReference = {
+        id: targetInvite.ownerId,
+        username: acceptedProject.ownerUsername || targetInvite.ownerUsername || currentUser.username,
+      };
+      const normalizedAcceptedProject = ensureProjectOwnership(acceptedProject, ownerReference);
+      const acceptedProjectEvents = ownerEvents.filter((event) => event.projectId === normalizedAcceptedProject.id);
+
+      setProjects((prevProjects) => {
+        const existing = prevProjects.find((project) => project.id === normalizedAcceptedProject.id);
+        if (existing) {
+          return prevProjects.map((project) =>
+            project.id === normalizedAcceptedProject.id
+              ? { ...normalizedAcceptedProject, isVisible: existing.isVisible }
+              : project
+          );
+        }
+
+        const visibleCount = prevProjects.filter((project) => project.isVisible).length;
+        return [...prevProjects, { ...normalizedAcceptedProject, isVisible: visibleCount < 4 }];
+      });
+
+      setEvents((prevEvents) => {
+        const remaining = prevEvents.filter((event) => event.projectId !== normalizedAcceptedProject.id);
+        return [...remaining, ...acceptedProjectEvents];
+      });
+    }
+
+    const updatedInvite = {
+      ...targetInvite,
+      invitedUserId: currentUser.id,
+      invitedUsername: currentUser.username,
+      invitedEmail: currentUser.email,
+      status: nextStatus,
+      respondedAt: new Date().toISOString(),
+    };
+    const nextInvites = [...latestInvites];
+    nextInvites[inviteIndex] = normalizeProjectInvite(updatedInvite);
+
+    saveProjectInvites(nextInvites);
+    setProjectInvitations(nextInvites);
+
+    return {
+      ok: true,
+      message:
+        nextStatus === PROJECT_INVITE_STATUSES.ACCEPTED
+          ? `Joined project "${targetInvite.projectName}".`
+          : `Declined invitation to "${targetInvite.projectName}".`,
+    };
+  };
+
+  const leaveProject = async (projectId) => {
+    const targetProject = projects.find((project) => project.id === projectId);
+    if (!targetProject) {
+      return { ok: false, message: 'Project not found.' };
+    }
+
+    if (targetProject.ownerId === currentUser.id) {
+      return { ok: false, message: 'Project owner cannot leave this project. You can delete it instead.' };
+    }
+
+    const shouldLeave = await popup.confirm({
+      title: 'Leave project',
+      message: `Leave project "${targetProject.name}"?`,
+      confirmText: 'Leave',
+      tone: 'danger',
+    });
+    if (!shouldLeave) {
+      return { ok: false, cancelled: true, message: 'Leave project cancelled.' };
+    }
+
+    const ownerPayload = readAccountDbPayload(targetProject.ownerId);
+    const ownerProjects = Array.isArray(ownerPayload.projects) ? ownerPayload.projects : [];
+    const nextOwnerProjects = ownerProjects.map((project) =>
+      project.id === targetProject.id ? removeProjectMemberRecord(project, currentUser.username) : project
+    );
+    if (ownerProjects.length > 0) {
+      writeAccountDbPayload(targetProject.ownerId, {
+        ...ownerPayload,
+        projects: nextOwnerProjects,
+      });
+    }
+
+    setProjects((prevProjects) => prevProjects.filter((project) => project.id !== projectId));
+    setEvents((prevEvents) => prevEvents.filter((event) => event.projectId !== projectId));
+    if (activeDashboardProjectId === projectId) {
+      setActiveDashboardProjectId(null);
+    }
+
+    return { ok: true, message: `You left "${targetProject.name}".` };
   };
 
   const handleSaveProfile = ({ username, email, avatarUrl }) => {
@@ -1779,6 +2220,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     }
 
     const oldUsername = String(existingUser.username || '').trim().toLowerCase();
+    const oldEmail = String(existingUser.email || '').trim().toLowerCase();
     const nextUsers = users.map((user) =>
       user.id === currentUser.id
         ? { ...user, username: normalizedUsername, email: normalizedEmail, avatarUrl: normalizedAvatarUrl }
@@ -1806,6 +2248,36 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (usernameChanged) {
       setProjects(nextProjects);
     }
+
+    setProjectInvitations((prevInvites) => {
+      const nextInvites = prevInvites.map((invite) => {
+        let nextInvite = invite;
+
+        if (String(invite.ownerId || '').trim() === currentUser.id) {
+          nextInvite = { ...nextInvite, ownerUsername: normalizedUsername };
+        }
+
+        const isInviteTargetingCurrentUser =
+          (invite.invitedUserId && invite.invitedUserId === currentUser.id) ||
+          (!invite.invitedUserId &&
+            (String(invite.invitedUsername || '').trim().toLowerCase() === oldUsername ||
+              String(invite.invitedEmail || '').trim().toLowerCase() === oldEmail));
+
+        if (isInviteTargetingCurrentUser) {
+          nextInvite = {
+            ...nextInvite,
+            invitedUserId: currentUser.id,
+            invitedUsername: normalizedUsername,
+            invitedEmail: normalizedEmail,
+          };
+        }
+
+        return normalizeProjectInvite(nextInvite);
+      });
+
+      saveProjectInvites(nextInvites);
+      return nextInvites;
+    });
 
     localStorage.setItem(
       accountDbKey,
@@ -1870,6 +2342,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         onBack={() => setIsProfileViewOpen(false)}
         onSaveProfile={handleSaveProfile}
         onChangePassword={handleChangePassword}
+        projectInvitations={pendingProjectInvitations}
+        onRespondToProjectInvite={respondToProjectInvite}
       />
     );
   }
@@ -1894,6 +2368,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           }}
           onDeleteTask={deleteEvent}
           onUpdateProject={updateProjectDetails}
+          onInviteMember={inviteMemberToProject}
         />
       );
     }
@@ -2080,6 +2555,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           onToggleVisibility={toggleProjectVisibility}
           onSaveProject={saveProject}
           onDeleteProject={deleteProject}
+          onLeaveProject={leaveProject}
           onInviteMember={inviteMemberToProject}
           displayRange={displayRange}
           setDisplayRange={setDisplayRange}
@@ -2180,7 +2656,17 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
 };
 
 // --- Project Dashboard View (Like Asana) ---
-function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent, onSaveTask, onDeleteTask, onUpdateProject }) {
+function ProjectDashboard({
+  project,
+  currentUser,
+  events,
+  onBack,
+  onUpdateEvent,
+  onSaveTask,
+  onDeleteTask,
+  onUpdateProject,
+  onInviteMember,
+}) {
   const popup = usePopup();
   // เปลี่ยนค่าเริ่มต้นให้เปิดหน้า Project Organization เป็นอันดับแรก
   const [activeTab, setActiveTab] = useState('organization'); 
@@ -2608,40 +3094,19 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
 
     const normalizedIdentifier = identifier.trim().toLowerCase();
     if (!normalizedIdentifier) return;
-
-    const users = getLocalUsers();
-    const foundUser = users.find(
-      (user) => user.username === normalizedIdentifier || user.email === normalizedIdentifier
-    );
-
-    if (!foundUser) {
+    if (!onInviteMember) {
       void popup.alert({
-        title: 'User not found',
-        message: 'User not found.',
+        title: 'Invite unavailable',
+        message: 'Invitation service is not available right now.',
       });
       return;
     }
 
-    if (teamMembers.some((member) => member.username === foundUser.username)) {
-      void popup.alert({
-        title: 'Duplicate member',
-        message: 'This member is already in the project.',
-      });
-      return;
-    }
-
-    const nextMembers = [
-      ...teamMembers,
-      buildMemberFromUsername(
-        foundUser.username,
-        teamMembers.length,
-        project.ownerUsername,
-        { username: foundUser.username, name: foundUser.username },
-        normalizeAuthUser(foundUser)
-      ),
-    ];
-
-    persistTeamManagement(nextMembers, projectPositions, projectDepartments);
+    const result = onInviteMember(project.id, normalizedIdentifier);
+    void popup.alert({
+      title: result?.ok ? 'Invitation sent' : 'Invite failed',
+      message: result?.message || 'Unable to process invitation.',
+    });
   };
 
   const removeMember = async (id) => {
@@ -2790,20 +3255,29 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     persistTeamManagement(nextMembers, projectPositions, projectDepartments);
   };
 
-  const renderOrgTree = (member, depth = 0) => {
-    const children = orgTree.childrenMap[member.id] || [];
+  const renderOrgTree = (member, lineage = new Set()) => {
+    const memberId = String(member?.id || '').trim();
+    if (!memberId || lineage.has(memberId)) return null;
+
+    const nextLineage = new Set(lineage);
+    nextLineage.add(memberId);
+
+    const children = (orgTree.childrenMap[memberId] || []).filter((child) => {
+      const childId = String(child?.id || '').trim();
+      return childId && !nextLineage.has(childId);
+    });
+
     return (
-      <div key={member.id} className="w-full">
-        <div className="flex items-start gap-3">
-          <div style={{ width: `${depth * 24}px` }} />
+      <li key={memberId} className="pm-org-item">
+        <div className="pm-org-node-wrap">
           <OrgNode member={member} />
         </div>
         {children.length > 0 && (
-          <div className="mt-3 space-y-3">
-            {children.map((child) => renderOrgTree(child, depth + 1))}
-          </div>
+          <ul className="pm-org-children">
+            {children.map((child) => renderOrgTree(child, nextLineage))}
+          </ul>
         )}
-      </div>
+      </li>
     );
   };
 
@@ -3503,7 +3977,7 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                   </div>
                 </div>
 
-                <div className="bg-gray-50 rounded-xl border border-gray-200 shadow-sm p-8 overflow-hidden relative">
+                <div className="bg-gradient-to-b from-slate-50 to-white rounded-2xl border border-slate-200 shadow-sm p-8 overflow-hidden relative">
                   <div className="flex justify-between items-center mb-8">
                     <h3 className="text-lg font-semibold text-gray-800">Organization Structure</h3>
                     <button
@@ -3543,9 +4017,109 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                     {orgTree.roots.length === 0 ? (
                       <div className="text-sm text-gray-500 italic">No member in structure yet.</div>
                     ) : (
-                      orgTree.roots.map((rootMember) => renderOrgTree(rootMember))
+                      <div className="overflow-x-auto pb-2">
+                        <div className="pm-org-forest min-w-max">
+                          {orgTree.roots.map((rootMember) => (
+                            <div key={`root-${rootMember.id}`} className="pm-org-island">
+                              <ul className="pm-org-root">
+                                {renderOrgTree(rootMember)}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
+
+                  <style>{`
+                    .pm-org-forest {
+                      display: flex;
+                      justify-content: center;
+                      align-items: flex-start;
+                      gap: 3rem;
+                      padding: 0.5rem 0.25rem 1rem;
+                    }
+                    .pm-org-island {
+                      display: flex;
+                      justify-content: center;
+                    }
+                    .pm-org-root {
+                      display: flex;
+                      justify-content: center;
+                      width: max-content;
+                      margin: 0 auto;
+                      padding: 0;
+                      list-style: none;
+                    }
+                    .pm-org-item {
+                      position: relative;
+                      display: flex;
+                      flex-direction: column;
+                      align-items: center;
+                      padding: 0 0.9rem;
+                    }
+                    .pm-org-node-wrap {
+                      display: flex;
+                      justify-content: center;
+                    }
+                    .pm-org-children {
+                      display: flex;
+                      justify-content: center;
+                      position: relative;
+                      margin: 1.1rem 0 0;
+                      padding: 1.45rem 0 0;
+                      list-style: none;
+                    }
+                    .pm-org-children::before {
+                      content: '';
+                      position: absolute;
+                      top: 0;
+                      left: 50%;
+                      margin-left: -1px;
+                      width: 2px;
+                      height: 1.45rem;
+                      background: #64748b;
+                    }
+                    .pm-org-children > .pm-org-item::before {
+                      content: '';
+                      position: absolute;
+                      top: 0;
+                      left: 0;
+                      right: 0;
+                      height: 0;
+                      border-top: 2px solid #64748b;
+                    }
+                    .pm-org-children > .pm-org-item:only-child::before {
+                      display: none;
+                    }
+                    .pm-org-children > .pm-org-item:first-child::before {
+                      left: 50%;
+                    }
+                    .pm-org-children > .pm-org-item:last-child::before {
+                      right: 50%;
+                    }
+                    .pm-org-children > .pm-org-item > .pm-org-node-wrap {
+                      position: relative;
+                      z-index: 1;
+                      padding-top: 1.45rem;
+                    }
+                    .pm-org-children > .pm-org-item > .pm-org-node-wrap::before {
+                      content: '';
+                      position: absolute;
+                      top: 0;
+                      left: 50%;
+                      margin-left: -1px;
+                      width: 2px;
+                      height: 1.45rem;
+                      background: #64748b;
+                    }
+                    @media (max-width: 768px) {
+                      .pm-org-item {
+                        padding-left: 0.5rem;
+                        padding-right: 0.5rem;
+                      }
+                    }
+                  `}</style>
                 </div>
               </div>
             )}
@@ -3567,20 +4141,23 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                              </button>
                            ))
                          ) : (
-                           teamMembers.map(member => (
-                             <button
-                               key={member.id}
-                               onClick={() => setActiveNoteId(member.id)}
-                               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeNoteId === member.id ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
-                             >
-                               <div className={`w-7 h-7 rounded-full ${member.color} text-white flex items-center justify-center text-[10px] font-bold shrink-0`}>
-                                 {member.initials}
-                               </div>
-                               <div className="flex-1 overflow-hidden text-left">
-                                 <span className="truncate block leading-tight">{member.name}</span>
-                                 <span className="text-[10px] opacity-70 truncate block">{member.position || 'No position'}</span>
-                               </div>
-                             </button>
+	                           teamMembers.map(member => (
+	                             <button
+	                               key={member.id}
+	                               onClick={() => setActiveNoteId(member.id)}
+	                               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeNoteId === member.id ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+	                             >
+	                               <UserAvatar
+	                                 user={member}
+	                                 sizeClass="w-8 h-8"
+	                                 textClass="text-[10px]"
+	                                 ringClass="ring-2 ring-white shadow-sm"
+	                               />
+	                               <div className="flex-1 overflow-hidden text-left">
+	                                 <span className="truncate block leading-tight">{member.name}</span>
+	                                 <span className="text-[10px] opacity-70 truncate block">{member.position || 'No position'}</span>
+	                               </div>
+	                             </button>
                            ))
                          )}
                       </div>
@@ -4070,17 +4647,19 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
 // Helper component for Org Chart Nodes
 function OrgNode({ member }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-sm w-48 flex flex-col items-center text-center z-10 hover:shadow-md hover:border-blue-300 transition-all cursor-pointer">
-      <div className="mb-2">
+    <div className="mx-auto w-[220px] rounded-2xl border border-slate-200 bg-white px-4 pt-5 pb-4 shadow-[0_10px_28px_-18px_rgba(15,23,42,0.55)] flex flex-col items-center text-center transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-20px_rgba(15,23,42,0.55)]">
+      <div className="mb-3">
         <UserAvatar
           user={member}
-          sizeClass="w-12 h-12"
+          sizeClass="w-14 h-14"
           textClass="text-sm"
-          ringClass="ring-2 ring-slate-100 shadow-sm"
+          ringClass="ring-[3px] ring-white shadow-md"
         />
       </div>
-      <p className="font-bold text-gray-800 text-sm truncate w-full">{member.name}</p>
-      <p className="text-xs text-gray-500 mt-0.5 truncate w-full">{member.position || member.role || '-'}</p>
+      <p className="font-semibold text-slate-800 text-[15px] leading-tight truncate w-full">{member.name}</p>
+      <p className="mt-2 inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600 max-w-full truncate">
+        {member.position || member.role || 'Team Member'}
+      </p>
     </div>
   );
 }
@@ -4373,6 +4952,7 @@ function ProjectManagerModal({
   onToggleVisibility,
   onSaveProject,
   onDeleteProject,
+  onLeaveProject,
   onInviteMember,
   displayRange,
   setDisplayRange,
@@ -4432,6 +5012,18 @@ function ProjectManagerModal({
 
     if (result?.ok) {
       setInviteInputs((prev) => ({ ...prev, [projectId]: '' }));
+    }
+  };
+
+  const handleLeave = async (projectId) => {
+    if (!onLeaveProject) return;
+    const result = await onLeaveProject(projectId);
+    if (result?.cancelled) return;
+    if (result?.message) {
+      void popup.alert({
+        title: result.ok ? 'Project update' : 'Action blocked',
+        message: result.message,
+      });
     }
   };
 
@@ -4581,7 +5173,18 @@ function ProjectManagerModal({
                           </button>
                         </div>
                       ) : (
-                        <p className="text-xs text-gray-400">Only creator can invite project members.</p>
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs text-gray-400">Only creator can manage members and invitations.</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleLeave(project.id);
+                            }}
+                            className="text-xs font-medium px-3 py-1.5 rounded-md border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+                          >
+                            Leave project
+                          </button>
+                        </div>
                       )}
                     </>
                   )}
