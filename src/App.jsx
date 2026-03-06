@@ -60,6 +60,16 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 const AUTH_USER_KEY = 'pm_calendar_auth_user';
 const AUTH_USERS_KEY = 'pm_calendar_users';
 const ACCOUNT_DB_PREFIX = 'pm_calendar_db_';
+const STARTUP_VIEW_MODES = {
+  CALENDAR: 'calendar',
+  PROJECT: 'project',
+  LAST: 'last',
+};
+const VALID_STARTUP_VIEWS = new Set(Object.values(STARTUP_VIEW_MODES));
+const DEFAULT_LAST_VISITED_VIEW = {
+  type: STARTUP_VIEW_MODES.CALENDAR,
+  projectId: null,
+};
 const getRuntimeConfig = () => {
   if (typeof window === 'undefined') return {};
   const runtimeConfig = window.__PM_CALENDAR_RUNTIME_CONFIG__;
@@ -125,6 +135,20 @@ const normalizeAuthUser = (user) => {
 };
 
 const getAccountDbKey = (userId) => `${ACCOUNT_DB_PREFIX}${userId}`;
+
+const normalizeLastVisitedView = (value) => {
+  if (!value || typeof value !== 'object') {
+    return { ...DEFAULT_LAST_VISITED_VIEW };
+  }
+
+  const type =
+    value.type === STARTUP_VIEW_MODES.PROJECT
+      ? STARTUP_VIEW_MODES.PROJECT
+      : STARTUP_VIEW_MODES.CALENDAR;
+  const projectId = type === STARTUP_VIEW_MODES.PROJECT ? String(value.projectId || '').trim() || null : null;
+
+  return { type, projectId };
+};
 
 const postAuthApi = async (path, payload) => {
   if (!AUTH_API_BASE_URL) {
@@ -426,26 +450,85 @@ const getRoleLevel = (role, isOwner = false) => {
   return 3;
 };
 
-const buildMemberFromUsername = (username, index, ownerUsername, existingMember = null) => {
+const buildLocalUserLookup = () => {
+  const byUsername = new Map();
+  const byEmail = new Map();
+  const byId = new Map();
+
+  getLocalUsers().forEach((user) => {
+    const normalizedUser = normalizeAuthUser(user);
+    if (!normalizedUser) return;
+
+    const userId = String(normalizedUser.id || '').trim();
+    const username = String(normalizedUser.username || '').trim().toLowerCase();
+    const email = String(normalizedUser.email || '').trim().toLowerCase();
+    const avatarUrl = String(normalizedUser.avatarUrl || '').trim();
+    const profile = { id: userId || null, username, email, avatarUrl };
+
+    if (profile.id) byId.set(profile.id, profile);
+    if (profile.username && !byUsername.has(profile.username)) {
+      byUsername.set(profile.username, profile);
+    }
+    if (profile.email && !byEmail.has(profile.email)) {
+      byEmail.set(profile.email, profile);
+    }
+  });
+
+  return { byUsername, byEmail, byId };
+};
+
+const resolveMemberProfile = (lookup, username, existingMember = null) => {
+  if (!lookup) return null;
+
   const normalizedUsername = String(username || existingMember?.username || existingMember?.name || '')
     .trim()
     .toLowerCase();
-  const safeUsername = normalizedUsername || `member-${index + 1}`;
-  const displayName = String(existingMember?.name || safeUsername).trim() || safeUsername;
+  const memberId = String(existingMember?.userId || '').trim();
+  const memberEmail = String(existingMember?.email || '').trim().toLowerCase();
+
+  if (normalizedUsername && lookup.byUsername.has(normalizedUsername)) {
+    return lookup.byUsername.get(normalizedUsername);
+  }
+
+  if (memberId && lookup.byId.has(memberId)) {
+    return lookup.byId.get(memberId);
+  }
+
+  if (memberEmail && lookup.byEmail.has(memberEmail)) {
+    return lookup.byEmail.get(memberEmail);
+  }
+
+  return null;
+};
+
+const buildMemberFromUsername = (username, index, ownerUsername, existingMember = null, profileUser = null) => {
+  const profileUsername = String(profileUser?.username || '').trim().toLowerCase();
+  const normalizedUsername = String(username || profileUsername || existingMember?.username || existingMember?.name || '')
+    .trim()
+    .toLowerCase();
+  const safeUsername = normalizedUsername || profileUsername || `member-${index + 1}`;
+  const displayName =
+    String(profileUser?.username || existingMember?.name || safeUsername).trim() || safeUsername;
   const isOwner = safeUsername === ownerUsername;
   const position = String(existingMember?.position || existingMember?.role || (isOwner ? 'Project Owner' : '')).trim();
   const department = String(existingMember?.department || 'Unassigned').trim() || 'Unassigned';
   const reportsToId = existingMember?.reportsToId || null;
+  const avatarUrl = String(profileUser?.avatarUrl || existingMember?.avatarUrl || '').trim();
+  const email = String(profileUser?.email || existingMember?.email || '').trim().toLowerCase();
+  const userId = String(profileUser?.id || existingMember?.userId || '').trim() || null;
 
   return {
     id: existingMember?.id || `member-${safeUsername.replace(/\s+/g, '-')}`,
+    userId,
     username: safeUsername,
     name: displayName,
+    email,
+    avatarUrl,
     position,
     role: position, // Backward compatibility for old UI paths
     department,
     reportsToId,
-    initials: existingMember?.initials || getInitials(displayName),
+    initials: getInitials(displayName),
     color: existingMember?.color || MEMBER_COLORS[index % MEMBER_COLORS.length],
     level: existingMember?.level || getRoleLevel(position, isOwner),
   };
@@ -455,6 +538,7 @@ const normalizeProjectTeamMembers = (project) => {
   const ownerUsername = String(project.ownerUsername || '').trim().toLowerCase();
   const storedMembers = Array.isArray(project.teamMembers) ? project.teamMembers : [];
   const projectMembers = Array.isArray(project.members) ? project.members : [];
+  const userLookup = buildLocalUserLookup();
 
   const allUsernames = Array.from(
     new Set(
@@ -471,9 +555,11 @@ const normalizeProjectTeamMembers = (project) => {
     membersByUsername.set(key, member);
   });
 
-  return allUsernames.map((username, index) =>
-    buildMemberFromUsername(username, index, ownerUsername, membersByUsername.get(username))
-  );
+  return allUsernames.map((username, index) => {
+    const existingMember = membersByUsername.get(username);
+    const profileUser = resolveMemberProfile(userLookup, username, existingMember);
+    return buildMemberFromUsername(username, index, ownerUsername, existingMember, profileUser);
+  });
 };
 
 // --- Main Application Component ---
@@ -1330,15 +1416,21 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     return { start, end };
   });
   const [hidePastWeeks, setHidePastWeeks] = useState(true);
+  const [startupView, setStartupView] = useState(STARTUP_VIEW_MODES.CALENDAR);
+  const [lastVisitedView, setLastVisitedView] = useState(() => ({ ...DEFAULT_LAST_VISITED_VIEW }));
+  const [hasAppliedStartupView, setHasAppliedStartupView] = useState(false);
 
   useEffect(() => {
     setIsAccountDataHydrated(false);
+    setHasAppliedStartupView(false);
 
     try {
       const rawData = localStorage.getItem(accountDbKey);
       if (!rawData) {
         setProjects([]);
         setEvents([]);
+        setStartupView(STARTUP_VIEW_MODES.CALENDAR);
+        setLastVisitedView({ ...DEFAULT_LAST_VISITED_VIEW });
         setIsAccountDataHydrated(true);
         return;
       }
@@ -1364,9 +1456,19 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       if (typeof parsed.hidePastWeeks === 'boolean') {
         setHidePastWeeks(parsed.hidePastWeeks);
       }
+
+      if (VALID_STARTUP_VIEWS.has(parsed.startupView)) {
+        setStartupView(parsed.startupView);
+      } else {
+        setStartupView(STARTUP_VIEW_MODES.CALENDAR);
+      }
+
+      setLastVisitedView(normalizeLastVisitedView(parsed.lastVisitedView));
     } catch {
       setProjects([]);
       setEvents([]);
+      setStartupView(STARTUP_VIEW_MODES.CALENDAR);
+      setLastVisitedView({ ...DEFAULT_LAST_VISITED_VIEW });
     } finally {
       setIsAccountDataHydrated(true);
     }
@@ -1380,10 +1482,68 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       events,
       displayRange,
       hidePastWeeks,
+      startupView,
+      lastVisitedView,
     };
 
     localStorage.setItem(accountDbKey, JSON.stringify(dbPayload));
-  }, [isAccountDataHydrated, accountDbKey, projects, events, displayRange, hidePastWeeks]);
+  }, [
+    isAccountDataHydrated,
+    accountDbKey,
+    projects,
+    events,
+    displayRange,
+    hidePastWeeks,
+    startupView,
+    lastVisitedView,
+  ]);
+
+  useEffect(() => {
+    if (!isAccountDataHydrated || hasAppliedStartupView) return;
+
+    const getProjectForProjectStartup = () => {
+      const preferredId = String(lastVisitedView?.projectId || '').trim();
+      if (preferredId && projects.some((project) => project.id === preferredId)) {
+        return preferredId;
+      }
+
+      const firstVisibleProject = projects.find((project) => project.isVisible);
+      return firstVisibleProject?.id || projects[0]?.id || null;
+    };
+
+    let nextProjectId = null;
+
+    if (startupView === STARTUP_VIEW_MODES.PROJECT) {
+      nextProjectId = getProjectForProjectStartup();
+    } else if (
+      startupView === STARTUP_VIEW_MODES.LAST &&
+      lastVisitedView?.type === STARTUP_VIEW_MODES.PROJECT
+    ) {
+      const savedProjectId = String(lastVisitedView.projectId || '').trim();
+      nextProjectId = projects.some((project) => project.id === savedProjectId) ? savedProjectId : null;
+    }
+
+    setActiveDashboardProjectId(nextProjectId);
+    setHasAppliedStartupView(true);
+  }, [isAccountDataHydrated, hasAppliedStartupView, startupView, lastVisitedView, projects]);
+
+  useEffect(() => {
+    if (!isAccountDataHydrated || !hasAppliedStartupView) return;
+
+    setLastVisitedView((prev) => {
+      if (activeDashboardProjectId) {
+        if (prev.type === STARTUP_VIEW_MODES.PROJECT && prev.projectId === activeDashboardProjectId) {
+          return prev;
+        }
+        return { type: STARTUP_VIEW_MODES.PROJECT, projectId: activeDashboardProjectId };
+      }
+
+      if (prev.type === STARTUP_VIEW_MODES.CALENDAR && prev.projectId === null) {
+        return prev;
+      }
+      return { type: STARTUP_VIEW_MODES.CALENDAR, projectId: null };
+    });
+  }, [isAccountDataHydrated, hasAppliedStartupView, activeDashboardProjectId]);
 
   // Current week calculation
   const currentWeekStart = useMemo(() => {
@@ -1654,6 +1814,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         events,
         displayRange,
         hidePastWeeks,
+        startupView,
+        lastVisitedView,
       })
     );
 
@@ -1923,6 +2085,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           setDisplayRange={setDisplayRange}
           hidePastWeeks={hidePastWeeks}
           setHidePastWeeks={setHidePastWeeks}
+          startupView={startupView}
+          setStartupView={setStartupView}
         />
       )}
 
@@ -2073,6 +2237,7 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
   ) => {
     const ownerUsername = String(project.ownerUsername || '').trim().toLowerCase();
     const membersByUsername = new Map();
+    const userLookup = buildLocalUserLookup();
 
     (Array.isArray(membersInput) ? membersInput : []).forEach((member) => {
       const username = String(member?.username || member?.name || '').trim().toLowerCase();
@@ -2081,9 +2246,11 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     });
 
     const usernames = Array.from(new Set([ownerUsername, ...membersByUsername.keys()].filter(Boolean)));
-    const normalizedMembers = usernames.map((username, index) =>
-      buildMemberFromUsername(username, index, ownerUsername, membersByUsername.get(username))
-    );
+    const normalizedMembers = usernames.map((username, index) => {
+      const existingMember = membersByUsername.get(username);
+      const profileUser = resolveMemberProfile(userLookup, username, existingMember);
+      return buildMemberFromUsername(username, index, ownerUsername, existingMember, profileUser);
+    });
     const normalizedPositions = normalizeRoles(positionsInput);
     const normalizedDepartments = normalizeDepartments([
       ...departmentsInput,
@@ -2469,7 +2636,8 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
         foundUser.username,
         teamMembers.length,
         project.ownerUsername,
-        { username: foundUser.username, name: foundUser.username }
+        { username: foundUser.username, name: foundUser.username },
+        normalizeAuthUser(foundUser)
       ),
     ];
 
@@ -3239,15 +3407,21 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                           <th className="px-6 py-4 font-medium text-right w-[16%]"></th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {teamMembers.map((member) => (
-                          <tr key={member.id} className="hover:bg-gray-50 transition-colors group">
-                            <td className="px-6 py-4 flex items-center gap-4">
-                              <div className={`w-10 h-10 rounded-full ${member.color} text-white flex items-center justify-center font-bold shadow-sm`}>
-                                {member.initials}
-                              </div>
-                              <span className="font-medium text-gray-800">{member.name}</span>
-                            </td>
+	                      <tbody className="divide-y divide-gray-100">
+	                        {teamMembers.map((member) => (
+	                          <tr key={member.id} className="hover:bg-gray-50 transition-colors group">
+	                            <td className="px-6 py-4 flex items-center gap-4">
+	                              <UserAvatar
+	                                user={member}
+	                                sizeClass="w-10 h-10"
+	                                textClass="text-[11px]"
+	                                ringClass="ring-2 ring-white shadow-sm"
+	                              />
+	                              <div className="min-w-0">
+	                                <span className="font-medium text-gray-800 block truncate">{member.name}</span>
+	                                <span className="text-xs text-gray-400 block truncate">@{member.username}</span>
+	                              </div>
+	                            </td>
                             <td className="px-6 py-4">
                               {projectPositions.length === 0 ? (
                                 <button
@@ -3897,8 +4071,13 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
 function OrgNode({ member }) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-3 shadow-sm w-48 flex flex-col items-center text-center z-10 hover:shadow-md hover:border-blue-300 transition-all cursor-pointer">
-      <div className={`w-12 h-12 rounded-full ${member.color} text-white flex items-center justify-center font-bold text-lg shadow-inner mb-2`}>
-        {member.initials}
+      <div className="mb-2">
+        <UserAvatar
+          user={member}
+          sizeClass="w-12 h-12"
+          textClass="text-sm"
+          ringClass="ring-2 ring-slate-100 shadow-sm"
+        />
       </div>
       <p className="font-bold text-gray-800 text-sm truncate w-full">{member.name}</p>
       <p className="text-xs text-gray-500 mt-0.5 truncate w-full">{member.position || member.role || '-'}</p>
@@ -4199,6 +4378,8 @@ function ProjectManagerModal({
   setDisplayRange,
   hidePastWeeks,
   setHidePastWeeks,
+  startupView,
+  setStartupView,
 }) {
   const popup = usePopup();
   const [editingId, setEditingId] = useState(null);
@@ -4255,10 +4436,29 @@ function ProjectManagerModal({
   };
 
   const visibleCount = projects.filter((project) => project.isVisible).length;
-
+  const startupViewOptions = [
+    {
+      id: STARTUP_VIEW_MODES.CALENDAR,
+      title: 'Calendar Board',
+      description: 'Open the calendar timeline every time you sign in.',
+      icon: CalendarDays,
+    },
+    {
+      id: STARTUP_VIEW_MODES.PROJECT,
+      title: 'Project Dashboard',
+      description: 'Open a project dashboard first (latest project or first available).',
+      icon: FolderTree,
+    },
+    {
+      id: STARTUP_VIEW_MODES.LAST,
+      title: 'Last Opened Page',
+      description: 'Return to the page you used before you left.',
+      icon: Clock,
+    },
+  ];
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
         <div className="flex justify-between items-center p-4 border-b bg-gray-50">
           <h2 className="text-lg font-bold flex items-center gap-2">
             <Settings className="w-5 h-5" /> Manage Projects
@@ -4435,6 +4635,49 @@ function ProjectManagerModal({
               </div>
             </div>
           )}
+
+          <div className="mt-6 pt-5 border-t border-gray-200 space-y-3">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+              <Activity className="w-5 h-5 text-gray-500" /> Startup Page
+            </h3>
+            <p className="text-xs text-gray-500">
+              Choose which page should be shown first after you sign in.
+            </p>
+
+            <div className="grid gap-2 sm:grid-cols-3">
+              {startupViewOptions.map((option) => {
+                const isActive = startupView === option.id;
+                const Icon = option.icon;
+
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setStartupView(option.id)}
+                    className={`rounded-xl border p-3 text-left transition-all ${
+                      isActive
+                        ? 'border-blue-400 bg-gradient-to-br from-blue-50 to-cyan-50 shadow-sm'
+                        : 'border-gray-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <Icon className={`w-4 h-4 mt-0.5 ${isActive ? 'text-blue-600' : 'text-gray-400'}`} />
+                      <span
+                        className={`w-3 h-3 rounded-full border mt-0.5 ${
+                          isActive ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white'
+                        }`}
+                      />
+                    </div>
+                    <p className={`mt-2 text-sm font-semibold ${isActive ? 'text-blue-900' : 'text-gray-800'}`}>
+                      {option.title}
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-500">{option.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+          </div>
 
           <div className="mt-6 pt-5 border-t border-gray-200 flex flex-col gap-3">
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
