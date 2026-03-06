@@ -97,6 +97,24 @@ const GOOGLE_CLIENT_ID = String(
     import.meta.env.VITE_GOOGLE_CLIENT_ID ||
     ''
 ).trim();
+const GOOGLE_CALENDAR_PROJECT_ID = '__google_calendar__';
+const GOOGLE_CALENDAR_PROJECT_META = {
+  id: GOOGLE_CALENDAR_PROJECT_ID,
+  name: 'Google Calendar',
+  colorIndex: 6,
+  isVisible: true,
+  ownerId: 'google-calendar',
+  ownerUsername: 'google-calendar',
+  members: [],
+};
+const DEFAULT_GOOGLE_CALENDAR_STATUS = {
+  linked: false,
+  linkedEmail: '',
+  linkedAt: null,
+  updatedAt: null,
+  configured: false,
+  redirectUri: '',
+};
 
 const getLocalUsers = () => {
   try {
@@ -338,6 +356,15 @@ const requestCloudDataApi = async (path, options = {}) => {
 
   return result;
 };
+
+const normalizeGoogleCalendarStatus = (status) => ({
+  ...DEFAULT_GOOGLE_CALENDAR_STATUS,
+  ...(status && typeof status === 'object' ? status : {}),
+  linked: Boolean(status?.linked),
+  linkedEmail: String(status?.linkedEmail || '').trim().toLowerCase(),
+  configured: Boolean(status?.configured),
+  redirectUri: String(status?.redirectUri || '').trim(),
+});
 
 const loadAccountDbPayload = async (userId) => {
   const normalizedUserId = String(userId || '').trim();
@@ -1836,6 +1863,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [projectInvitations, setProjectInvitations] = useState(() =>
     AUTH_API_BASE_URL ? [] : getProjectInvites()
   );
+  const [googleCalendarStatus, setGoogleCalendarStatus] = useState(() => ({
+    ...DEFAULT_GOOGLE_CALENDAR_STATUS,
+  }));
+  const [googleCalendarEvents, setGoogleCalendarEvents] = useState([]);
+  const [isGoogleCalendarBusy, setIsGoogleCalendarBusy] = useState(false);
+  const [isGoogleCalendarEventsLoading, setIsGoogleCalendarEventsLoading] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -1930,6 +1963,64 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       isCancelled = true;
     };
   }, [isProfileViewOpen]);
+
+  const refreshGoogleCalendarStatus = async () => {
+    if (!AUTH_API_BASE_URL) {
+      const fallbackStatus = normalizeGoogleCalendarStatus({
+        linked: false,
+        configured: false,
+      });
+      setGoogleCalendarStatus(fallbackStatus);
+      return fallbackStatus;
+    }
+
+    try {
+      const result = await requestCloudDataApi(
+        `/google/calendar/status?userId=${encodeURIComponent(currentUser.id)}`
+      );
+      const normalizedStatus = normalizeGoogleCalendarStatus(result);
+      setGoogleCalendarStatus(normalizedStatus);
+      return normalizedStatus;
+    } catch (error) {
+      const fallbackStatus = normalizeGoogleCalendarStatus({
+        linked: false,
+        configured: false,
+      });
+      setGoogleCalendarStatus(fallbackStatus);
+      throw error;
+    }
+  };
+
+  useEffect(() => {
+    let isCancelled = false;
+    setGoogleCalendarEvents([]);
+    setGoogleCalendarStatus({ ...DEFAULT_GOOGLE_CALENDAR_STATUS });
+
+    const loadStatus = async () => {
+      if (!AUTH_API_BASE_URL) return;
+      try {
+        const result = await requestCloudDataApi(
+          `/google/calendar/status?userId=${encodeURIComponent(currentUser.id)}`
+        );
+        if (isCancelled) return;
+        setGoogleCalendarStatus(normalizeGoogleCalendarStatus(result));
+      } catch (error) {
+        if (isCancelled) return;
+        setGoogleCalendarStatus(
+          normalizeGoogleCalendarStatus({
+            linked: false,
+            configured: false,
+          })
+        );
+        console.warn('Failed to load Google Calendar status:', error.message);
+      }
+    };
+
+    void loadStatus();
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUser.id]);
 
   useEffect(() => {
     if (!isAccountDataHydrated) return;
@@ -2038,6 +2129,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     return months;
   }, [displayRange, hidePastWeeks, currentWeekStart]);
 
+  const mergeViewRange = useMemo(() => {
+    if (!monthsToRender.length) return null;
+    const firstMonth = monthsToRender[0];
+    const lastMonth = monthsToRender[monthsToRender.length - 1];
+    const startDate = new Date(firstMonth.year, firstMonth.month, 1);
+    const endDate = new Date(lastMonth.year, lastMonth.month + 1, 1);
+    return {
+      timeMin: startDate.toISOString(),
+      timeMax: endDate.toISOString(),
+    };
+  }, [monthsToRender]);
+
   // Derived state
   const visibleProjects = projects.filter(p => p.isVisible);
   const mobileVisibleProjects = visibleProjects.slice(0, 4);
@@ -2046,10 +2149,19 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     [visibleProjects, mobileCalendarProjectId]
   );
   const effectiveMergeView = isCompactViewport ? !selectedMobileProject : isMergeView;
-  const mobileCalendarProjects = selectedMobileProject ? [selectedMobileProject] : visibleProjects;
+  const mergeViewProjects = useMemo(() => {
+    if (!googleCalendarStatus.linked) return visibleProjects;
+    const alreadyIncluded = visibleProjects.some((project) => project.id === GOOGLE_CALENDAR_PROJECT_ID);
+    return alreadyIncluded ? visibleProjects : [...visibleProjects, GOOGLE_CALENDAR_PROJECT_META];
+  }, [visibleProjects, googleCalendarStatus.linked]);
+  const mergeViewEvents = useMemo(() => {
+    if (!googleCalendarStatus.linked || googleCalendarEvents.length === 0) return events;
+    return [...events, ...googleCalendarEvents];
+  }, [events, googleCalendarStatus.linked, googleCalendarEvents]);
+  const mobileCalendarProjects = selectedMobileProject ? [selectedMobileProject] : mergeViewProjects;
   const mobileCalendarEvents = selectedMobileProject
     ? events.filter((event) => event.projectId === selectedMobileProject.id)
-    : events;
+    : mergeViewEvents;
   const pendingProjectInvitations = useMemo(
     () =>
       projectInvitations.filter(
@@ -2060,6 +2172,60 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   );
 
   useEffect(() => {
+    if (!AUTH_API_BASE_URL) {
+      setGoogleCalendarEvents([]);
+      setIsGoogleCalendarEventsLoading(false);
+      return;
+    }
+    if (!isAccountDataHydrated) {
+      setIsGoogleCalendarEventsLoading(false);
+      return;
+    }
+    if (!googleCalendarStatus.linked || !effectiveMergeView || !mergeViewRange) {
+      setGoogleCalendarEvents([]);
+      setIsGoogleCalendarEventsLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+    setIsGoogleCalendarEventsLoading(true);
+
+    const loadGoogleEvents = async () => {
+      try {
+        const result = await requestCloudDataApi(
+          `/google/calendar/events?userId=${encodeURIComponent(currentUser.id)}&timeMin=${encodeURIComponent(
+            mergeViewRange.timeMin
+          )}&timeMax=${encodeURIComponent(mergeViewRange.timeMax)}`
+        );
+        if (isCancelled) return;
+        const normalizedEvents = Array.isArray(result?.events)
+          ? result.events.filter((event) => event && event.source === 'google')
+          : [];
+        setGoogleCalendarEvents(normalizedEvents);
+      } catch (error) {
+        if (isCancelled) return;
+        setGoogleCalendarEvents([]);
+        console.warn('Failed to load Google Calendar events:', error.message);
+      } finally {
+        if (!isCancelled) {
+          setIsGoogleCalendarEventsLoading(false);
+        }
+      }
+    };
+
+    void loadGoogleEvents();
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    isAccountDataHydrated,
+    currentUser.id,
+    googleCalendarStatus.linked,
+    effectiveMergeView,
+    mergeViewRange,
+  ]);
+
+  useEffect(() => {
     if (!isCompactViewport) return;
     if (selectedMobileProject) return;
     if (mobileCalendarProjectId === null) return;
@@ -2067,6 +2233,125 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }, [isCompactViewport, selectedMobileProject, mobileCalendarProjectId]);
 
   // --- Handlers ---
+  const handleLinkGoogleCalendar = async () => {
+    if (!AUTH_API_BASE_URL) {
+      await popup.alert({
+        title: 'Feature unavailable',
+        message: 'Cloud Auth API is not configured. Set AUTH_API_BASE_URL before linking Google Calendar.',
+      });
+      return;
+    }
+
+    setIsGoogleCalendarBusy(true);
+    try {
+      const result = await requestCloudDataApi(
+        `/google/calendar/auth-url?userId=${encodeURIComponent(currentUser.id)}`
+      );
+      const authUrl = String(result?.authUrl || '').trim();
+      if (!authUrl) {
+        throw new Error('Server did not return Google authorization URL.');
+      }
+
+      const popupWidth = 520;
+      const popupHeight = 680;
+      const left = Math.max(0, Math.floor((window.screen.width - popupWidth) / 2));
+      const top = Math.max(0, Math.floor((window.screen.height - popupHeight) / 2));
+      const popupWindow = window.open(
+        authUrl,
+        'pm-calendar-google-calendar-link',
+        `width=${popupWidth},height=${popupHeight},left=${left},top=${top},resizable=yes,scrollbars=yes`
+      );
+
+      if (!popupWindow) {
+        throw new Error('Popup blocked. Please allow popups and try again.');
+      }
+
+      const linkResult = await new Promise((resolve) => {
+        let done = false;
+        const complete = (payload) => {
+          if (done) return;
+          done = true;
+          window.clearInterval(closeChecker);
+          window.clearTimeout(timeout);
+          window.removeEventListener('message', onMessage);
+          resolve(payload);
+        };
+
+        const onMessage = (event) => {
+          if (!event?.data || event.data.type !== 'PM_CALENDAR_GOOGLE_CALENDAR_LINK') return;
+          complete(event.data);
+        };
+
+        const closeChecker = window.setInterval(() => {
+          if (popupWindow.closed) {
+            complete({
+              ok: false,
+              message: 'Google link window was closed before completion.',
+            });
+          }
+        }, 350);
+
+        const timeout = window.setTimeout(() => {
+          complete({
+            ok: false,
+            message: 'Google link timed out. Please try again.',
+          });
+        }, 180000);
+
+        window.addEventListener('message', onMessage);
+      });
+
+      if (!linkResult?.ok) {
+        throw new Error(linkResult?.message || 'Failed to link Google Calendar.');
+      }
+
+      const status = await refreshGoogleCalendarStatus();
+      await popup.alert({
+        title: 'Google Calendar linked',
+        message: `Linked account: ${status?.linkedEmail || currentUser.email}`,
+      });
+    } catch (error) {
+      await popup.alert({
+        title: 'Unable to link Google Calendar',
+        message: error.message || 'Unexpected error while linking Google Calendar.',
+      });
+    } finally {
+      setIsGoogleCalendarBusy(false);
+    }
+  };
+
+  const handleUnlinkGoogleCalendar = async () => {
+    if (!AUTH_API_BASE_URL) return;
+
+    const confirmed = await popup.confirm({
+      title: 'Unlink Google Calendar',
+      message: 'Google events will be removed from Merge view. Continue?',
+      confirmText: 'Unlink',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+
+    setIsGoogleCalendarBusy(true);
+    try {
+      await requestCloudDataApi(`/google/calendar/link?userId=${encodeURIComponent(currentUser.id)}`, {
+        method: 'DELETE',
+      });
+      setGoogleCalendarEvents([]);
+      await refreshGoogleCalendarStatus();
+      await popup.alert({
+        title: 'Google Calendar unlinked',
+        message: 'Google Calendar connection has been removed.',
+      });
+    } catch (error) {
+      await popup.alert({
+        title: 'Unable to unlink Google Calendar',
+        message: error.message || 'Unexpected error while unlinking Google Calendar.',
+      });
+    } finally {
+      setIsGoogleCalendarBusy(false);
+    }
+  };
+
   const handleDayClick = (dateStr, projectId) => {
     setEditingEvent(null);
     setSelectedDateForNewEvent(dateStr);
@@ -2124,6 +2409,23 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
   const handleEventClick = (event, e) => {
     e.stopPropagation(); // Prevent triggering day click
+    if (event?.source === 'google') {
+      void (async () => {
+        const shouldOpen = await popup.confirm({
+          title: 'Google Calendar event',
+          message:
+            `This event is synced from Google Calendar and is read-only here.\n\n` +
+            `${event.title || '(Untitled)'}\n${event.startDate} ${event.startTime} - ${event.endDate} ${event.endTime}\n\n` +
+            `${event.htmlLink ? 'Open this event in Google Calendar?' : 'Edit it directly in Google Calendar.'}`,
+          confirmText: event.htmlLink ? 'Open Google Calendar' : 'OK',
+          cancelText: event.htmlLink ? 'Close' : 'Cancel',
+        });
+        if (shouldOpen && event.htmlLink) {
+          window.open(event.htmlLink, '_blank', 'noopener,noreferrer');
+        }
+      })();
+      return;
+    }
     setEditingEvent(event);
     setShowEventModal(true);
   };
@@ -2772,8 +3074,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
                 {/* Merge View Sticky Header */}
                 {effectiveMergeView && (
-                  <div className="sticky top-0 z-10 bg-white shadow-sm border-b text-center h-14 flex items-center justify-center px-3">
+                  <div className="sticky top-0 z-10 bg-white shadow-sm border-b text-center h-14 flex items-center justify-center px-3 gap-2">
                     <span className="font-bold text-gray-700 text-sm sm:text-base md:text-lg">Merged Calendar ({visibleProjects.length})</span>
+                    {googleCalendarStatus.linked && isGoogleCalendarEventsLoading && (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-gray-400">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Syncing Google
+                      </span>
+                    )}
                   </div>
                 )}
               </>
@@ -2816,8 +3124,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                           <MonthGrid 
                             year={year} 
                             month={month} 
-                            projects={visibleProjects} 
-                            events={events}
+                            projects={mergeViewProjects} 
+                            events={mergeViewEvents}
                             showEventTime
                             onDayClick={(dateStr) => handleDayClick(dateStr, null)}
                             onEventClick={handleEventClick}
@@ -2880,6 +3188,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           setHidePastWeeks={setHidePastWeeks}
           startupView={startupView}
           setStartupView={setStartupView}
+          googleCalendarStatus={googleCalendarStatus}
+          onLinkGoogleCalendar={handleLinkGoogleCalendar}
+          onUnlinkGoogleCalendar={handleUnlinkGoogleCalendar}
+          isGoogleCalendarBusy={isGoogleCalendarBusy}
         />
       )}
 
@@ -5886,6 +6198,10 @@ function ProjectManagerModal({
   setHidePastWeeks,
   startupView,
   setStartupView,
+  googleCalendarStatus,
+  onLinkGoogleCalendar,
+  onUnlinkGoogleCalendar,
+  isGoogleCalendarBusy,
 }) {
   const popup = usePopup();
   const [editingId, setEditingId] = useState(null);
@@ -5954,6 +6270,8 @@ function ProjectManagerModal({
   };
 
   const visibleCount = projects.filter((project) => project.isVisible).length;
+  const googleLinked = Boolean(googleCalendarStatus?.linked);
+  const googleConfigured = Boolean(googleCalendarStatus?.configured);
   const startupViewOptions = [
     {
       id: STARTUP_VIEW_MODES.CALENDAR,
@@ -6164,6 +6482,82 @@ function ProjectManagerModal({
               </div>
             </div>
           )}
+
+          <div className="mt-6 pt-5 border-t border-gray-200 space-y-3">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+              <LinkIcon className="w-5 h-5 text-gray-500" /> Google Calendar (Merge View)
+            </h3>
+            <p className="text-xs text-gray-500">
+              Link this account to show Google Calendar events inside Merge view on desktop and mobile.
+            </p>
+            <div className="rounded-xl border border-gray-200 p-3 bg-gray-50/70 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-800 truncate">
+                    {googleLinked ? 'Linked' : 'Not linked'}
+                  </p>
+                  <p className="text-xs text-gray-500 truncate">
+                    {googleLinked
+                      ? `Account: ${googleCalendarStatus.linkedEmail || currentUser.email}`
+                      : googleConfigured
+                      ? 'Link your registered Google account to sync events.'
+                      : 'Server OAuth config is incomplete.'}
+                  </p>
+                </div>
+                <span
+                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold border ${
+                    googleLinked
+                      ? 'bg-green-50 text-green-700 border-green-200'
+                      : 'bg-gray-100 text-gray-500 border-gray-200'
+                  }`}
+                >
+                  {googleLinked ? 'Linked' : 'Unlinked'}
+                </span>
+              </div>
+
+              {!googleConfigured && (
+                <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
+                  Configure `GOOGLE_CLIENT_SECRET` and `GOOGLE_CALENDAR_REDIRECT_URI` on auth server first.
+                </p>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                {!googleLinked ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void onLinkGoogleCalendar();
+                    }}
+                    disabled={isGoogleCalendarBusy || !googleConfigured}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                      isGoogleCalendarBusy || !googleConfigured
+                        ? 'bg-blue-200 text-white cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
+                  >
+                    {isGoogleCalendarBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LinkIcon className="w-3.5 h-3.5" />}
+                    Link Google Calendar
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void onUnlinkGoogleCalendar();
+                    }}
+                    disabled={isGoogleCalendarBusy}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                      isGoogleCalendarBusy
+                        ? 'bg-red-200 text-white cursor-not-allowed'
+                        : 'bg-red-600 hover:bg-red-700 text-white'
+                    }`}
+                  >
+                    {isGoogleCalendarBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
+                    Unlink
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
 
           <div className="mt-6 pt-5 border-t border-gray-200 space-y-3">
             <h3 className="font-bold text-gray-800 flex items-center gap-2">

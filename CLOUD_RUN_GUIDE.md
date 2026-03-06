@@ -21,7 +21,7 @@ gcloud run deploy pm-calendar-auth \
   --image gcr.io/YOUR_PROJECT_ID/pm-calendar-auth \
   --region asia-southeast1 \
   --allow-unauthenticated \
-  --set-env-vars CLIENT_ORIGIN=https://YOUR_FRONTEND_URL,OTP_TTL_MINUTES=10,REQUEST_BODY_LIMIT=10mb,FIRESTORE_USERS_COLLECTION=users,FIRESTORE_OTP_COLLECTION=auth_otps,FIRESTORE_APP_DATA_COLLECTION=app_data,FIRESTORE_APP_DATA_CHUNK_COLLECTION=chunks,FIRESTORE_APP_DATA_CHUNK_SIZE=300000,FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites,FIRESTORE_PROJECT_INVITES_DOC_ID=global,GOOGLE_OAUTH_JSON_PATH=/secrets/google/oauth.json \
+  --set-env-vars CLIENT_ORIGIN=https://YOUR_FRONTEND_URL,OTP_TTL_MINUTES=10,REQUEST_BODY_LIMIT=10mb,FIRESTORE_USERS_COLLECTION=users,FIRESTORE_OTP_COLLECTION=auth_otps,FIRESTORE_APP_DATA_COLLECTION=app_data,FIRESTORE_APP_DATA_CHUNK_COLLECTION=chunks,FIRESTORE_APP_DATA_CHUNK_SIZE=300000,FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites,FIRESTORE_PROJECT_INVITES_DOC_ID=global,GOOGLE_OAUTH_JSON_PATH=/secrets/google/oauth.json,GOOGLE_CALENDAR_REDIRECT_URI=https://YOUR_AUTH_URL/google/calendar/callback \
   --set-secrets GMAIL_USER=gmail-user:latest,GMAIL_APP_PASSWORD=gmail-app-password:latest,OTP_FROM_EMAIL=otp-from-email:latest,/secrets/google/oauth.json=oauth2:latest
 ```
 
@@ -31,7 +31,7 @@ Verify auth service:
 curl https://YOUR_AUTH_URL/health
 ```
 
-`googleClientConfigured` must be `true`.
+`googleClientConfigured` and `googleCalendarOAuthConfigured` must be `true`.
 
 ## 2) Deploy Frontend Service (`pm-calendar-frontend`)
 
@@ -60,7 +60,8 @@ Notes:
 
 In Google Cloud Console -> OAuth Client (Web application):
 1. `Authorized JavaScript origins`: add frontend URL only, example `https://pm-calendar-frontend-xxxxx-uc.a.run.app`
-2. `Authorized redirect URIs`: not required for this token flow, but if you set one, use your backend callback URL consistently
+2. `Authorized redirect URIs`: must include backend callback URL:
+   - `https://YOUR_AUTH_URL/google/calendar/callback`
 
 ## 4) Required IAM
 
@@ -71,7 +72,8 @@ For auth service account:
 ## 5) Quick Debug Checklist (If Login/Google button still fails)
 
 1. Frontend service env has `AUTH_API_BASE_URL` and `GOOGLE_CLIENT_ID`.
-2. Auth `/health` returns `ok: true` and `googleClientConfigured: true`.
+2. Auth `/health` returns `ok: true`, `googleClientConfigured: true`, `googleCalendarOAuthConfigured: true`.
 3. `CLIENT_ORIGIN` on auth exactly matches frontend URL.
 4. OAuth `Authorized JavaScript origins` exactly matches frontend URL.
-5. Browser console has no CORS error and no popup-blocked error.
+5. OAuth `Authorized redirect URIs` includes `https://YOUR_AUTH_URL/google/calendar/callback`.
+6. Browser console has no CORS error and no popup-blocked error.

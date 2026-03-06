@@ -6,6 +6,7 @@ Backend service for:
 3. Google OAuth login (ID token verification)
 4. Persistent storage in Firestore (Cloud Run-safe)
 5. `/auth/google` accepts `idToken` or `accessToken`
+6. Google Calendar Link/Unlink + Merge View sync (`/google/calendar/*`)
 
 ## Required Environment Variables
 
@@ -15,6 +16,9 @@ Copy `.env.example` -> `.env` and fill:
 PORT=8080
 CLIENT_ORIGIN=http://localhost:5173
 GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+# Recommended explicit callback for Cloud Run:
+GOOGLE_CALENDAR_REDIRECT_URI=https://your-auth-service-xxxxx-uc.a.run.app/google/calendar/callback
 # Optional alternative to GOOGLE_CLIENT_ID:
 # GOOGLE_OAUTH_JSON_PATH=/secrets/google/oauth.json
 GMAIL_USER=yourgmail@gmail.com
@@ -32,8 +36,10 @@ FIRESTORE_PROJECT_INVITES_DOC_ID=global
 ```
 
 Google OAuth can be configured in either way:
-1. `GOOGLE_CLIENT_ID` directly (simple)
+1. `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` directly
 2. `GOOGLE_OAUTH_JSON_PATH` (mount OAuth JSON from Secret Manager)
+
+If you use Google Calendar linking, callback URL must match `GOOGLE_CALENDAR_REDIRECT_URI`.
 
 ## Local Run
 
@@ -77,9 +83,13 @@ curl http://localhost:8080/health
 4. Add `Authorized JavaScript origins`:
    - `http://localhost:5173`
    - Your frontend Cloud Run URL (`https://...run.app`)
-5. Save, then copy `Client ID` for:
+5. Add `Authorized redirect URIs`:
+   - `http://localhost:8080/google/calendar/callback` (local backend)
+   - `https://YOUR_AUTH_SERVICE_URL/google/calendar/callback` (Cloud Run backend)
+6. Save, then copy `Client ID` for:
    - Frontend: `VITE_GOOGLE_CLIENT_ID`
    - Backend: `GOOGLE_CLIENT_ID` (or OAuth JSON mount)
+7. Copy `Client Secret` for backend: `GOOGLE_CLIENT_SECRET` (if not using OAuth JSON mount)
 
 ## Step 4: Create Secrets
 Use Secret Manager to store sensitive values:
@@ -93,6 +103,8 @@ Use Secret Manager to store sensitive values:
 Method A (simple):
 1. Create secret `google-client-id`.
 2. Secret value = OAuth Client ID string.
+3. Create secret `google-client-secret`.
+4. Secret value = OAuth Client Secret string.
 
 Method B (mount JSON file):
 1. Create secret `google-oauth-json`.
@@ -117,6 +129,7 @@ Set environment variables:
 - `FIRESTORE_APP_DATA_CHUNK_SIZE=300000`
 - `FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites`
 - `FIRESTORE_PROJECT_INVITES_DOC_ID=global`
+- `GOOGLE_CALENDAR_REDIRECT_URI=https://your-auth-service-url/google/calendar/callback`
 
 Add secrets as environment variables:
 - `GMAIL_USER` from secret `gmail-user`
@@ -126,6 +139,7 @@ Add secrets as environment variables:
 Google OAuth setup for backend:
 1. If using Method A:
    - Add env secret `GOOGLE_CLIENT_ID` from secret `google-client-id`.
+   - Add env secret `GOOGLE_CLIENT_SECRET` from secret `google-client-secret`.
 2. If using Method B:
    - Add secret as mounted volume:
      - Secret: `google-oauth-json`
@@ -154,7 +168,10 @@ Google OAuth setup for backend:
 2. Register account via OTP email.
 3. Login by email/username + password.
 4. Test `Login with Google`.
-5. Check backend `/health` and ensure `googleClientConfigured` is `true`.
+5. In `Manage Project` -> test Link Google Calendar and verify Merge view shows Google events.
+6. Check backend `/health` and ensure:
+   - `googleClientConfigured: true`
+   - `googleCalendarOAuthConfigured: true`
 
 ---
 
@@ -169,8 +186,8 @@ gcloud run deploy pm-calendar-auth \
   --region asia-southeast1 \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars CLIENT_ORIGIN=https://your-frontend-url,OTP_TTL_MINUTES=10,REQUEST_BODY_LIMIT=10mb,FIRESTORE_USERS_COLLECTION=users,FIRESTORE_OTP_COLLECTION=auth_otps,FIRESTORE_APP_DATA_COLLECTION=app_data,FIRESTORE_APP_DATA_CHUNK_COLLECTION=chunks,FIRESTORE_APP_DATA_CHUNK_SIZE=300000,FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites,FIRESTORE_PROJECT_INVITES_DOC_ID=global \
-  --set-secrets GMAIL_USER=gmail-user:latest,GMAIL_APP_PASSWORD=gmail-app-password:latest,OTP_FROM_EMAIL=otp-from-email:latest
+  --set-env-vars CLIENT_ORIGIN=https://your-frontend-url,OTP_TTL_MINUTES=10,REQUEST_BODY_LIMIT=10mb,FIRESTORE_USERS_COLLECTION=users,FIRESTORE_OTP_COLLECTION=auth_otps,FIRESTORE_APP_DATA_COLLECTION=app_data,FIRESTORE_APP_DATA_CHUNK_COLLECTION=chunks,FIRESTORE_APP_DATA_CHUNK_SIZE=300000,FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites,FIRESTORE_PROJECT_INVITES_DOC_ID=global,GOOGLE_CALENDAR_REDIRECT_URI=https://YOUR_AUTH_SERVICE_URL/google/calendar/callback \
+  --set-secrets GMAIL_USER=gmail-user:latest,GMAIL_APP_PASSWORD=gmail-app-password:latest,OTP_FROM_EMAIL=otp-from-email:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest
 ```
 
 If using JSON mount via CLI:
@@ -187,5 +204,5 @@ If using client id secret via CLI:
 ```bash
 gcloud run services update pm-calendar-auth \
   --region asia-southeast1 \
-  --set-secrets=GOOGLE_CLIENT_ID=google-client-id:latest
+  --set-secrets=GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest
 ```
