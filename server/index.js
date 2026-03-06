@@ -13,7 +13,7 @@ dotenv.config();
 
 const app = express();
 app.use(helmet());
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: String(process.env.REQUEST_BODY_LIMIT || '10mb') }));
 
 const allowedOrigins = String(process.env.CLIENT_ORIGIN || '')
   .split(',')
@@ -35,6 +35,15 @@ app.use(
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
 const USERS_COLLECTION = String(process.env.FIRESTORE_USERS_COLLECTION || 'users').trim();
 const OTP_COLLECTION = String(process.env.FIRESTORE_OTP_COLLECTION || 'auth_otps').trim();
+const APP_DATA_COLLECTION = String(process.env.FIRESTORE_APP_DATA_COLLECTION || 'app_data').trim();
+const PROJECT_INVITES_COLLECTION = String(
+  process.env.FIRESTORE_PROJECT_INVITES_COLLECTION || 'project_invites'
+).trim();
+const PROJECT_INVITES_DOC_ID = String(process.env.FIRESTORE_PROJECT_INVITES_DOC_ID || 'global').trim();
+const APP_DATA_CHUNK_COLLECTION = String(
+  process.env.FIRESTORE_APP_DATA_CHUNK_COLLECTION || 'chunks'
+).trim();
+const APP_DATA_CHUNK_SIZE = Math.max(50000, Number(process.env.FIRESTORE_APP_DATA_CHUNK_SIZE || 300000));
 const GOOGLE_OAUTH_JSON_PATH = String(process.env.GOOGLE_OAUTH_JSON_PATH || '').trim();
 
 const loadGoogleClientIdFromJson = (filePath) => {
@@ -55,6 +64,7 @@ const GOOGLE_CLIENT_ID =
 
 const sanitizeEmail = (value) => String(value || '').trim().toLowerCase();
 const sanitizeUsername = (value) => String(value || '').trim().toLowerCase();
+const sanitizeUserId = (value) => String(value || '').trim();
 
 const requiredEnv = ['GMAIL_USER', 'GMAIL_APP_PASSWORD', 'OTP_FROM_EMAIL'];
 const missingEnv = requiredEnv.filter((key) => !String(process.env[key] || '').trim());
@@ -68,7 +78,85 @@ if (missingEnv.length > 0) {
 const firestore = new Firestore();
 const usersRef = firestore.collection(USERS_COLLECTION);
 const otpRef = firestore.collection(OTP_COLLECTION);
+const appDataRef = firestore.collection(APP_DATA_COLLECTION);
+const invitesDocRef = firestore.collection(PROJECT_INVITES_COLLECTION).doc(PROJECT_INVITES_DOC_ID);
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+
+const splitIntoChunks = (value, chunkSize) => {
+  const text = String(value || '');
+  if (!text) return [''];
+  const parts = [];
+  for (let index = 0; index < text.length; index += chunkSize) {
+    parts.push(text.slice(index, index + chunkSize));
+  }
+  return parts;
+};
+
+const readAccountPayloadFromStore = async (userId) => {
+  const userDataDocRef = appDataRef.doc(userId);
+  const metaDoc = await userDataDocRef.get();
+  if (!metaDoc.exists) return {};
+
+  const metaData = metaDoc.data() || {};
+  const directPayload = metaData.payload;
+  if (directPayload && typeof directPayload === 'object' && !Array.isArray(directPayload)) {
+    return directPayload;
+  }
+
+  const chunkCount = Number(metaData.chunkCount || 0);
+  if (!Number.isInteger(chunkCount) || chunkCount <= 0) return {};
+
+  const chunksSnapshot = await userDataDocRef
+    .collection(APP_DATA_CHUNK_COLLECTION)
+    .orderBy('index', 'asc')
+    .limit(chunkCount)
+    .get();
+
+  if (chunksSnapshot.empty) return {};
+
+  const serialized = chunksSnapshot.docs
+    .map((doc) => String(doc.data()?.data || ''))
+    .join('');
+  if (!serialized) return {};
+
+  try {
+    const parsed = JSON.parse(serialized);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const writeAccountPayloadToStore = async (userId, payload) => {
+  const userDataDocRef = appDataRef.doc(userId);
+  const serializedPayload = JSON.stringify(payload);
+  const chunks = splitIntoChunks(serializedPayload, APP_DATA_CHUNK_SIZE);
+  const batch = firestore.batch();
+
+  const existingChunksSnapshot = await userDataDocRef.collection(APP_DATA_CHUNK_COLLECTION).get();
+  existingChunksSnapshot.docs.forEach((doc) => {
+    batch.delete(doc.ref);
+  });
+
+  batch.set(
+    userDataDocRef,
+    {
+      chunkCount: chunks.length,
+      updatedAt: new Date().toISOString(),
+    },
+    { merge: true }
+  );
+
+  chunks.forEach((chunk, index) => {
+    const chunkDocRef = userDataDocRef.collection(APP_DATA_CHUNK_COLLECTION).doc(`part_${index}`);
+    batch.set(chunkDocRef, {
+      index,
+      data: chunk,
+    });
+  });
+
+  await batch.commit();
+};
 
 const mailer = nodemailer.createTransport({
   service: 'gmail',
@@ -157,6 +245,10 @@ app.get('/health', (_req, res) => {
     service: 'pm-calendar-auth-server',
     firestoreCollectionUsers: USERS_COLLECTION,
     firestoreCollectionOtp: OTP_COLLECTION,
+    firestoreCollectionAppData: APP_DATA_COLLECTION,
+    firestoreCollectionAppDataChunks: APP_DATA_CHUNK_COLLECTION,
+    firestoreCollectionProjectInvites: PROJECT_INVITES_COLLECTION,
+    firestoreProjectInvitesDocId: PROJECT_INVITES_DOC_ID,
     googleClientConfigured: Boolean(GOOGLE_CLIENT_ID),
   });
 });
@@ -376,6 +468,108 @@ app.post('/auth/google', async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Google sign-in failed.' });
+  }
+});
+
+app.get('/users/lookup', async (req, res) => {
+  try {
+    const identifierRaw = String(req.query?.identifier || '').trim();
+    if (!identifierRaw) {
+      return res.status(400).json({ message: 'identifier is required.' });
+    }
+
+    const identifier = identifierRaw.toLowerCase();
+    const user = identifier.includes('@')
+      ? await getUserByEmail(identifier)
+      : await getUserByUsername(identifier);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    return res.json({ user: toPublicUser(user) });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to lookup user.' });
+  }
+});
+
+app.get('/data/account/:userId', async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.params?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
+    }
+
+    const userDoc = await usersRef.doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const payload = await readAccountPayloadFromStore(userId);
+
+    return res.json({ payload });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to fetch account data.' });
+  }
+});
+
+app.put('/data/account/:userId', async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.params?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
+    }
+
+    const userDoc = await usersRef.doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const incomingPayload = req.body?.payload;
+    if (!incomingPayload || typeof incomingPayload !== 'object' || Array.isArray(incomingPayload)) {
+      return res.status(400).json({ message: 'payload must be an object.' });
+    }
+
+    await writeAccountPayloadToStore(userId, incomingPayload);
+
+    return res.json({ message: 'Account data saved.' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to save account data.' });
+  }
+});
+
+app.get('/data/project-invites', async (_req, res) => {
+  try {
+    const doc = await invitesDocRef.get();
+    const rawInvites = doc.exists ? doc.data()?.invites : [];
+    const invites = Array.isArray(rawInvites)
+      ? rawInvites.filter((invite) => invite && typeof invite === 'object')
+      : [];
+    return res.json({ invites });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to fetch project invites.' });
+  }
+});
+
+app.put('/data/project-invites', async (req, res) => {
+  try {
+    const rawInvites = req.body?.invites;
+    if (!Array.isArray(rawInvites)) {
+      return res.status(400).json({ message: 'invites must be an array.' });
+    }
+
+    const invites = rawInvites.filter((invite) => invite && typeof invite === 'object');
+    await invitesDocRef.set(
+      {
+        invites,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    return res.json({ message: 'Project invites saved.', count: invites.length });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to save project invites.' });
   }
 });
 

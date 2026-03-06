@@ -21,8 +21,14 @@ GMAIL_USER=yourgmail@gmail.com
 GMAIL_APP_PASSWORD=your_gmail_app_password
 OTP_FROM_EMAIL=yourgmail@gmail.com
 OTP_TTL_MINUTES=10
+REQUEST_BODY_LIMIT=10mb
 FIRESTORE_USERS_COLLECTION=users
 FIRESTORE_OTP_COLLECTION=auth_otps
+FIRESTORE_APP_DATA_COLLECTION=app_data
+FIRESTORE_APP_DATA_CHUNK_COLLECTION=chunks
+FIRESTORE_APP_DATA_CHUNK_SIZE=300000
+FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites
+FIRESTORE_PROJECT_INVITES_DOC_ID=global
 ```
 
 Google OAuth can be configured in either way:
@@ -103,8 +109,14 @@ Method B (mount JSON file):
 Set environment variables:
 - `CLIENT_ORIGIN=https://your-frontend.run.app`
 - `OTP_TTL_MINUTES=10`
+- `REQUEST_BODY_LIMIT=10mb`
 - `FIRESTORE_USERS_COLLECTION=users`
 - `FIRESTORE_OTP_COLLECTION=auth_otps`
+- `FIRESTORE_APP_DATA_COLLECTION=app_data`
+- `FIRESTORE_APP_DATA_CHUNK_COLLECTION=chunks`
+- `FIRESTORE_APP_DATA_CHUNK_SIZE=300000`
+- `FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites`
+- `FIRESTORE_PROJECT_INVITES_DOC_ID=global`
 
 Add secrets as environment variables:
 - `GMAIL_USER` from secret `gmail-user`
@@ -157,7 +169,7 @@ gcloud run deploy pm-calendar-auth \
   --region asia-southeast1 \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars CLIENT_ORIGIN=https://your-frontend-url,OTP_TTL_MINUTES=10,FIRESTORE_USERS_COLLECTION=users,FIRESTORE_OTP_COLLECTION=auth_otps \
+  --set-env-vars CLIENT_ORIGIN=https://your-frontend-url,OTP_TTL_MINUTES=10,REQUEST_BODY_LIMIT=10mb,FIRESTORE_USERS_COLLECTION=users,FIRESTORE_OTP_COLLECTION=auth_otps,FIRESTORE_APP_DATA_COLLECTION=app_data,FIRESTORE_APP_DATA_CHUNK_COLLECTION=chunks,FIRESTORE_APP_DATA_CHUNK_SIZE=300000,FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites,FIRESTORE_PROJECT_INVITES_DOC_ID=global \
   --set-secrets GMAIL_USER=gmail-user:latest,GMAIL_APP_PASSWORD=gmail-app-password:latest,OTP_FROM_EMAIL=otp-from-email:latest
 ```
 

@@ -21,7 +21,7 @@ gcloud run deploy pm-calendar-auth \
   --image gcr.io/YOUR_PROJECT_ID/pm-calendar-auth \
   --region asia-southeast1 \
   --allow-unauthenticated \
-  --set-env-vars CLIENT_ORIGIN=https://YOUR_FRONTEND_URL,OTP_TTL_MINUTES=10,FIRESTORE_USERS_COLLECTION=users,FIRESTORE_OTP_COLLECTION=auth_otps,GOOGLE_OAUTH_JSON_PATH=/secrets/google/oauth.json \
+  --set-env-vars CLIENT_ORIGIN=https://YOUR_FRONTEND_URL,OTP_TTL_MINUTES=10,REQUEST_BODY_LIMIT=10mb,FIRESTORE_USERS_COLLECTION=users,FIRESTORE_OTP_COLLECTION=auth_otps,FIRESTORE_APP_DATA_COLLECTION=app_data,FIRESTORE_APP_DATA_CHUNK_COLLECTION=chunks,FIRESTORE_APP_DATA_CHUNK_SIZE=300000,FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites,FIRESTORE_PROJECT_INVITES_DOC_ID=global,GOOGLE_OAUTH_JSON_PATH=/secrets/google/oauth.json \
   --set-secrets GMAIL_USER=gmail-user:latest,GMAIL_APP_PASSWORD=gmail-app-password:latest,OTP_FROM_EMAIL=otp-from-email:latest,/secrets/google/oauth.json=oauth2:latest
 ```
 

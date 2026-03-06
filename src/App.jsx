@@ -312,6 +312,147 @@ const postAuthApi = async (path, payload) => {
   return result;
 };
 
+const requestCloudDataApi = async (path, options = {}) => {
+  if (!AUTH_API_BASE_URL) {
+    throw new Error('Auth API is not configured. Set VITE_AUTH_API_BASE_URL or AUTH_API_BASE_URL.');
+  }
+
+  const method = String(options.method || 'GET').toUpperCase();
+  const response = await fetch(`${AUTH_API_BASE_URL}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  let result = null;
+  try {
+    result = await response.json();
+  } catch {
+    result = null;
+  }
+
+  if (!response.ok) {
+    const message = result?.message || 'Cloud data request failed.';
+    throw new Error(message);
+  }
+
+  return result;
+};
+
+const loadAccountDbPayload = async (userId) => {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return {};
+  const localPayload = readAccountDbPayload(normalizedUserId);
+
+  if (!AUTH_API_BASE_URL) {
+    return localPayload;
+  }
+
+  try {
+    const result = await requestCloudDataApi(`/data/account/${encodeURIComponent(normalizedUserId)}`);
+    const remotePayload =
+      result?.payload && typeof result.payload === 'object' && !Array.isArray(result.payload)
+        ? result.payload
+        : {};
+    const hasRemoteData = Object.keys(remotePayload).length > 0;
+    const hasLocalData = Object.keys(localPayload).length > 0;
+
+    if (!hasRemoteData && hasLocalData) {
+      await saveAccountDbPayload(normalizedUserId, localPayload);
+      return localPayload;
+    }
+
+    writeAccountDbPayload(normalizedUserId, remotePayload);
+    return remotePayload;
+  } catch (error) {
+    console.warn('Failed to load account data from Firestore API, using local cache:', error.message);
+    return localPayload;
+  }
+};
+
+const saveAccountDbPayload = async (userId, payload) => {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return;
+
+  const safePayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  writeAccountDbPayload(normalizedUserId, safePayload);
+
+  if (!AUTH_API_BASE_URL) return;
+
+  try {
+    await requestCloudDataApi(`/data/account/${encodeURIComponent(normalizedUserId)}`, {
+      method: 'PUT',
+      body: { payload: safePayload },
+    });
+  } catch (error) {
+    console.warn('Failed to save account data to Firestore API:', error.message);
+  }
+};
+
+const loadProjectInvitesStore = async () => {
+  const localInvites = getProjectInvites();
+  if (!AUTH_API_BASE_URL) {
+    return localInvites;
+  }
+
+  try {
+    const result = await requestCloudDataApi('/data/project-invites');
+    const remoteInvites = Array.isArray(result?.invites) ? result.invites.map(normalizeProjectInvite) : [];
+    if (remoteInvites.length === 0 && localInvites.length > 0) {
+      await saveProjectInvitesStore(localInvites);
+      return localInvites;
+    }
+
+    saveProjectInvites(remoteInvites);
+    return remoteInvites;
+  } catch (error) {
+    console.warn('Failed to load project invites from Firestore API, using local cache:', error.message);
+    return localInvites;
+  }
+};
+
+const saveProjectInvitesStore = async (invitesInput) => {
+  const normalizedInvites = (Array.isArray(invitesInput) ? invitesInput : []).map(normalizeProjectInvite);
+  saveProjectInvites(normalizedInvites);
+
+  if (!AUTH_API_BASE_URL) {
+    return normalizedInvites;
+  }
+
+  try {
+    await requestCloudDataApi('/data/project-invites', {
+      method: 'PUT',
+      body: { invites: normalizedInvites },
+    });
+  } catch (error) {
+    console.warn('Failed to save project invites to Firestore API:', error.message);
+  }
+
+  return normalizedInvites;
+};
+
+const findUserByIdentifier = async (identifier) => {
+  const normalizedIdentifier = String(identifier || '').trim().toLowerCase();
+  if (!normalizedIdentifier) return null;
+
+  if (AUTH_API_BASE_URL) {
+    try {
+      const result = await requestCloudDataApi(
+        `/users/lookup?identifier=${encodeURIComponent(normalizedIdentifier)}`
+      );
+      return normalizeAuthUser(result?.user);
+    } catch {
+      return null;
+    }
+  }
+
+  const users = getLocalUsers();
+  const matchedUser = users.find(
+    (user) => user.email === normalizedIdentifier || user.username === normalizedIdentifier
+  );
+  return matchedUser ? normalizeAuthUser(matchedUser) : null;
+};
+
 const PopupContext = React.createContext(null);
 
 const toPopupOptions = (messageOrOptions, options = {}) => {
@@ -1310,6 +1451,7 @@ function UserAvatar({ user, sizeClass = 'w-9 h-9', textClass = 'text-xs', ringCl
 function ProfileSettingsView({
   currentUser,
   onBack,
+  onLogout,
   onSaveProfile,
   onChangePassword,
   projectInvitations = [],
@@ -1379,16 +1521,16 @@ function ProfileSettingsView({
     }
   };
 
-  const handleInvitationResponse = (inviteId, decision) => {
+  const handleInvitationResponse = async (inviteId, decision) => {
     if (!onRespondToProjectInvite) return;
-    const result = onRespondToProjectInvite(inviteId, decision);
+    const result = await Promise.resolve(onRespondToProjectInvite(inviteId, decision));
     setInviteResult(result || null);
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-cyan-50 p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <button
             type="button"
             onClick={onBack}
@@ -1396,6 +1538,15 @@ function ProfileSettingsView({
           >
             <ArrowLeft className="w-4 h-4" /> Back to calendar
           </button>
+          {onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="inline-flex md:hidden items-center gap-2 px-4 py-2 rounded-xl bg-gray-900 text-white hover:bg-black transition-colors shadow-sm"
+            >
+              <LogOut className="w-4 h-4" /> Logout
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[300px,1fr] gap-6">
@@ -1650,11 +1801,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [projects, setProjects] = useState([]);
 
   const [events, setEvents] = useState([]);
-
-  const accountDbKey = useMemo(() => getAccountDbKey(currentUser.id), [currentUser.id]);
   const [isAccountDataHydrated, setIsAccountDataHydrated] = useState(false);
 
   const [isMergeView, setIsMergeView] = useState(false);
+  const [mobileCalendarProjectId, setMobileCalendarProjectId] = useState(null);
+  const [isCompactViewport, setIsCompactViewport] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 767px)').matches;
+  });
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showEventModal, setShowEventModal] = useState(false);
   
@@ -1679,66 +1833,102 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [startupView, setStartupView] = useState(STARTUP_VIEW_MODES.CALENDAR);
   const [lastVisitedView, setLastVisitedView] = useState(() => ({ ...DEFAULT_LAST_VISITED_VIEW }));
   const [hasAppliedStartupView, setHasAppliedStartupView] = useState(false);
-  const [projectInvitations, setProjectInvitations] = useState(() => getProjectInvites());
+  const [projectInvitations, setProjectInvitations] = useState(() =>
+    AUTH_API_BASE_URL ? [] : getProjectInvites()
+  );
 
   useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const mediaQuery = window.matchMedia('(max-width: 767px)');
+    const handleViewportChange = (event) => {
+      setIsCompactViewport(event.matches);
+    };
+
+    setIsCompactViewport(mediaQuery.matches);
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleViewportChange);
+      return () => mediaQuery.removeEventListener('change', handleViewportChange);
+    }
+
+    mediaQuery.addListener(handleViewportChange);
+    return () => mediaQuery.removeListener(handleViewportChange);
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
     setIsAccountDataHydrated(false);
     setHasAppliedStartupView(false);
-    setProjectInvitations(getProjectInvites());
 
-    try {
-      const rawData = localStorage.getItem(accountDbKey);
-      if (!rawData) {
+    const hydrateFromStore = async () => {
+      try {
+        const [accountPayload, invites] = await Promise.all([
+          loadAccountDbPayload(currentUser.id),
+          loadProjectInvitesStore(),
+        ]);
+        if (isCancelled) return;
+
+        setProjectInvitations(invites);
+
+        if (Array.isArray(accountPayload.projects)) {
+          setProjects(accountPayload.projects.map((project) => ensureProjectOwnership(project, currentUser)));
+        } else {
+          setProjects([]);
+        }
+
+        if (Array.isArray(accountPayload.events)) {
+          setEvents(accountPayload.events);
+        } else {
+          setEvents([]);
+        }
+
+        if (accountPayload.displayRange?.start && accountPayload.displayRange?.end) {
+          setDisplayRange(accountPayload.displayRange);
+        }
+
+        if (typeof accountPayload.hidePastWeeks === 'boolean') {
+          setHidePastWeeks(accountPayload.hidePastWeeks);
+        }
+
+        if (VALID_STARTUP_VIEWS.has(accountPayload.startupView)) {
+          setStartupView(accountPayload.startupView);
+        } else {
+          setStartupView(STARTUP_VIEW_MODES.CALENDAR);
+        }
+
+        setLastVisitedView(normalizeLastVisitedView(accountPayload.lastVisitedView));
+      } catch {
+        if (isCancelled) return;
         setProjects([]);
         setEvents([]);
         setStartupView(STARTUP_VIEW_MODES.CALENDAR);
         setLastVisitedView({ ...DEFAULT_LAST_VISITED_VIEW });
-        setIsAccountDataHydrated(true);
-        return;
+      } finally {
+        if (!isCancelled) {
+          setIsAccountDataHydrated(true);
+        }
       }
+    };
 
-      const parsed = JSON.parse(rawData);
-
-      if (Array.isArray(parsed.projects)) {
-        setProjects(parsed.projects.map((project) => ensureProjectOwnership(project, currentUser)));
-      } else {
-        setProjects([]);
-      }
-
-      if (Array.isArray(parsed.events)) {
-        setEvents(parsed.events);
-      } else {
-        setEvents([]);
-      }
-
-      if (parsed.displayRange?.start && parsed.displayRange?.end) {
-        setDisplayRange(parsed.displayRange);
-      }
-
-      if (typeof parsed.hidePastWeeks === 'boolean') {
-        setHidePastWeeks(parsed.hidePastWeeks);
-      }
-
-      if (VALID_STARTUP_VIEWS.has(parsed.startupView)) {
-        setStartupView(parsed.startupView);
-      } else {
-        setStartupView(STARTUP_VIEW_MODES.CALENDAR);
-      }
-
-      setLastVisitedView(normalizeLastVisitedView(parsed.lastVisitedView));
-    } catch {
-      setProjects([]);
-      setEvents([]);
-      setStartupView(STARTUP_VIEW_MODES.CALENDAR);
-      setLastVisitedView({ ...DEFAULT_LAST_VISITED_VIEW });
-    } finally {
-      setIsAccountDataHydrated(true);
-    }
-  }, [accountDbKey, currentUser]);
+    void hydrateFromStore();
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     if (!isProfileViewOpen) return;
-    setProjectInvitations(getProjectInvites());
+    let isCancelled = false;
+    const refreshInvites = async () => {
+      const latestInvites = await loadProjectInvitesStore();
+      if (!isCancelled) {
+        setProjectInvitations(latestInvites);
+      }
+    };
+    void refreshInvites();
+    return () => {
+      isCancelled = true;
+    };
   }, [isProfileViewOpen]);
 
   useEffect(() => {
@@ -1753,10 +1943,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       lastVisitedView,
     };
 
-    localStorage.setItem(accountDbKey, JSON.stringify(dbPayload));
+    void saveAccountDbPayload(currentUser.id, dbPayload);
   }, [
     isAccountDataHydrated,
-    accountDbKey,
+    currentUser.id,
     projects,
     events,
     displayRange,
@@ -1850,6 +2040,16 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
   // Derived state
   const visibleProjects = projects.filter(p => p.isVisible);
+  const mobileVisibleProjects = visibleProjects.slice(0, 4);
+  const selectedMobileProject = useMemo(
+    () => visibleProjects.find((project) => project.id === mobileCalendarProjectId) || null,
+    [visibleProjects, mobileCalendarProjectId]
+  );
+  const effectiveMergeView = isCompactViewport ? !selectedMobileProject : isMergeView;
+  const mobileCalendarProjects = selectedMobileProject ? [selectedMobileProject] : visibleProjects;
+  const mobileCalendarEvents = selectedMobileProject
+    ? events.filter((event) => event.projectId === selectedMobileProject.id)
+    : events;
   const pendingProjectInvitations = useMemo(
     () =>
       projectInvitations.filter(
@@ -1858,6 +2058,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       ),
     [projectInvitations, currentUser]
   );
+
+  useEffect(() => {
+    if (!isCompactViewport) return;
+    if (selectedMobileProject) return;
+    if (mobileCalendarProjectId === null) return;
+    setMobileCalendarProjectId(null);
+  }, [isCompactViewport, selectedMobileProject, mobileCalendarProjectId]);
 
   // --- Handlers ---
   const handleDayClick = (dateStr, projectId) => {
@@ -1873,8 +2080,46 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     const now = new Date();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     setSelectedDateForNewEvent(todayStr);
-    setPreSelectedProjectId(visibleProjects.length > 0 ? visibleProjects[0].id : (projects.length > 0 ? projects[0].id : ''));
+    setPreSelectedProjectId(
+      selectedMobileProject?.id ||
+        (visibleProjects.length > 0 ? visibleProjects[0].id : (projects.length > 0 ? projects[0].id : ''))
+    );
     setShowEventModal(true);
+  };
+
+  const handleMobileProjectSelect = (projectId) => {
+    if (!isCompactViewport) return;
+    if (!projectId) {
+      setMobileCalendarProjectId(null);
+      return;
+    }
+
+    if (mobileCalendarProjectId === projectId) {
+      setActiveDashboardProjectId(projectId);
+      return;
+    }
+
+    setMobileCalendarProjectId(projectId);
+  };
+
+  const renderMobileProjectButton = (project) => {
+    const isActive = selectedMobileProject?.id === project.id;
+    return (
+      <button
+        key={`mobile-project-${project.id}`}
+        type="button"
+        onClick={() => handleMobileProjectSelect(project.id)}
+        title={project.name}
+        className={`h-9 w-auto flex-none inline-flex items-center justify-center gap-1 rounded-lg px-2.5 text-[10px] font-semibold border whitespace-nowrap transition-colors ${
+          isActive
+            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+            : 'bg-white text-gray-700 border-gray-200 hover:bg-blue-50'
+        }`}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${PROJECT_COLORS[project.colorIndex].bg}`}></span>
+        <span>{project.name}</span>
+      </button>
+    );
   };
 
   const handleEventClick = (event, e) => {
@@ -1982,7 +2227,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       const nextInvites = prevInvites.filter(
         (invite) => !(invite.projectId === projectId && invite.ownerId === currentUser.id)
       );
-      saveProjectInvites(nextInvites);
+      void saveProjectInvitesStore(nextInvites);
       return nextInvites;
     });
 
@@ -1991,16 +2236,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (activeDashboardProjectId === projectId) setActiveDashboardProjectId(null);
   };
 
-  const inviteMemberToProject = (projectId, identifier) => {
+  const inviteMemberToProject = async (projectId, identifier) => {
     const normalizedIdentifier = String(identifier || '').trim().toLowerCase();
     if (!normalizedIdentifier) {
       return { ok: false, message: 'Please enter username or email to invite.' };
     }
 
-    const allUsers = getLocalUsers();
-    const invitedUser = allUsers.find(
-      (user) => user.email === normalizedIdentifier || user.username === normalizedIdentifier
-    );
+    const invitedUser = await findUserByIdentifier(normalizedIdentifier);
 
     if (!invitedUser) {
       return { ok: false, message: 'This user does not exist.' };
@@ -2023,7 +2265,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return { ok: false, message: 'This user is already in the project.' };
     }
 
-    const allInvites = getProjectInvites();
+    const allInvites = await loadProjectInvitesStore();
     const duplicatedPendingInvite = allInvites.some(
       (invite) =>
         invite.status === PROJECT_INVITE_STATUSES.PENDING &&
@@ -2053,7 +2295,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       }),
     ];
 
-    saveProjectInvites(nextInvites);
+    await saveProjectInvitesStore(nextInvites);
     setProjectInvitations(nextInvites);
 
     return {
@@ -2062,13 +2304,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     };
   };
 
-  const respondToProjectInvite = (inviteId, decision) => {
+  const respondToProjectInvite = async (inviteId, decision) => {
     const nextStatus =
       decision === PROJECT_INVITE_STATUSES.ACCEPTED
         ? PROJECT_INVITE_STATUSES.ACCEPTED
         : PROJECT_INVITE_STATUSES.DECLINED;
 
-    const latestInvites = getProjectInvites();
+    const latestInvites = await loadProjectInvitesStore();
     const inviteIndex = latestInvites.findIndex((invite) => invite.id === inviteId);
     if (inviteIndex < 0) {
       return { ok: false, message: 'Invitation not found.' };
@@ -2084,7 +2326,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     }
 
     if (nextStatus === PROJECT_INVITE_STATUSES.ACCEPTED) {
-      const ownerPayload = readAccountDbPayload(targetInvite.ownerId);
+      const ownerPayload = await loadAccountDbPayload(targetInvite.ownerId);
       const ownerProjects = Array.isArray(ownerPayload.projects) ? ownerPayload.projects : [];
       const ownerEvents = Array.isArray(ownerPayload.events) ? ownerPayload.events : [];
 
@@ -2100,7 +2342,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         return { ok: false, message: 'Project was not found. It may have been deleted by the owner.' };
       }
 
-      writeAccountDbPayload(targetInvite.ownerId, {
+      await saveAccountDbPayload(targetInvite.ownerId, {
         ...ownerPayload,
         projects: nextOwnerProjects,
       });
@@ -2143,7 +2385,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     const nextInvites = [...latestInvites];
     nextInvites[inviteIndex] = normalizeProjectInvite(updatedInvite);
 
-    saveProjectInvites(nextInvites);
+    await saveProjectInvitesStore(nextInvites);
     setProjectInvitations(nextInvites);
 
     return {
@@ -2175,13 +2417,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return { ok: false, cancelled: true, message: 'Leave project cancelled.' };
     }
 
-    const ownerPayload = readAccountDbPayload(targetProject.ownerId);
+    const ownerPayload = await loadAccountDbPayload(targetProject.ownerId);
     const ownerProjects = Array.isArray(ownerPayload.projects) ? ownerPayload.projects : [];
     const nextOwnerProjects = ownerProjects.map((project) =>
       project.id === targetProject.id ? removeProjectMemberRecord(project, currentUser.username) : project
     );
     if (ownerProjects.length > 0) {
-      writeAccountDbPayload(targetProject.ownerId, {
+      await saveAccountDbPayload(targetProject.ownerId, {
         ...ownerPayload,
         projects: nextOwnerProjects,
       });
@@ -2275,21 +2517,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         return normalizeProjectInvite(nextInvite);
       });
 
-      saveProjectInvites(nextInvites);
+      void saveProjectInvitesStore(nextInvites);
       return nextInvites;
     });
 
-    localStorage.setItem(
-      accountDbKey,
-      JSON.stringify({
-        projects: nextProjects,
-        events,
-        displayRange,
-        hidePastWeeks,
-        startupView,
-        lastVisitedView,
-      })
-    );
+    void saveAccountDbPayload(currentUser.id, {
+      projects: nextProjects,
+      events,
+      displayRange,
+      hidePastWeeks,
+      startupView,
+      lastVisitedView,
+    });
 
     return { ok: true, message: 'Profile updated successfully.' };
   };
@@ -2340,6 +2579,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       <ProfileSettingsView
         currentUser={currentUser}
         onBack={() => setIsProfileViewOpen(false)}
+        onLogout={onLogout}
         onSaveProfile={handleSaveProfile}
         onChangePassword={handleChangePassword}
         projectInvitations={pendingProjectInvitations}
@@ -2378,113 +2618,165 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     <div className="flex flex-col h-screen bg-gray-100 font-sans text-sm md:text-base">
       
       {/* --- Top Navigation Bar --- */}
-      <header className="bg-white shadow-sm border-b px-6 py-3 flex items-center justify-between shrink-0 z-20">
-        <div className="flex items-center gap-2">
-          <CalendarDays className="w-6 h-6 text-blue-600" />
-          <h1 className="text-xl font-bold text-gray-800 hidden md:block">Multi-Project Calendar</h1>
-        </div>
+      <header className="bg-white shadow-sm border-b px-3 sm:px-4 md:px-6 py-3 shrink-0 z-20">
+        <div className="md:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <CalendarDays className="w-6 h-6 text-blue-600 shrink-0" />
+              <h1 className="text-lg font-bold text-gray-800 truncate">Multi-Project Calendar</h1>
+            </div>
 
-        <div className="flex items-center gap-4">
-          {/* View Toggle */}
-          <div className="flex bg-gray-100 p-1 rounded-lg border">
-            <button
-              onClick={() => setIsMergeView(false)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${!isMergeView ? 'bg-white shadow-sm font-medium text-blue-600' : 'text-gray-500 hover:bg-gray-200'}`}
-            >
-              <LayoutGrid className="w-4 h-4" />
-              <span className="hidden sm:inline">Split View</span>
-            </button>
-            <button
-              onClick={() => setIsMergeView(true)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${isMergeView ? 'bg-white shadow-sm font-medium text-blue-600' : 'text-gray-500 hover:bg-gray-200'}`}
-            >
-              <Layers className="w-4 h-4" />
-              <span className="hidden sm:inline">Merge View</span>
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowProjectModal(true)}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+                title="Manage projects"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsProfileViewOpen(true)}
+                className="flex items-center gap-2 rounded-xl px-1.5 py-1.5 hover:bg-gray-100 transition-colors"
+                title="Open profile settings"
+              >
+                <UserAvatar user={currentUser} sizeClass="w-8 h-8" textClass="text-[11px]" />
+              </button>
+            </div>
           </div>
 
-          <div className="w-px h-6 bg-gray-300 mx-2"></div>
-
-          {/* Add Event Button */}
-          <button
-            onClick={handleNewEventClick}
-            className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg font-medium transition-colors"
+          <div
+            className="mt-1.5 flex items-center gap-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden"
+            style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
           >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">เพิ่ม Event</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => handleMobileProjectSelect(null)}
+              className={`h-9 w-auto flex-none inline-flex items-center justify-center gap-1 rounded-lg px-2.5 text-[10px] font-semibold border whitespace-nowrap transition-colors ${
+                !selectedMobileProject
+                  ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <Layers className="w-3 h-3" />
+              Merge
+            </button>
+            {mobileVisibleProjects.map((project) => renderMobileProjectButton(project))}
+          </div>
+        </div>
 
-          {/* Project Management Button */}
-          <button
-            onClick={() => setShowProjectModal(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-          >
-            <Settings className="w-4 h-4" />
-            <span>จัดการ Project</span>
-          </button>
+        <div className="hidden md:flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-6 h-6 text-blue-600" />
+            <h1 className="text-xl font-bold text-gray-800">Multi-Project Calendar</h1>
+          </div>
 
-          <div className="w-px h-6 bg-gray-300"></div>
-
-          <button
-            type="button"
-            onClick={() => setIsProfileViewOpen(true)}
-            className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-gray-100 transition-colors"
-            title="Open profile settings"
-          >
-            <UserAvatar user={currentUser} sizeClass="w-8 h-8" textClass="text-[11px]" />
-            <div className="hidden md:flex flex-col leading-tight text-left">
-              <span className="text-[11px] text-gray-400">Signed in as</span>
-              <span className="text-sm font-semibold text-gray-700 truncate max-w-[180px]">
-                {currentUser.username || currentUser.email}
-              </span>
+          <div className="flex items-center gap-4">
+            <div className="flex bg-gray-100 p-1 rounded-lg border">
+              <button
+                onClick={() => setIsMergeView(false)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
+                  !isMergeView ? 'bg-white shadow-sm font-medium text-blue-600' : 'text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                <LayoutGrid className="w-4 h-4" />
+                <span className="hidden sm:inline">Split View</span>
+              </button>
+              <button
+                onClick={() => setIsMergeView(true)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
+                  isMergeView ? 'bg-white shadow-sm font-medium text-blue-600' : 'text-gray-500 hover:bg-gray-200'
+                }`}
+              >
+                <Layers className="w-4 h-4" />
+                <span className="hidden sm:inline">Merge View</span>
+              </button>
             </div>
-          </button>
 
-          <button
-            onClick={onLogout}
-            className="flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200 px-3 py-2 rounded-lg font-medium transition-colors"
-            title="Logout"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="hidden sm:inline">Logout</span>
-          </button>
+            <div className="w-px h-6 bg-gray-300"></div>
+
+            <button
+              onClick={handleNewEventClick}
+              className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg font-medium transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Add Event</span>
+            </button>
+
+            <button
+              onClick={() => setShowProjectModal(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+            >
+              <Settings className="w-4 h-4" />
+              <span>Manage Project</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsProfileViewOpen(true)}
+              className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-gray-100 transition-colors"
+              title="Open profile settings"
+            >
+              <UserAvatar user={currentUser} sizeClass="w-8 h-8" textClass="text-[11px]" />
+              <div className="hidden lg:flex flex-col leading-tight text-left">
+                <span className="text-[11px] text-gray-400">Signed in as</span>
+                <span className="text-sm font-semibold text-gray-700 truncate max-w-[180px]">
+                  {currentUser.username || currentUser.email}
+                </span>
+              </div>
+            </button>
+
+            <button
+              onClick={onLogout}
+              className="inline-flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200 px-3 py-2 rounded-lg font-medium transition-colors"
+              title="Logout"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Logout</span>
+            </button>
+          </div>
         </div>
       </header>
 
       {/* --- Main Calendar Board --- */}
-      <main className="flex-1 overflow-y-auto bg-gray-50 relative">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden bg-gray-50 relative">
         {visibleProjects.length === 0 ? (
           <div className="flex h-full items-center justify-center flex-col text-gray-400 gap-4">
             <LayoutGrid className="w-16 h-16 opacity-50" />
             <p className="text-lg">กรุณาเลือกหรือเพิ่มโปรเจกต์จากเมนู "จัดการ Project"</p>
           </div>
         ) : (
-          <div className="min-w-[800px]"> {/* Ensure it doesn't squish too much on small screens */}
+          <div className={!isCompactViewport && !effectiveMergeView ? 'min-w-[800px]' : 'w-full'}> {/* Ensure it doesn't squish too much on small screens */}
             
-            {/* Sticky Project Headers (Only in Split View) */}
-            {!isMergeView && (
-              <div className="sticky top-0 z-10 flex bg-white shadow-sm border-b">
-                {visibleProjects.map((project) => (
-                  <div 
-                    key={project.id} 
-                    onClick={() => setActiveDashboardProjectId(project.id)}
-                    className="flex-1 text-center py-3 border-r last:border-r-0 relative overflow-hidden cursor-pointer hover:bg-blue-50 transition-colors group flex flex-col items-center justify-center h-16"
-                  >
-                    <div className={`absolute top-0 left-0 w-full h-1 ${PROJECT_COLORS[project.colorIndex].bg}`}></div>
-                    <span className="font-bold text-gray-700 group-hover:text-blue-700 transition-colors text-base">{project.name}</span>
-                    <span className="text-[10px] text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-1">
-                      คลิกเพื่อเปิดหน้าบริหารจัดการ
-                    </span>
+            {!isCompactViewport && (
+              <>
+                {/* Sticky Project Headers (Only in Split View) */}
+                {!effectiveMergeView && (
+                  <div className="sticky top-0 z-10 flex bg-white shadow-sm border-b">
+                    {visibleProjects.map((project) => (
+                      <div
+                        key={project.id}
+                        onClick={() => setActiveDashboardProjectId(project.id)}
+                        className="flex-1 text-center border-r last:border-r-0 relative overflow-hidden cursor-pointer hover:bg-blue-50 transition-colors group flex flex-col items-center justify-center h-14"
+                      >
+                        <div className={`absolute top-0 left-0 w-full h-1 ${PROJECT_COLORS[project.colorIndex].bg}`}></div>
+                        <span className="font-bold text-gray-700 group-hover:text-blue-700 transition-colors text-base">{project.name}</span>
+                        <span className="text-[10px] text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-1">
+                          Click again to open project management
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+                )}
 
-            {/* Merge View Sticky Header */}
-            {isMergeView && (
-              <div className="sticky top-0 z-10 bg-white shadow-sm border-b py-3 text-center h-16 flex items-center justify-center">
-                <span className="font-bold text-gray-700 text-lg">รวมทุก Project ({visibleProjects.length})</span>
-              </div>
+                {/* Merge View Sticky Header */}
+                {effectiveMergeView && (
+                  <div className="sticky top-0 z-10 bg-white shadow-sm border-b text-center h-14 flex items-center justify-center px-3">
+                    <span className="font-bold text-gray-700 text-sm sm:text-base md:text-lg">Merged Calendar ({visibleProjects.length})</span>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Months List (Continuous Scroll) */}
@@ -2497,14 +2789,28 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                 {monthsToRender.map(({ month, year }, idx) => (
                   <div key={`${year}-${month}`} className="border-b-4 border-gray-200">
                     {/* Month Title */}
-                    <div className="bg-gray-100 py-2 px-4 sticky top-16 z-[5] shadow-sm border-b border-gray-200">
-                      <h2 className="text-lg font-bold text-gray-800 whitespace-nowrap">
+                    <div className={`bg-gray-100 py-2 px-3 sm:px-4 border-b border-gray-200 ${isCompactViewport ? '' : 'sticky top-14 z-[5] shadow-sm'}`}>
+                      <h2 className="text-base sm:text-lg font-bold text-gray-800 whitespace-nowrap">
                         {THAI_MONTHS[month]} {year}
                       </h2>
                     </div>
 
                     <div className="flex">
-                      {isMergeView ? (
+                      {isCompactViewport ? (
+                        <div className="flex-1 bg-white p-2">
+                          <MonthGrid
+                            year={year}
+                            month={month}
+                            projects={mobileCalendarProjects}
+                            events={mobileCalendarEvents}
+                            showEventTime={!selectedMobileProject}
+                            onDayClick={(dateStr) => handleDayClick(dateStr, selectedMobileProject?.id || null)}
+                            onEventClick={handleEventClick}
+                            hidePastWeeks={hidePastWeeks}
+                            currentWeekStart={currentWeekStart}
+                          />
+                        </div>
+                      ) : effectiveMergeView ? (
                         // Merge View: 1 Full Width Calendar
                         <div className="flex-1 bg-white p-2">
                           <MonthGrid 
@@ -2545,6 +2851,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           </div>
         )}
       </main>
+
+      {isCompactViewport && (
+        <button
+          type="button"
+          onClick={handleNewEventClick}
+          className="md:hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-30 w-12 h-12 rounded-full bg-blue-600 text-white shadow-[0_10px_22px_rgba(37,99,235,0.25)] hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center"
+          title="Add event"
+        >
+          <Plus className="w-5 h-5" />
+        </button>
+      )}
 
       {/* --- Modals --- */}
       {showProjectModal && (
@@ -2607,9 +2924,9 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
   };
 
   return (
-    <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-      <div className="flex justify-between items-start mb-4">
-        <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+    <div className="bg-white p-4 md:p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex justify-between items-start mb-3 md:mb-4">
+        <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
           <Icon className="w-5 h-5 text-gray-500" />
           {title}
         </h3>
@@ -2655,6 +2972,133 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
   );
 };
 
+const NoteTargetSelect = ({
+  options,
+  value,
+  onChange,
+  placeholder,
+  searchPlaceholder,
+  emptyText,
+}) => {
+  const containerRef = useRef(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+
+  const selectedOption = useMemo(
+    () => options.find((option) => option.value === value) || null,
+    [options, value]
+  );
+
+  const filteredOptions = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return options;
+    return options.filter((option) => {
+      const haystack = `${option.label || ''} ${option.subLabel || ''}`.toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [options, query]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handleOutsideClick = (event) => {
+      if (!containerRef.current?.contains(event.target)) {
+        setIsOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsideClick);
+    return () => document.removeEventListener('pointerdown', handleOutsideClick);
+  }, [isOpen]);
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-left flex items-center gap-2 hover:border-blue-300 transition-colors"
+      >
+        {selectedOption?.member ? (
+          <UserAvatar
+            user={selectedOption.member}
+            sizeClass="w-8 h-8"
+            textClass="text-[10px]"
+            ringClass="ring-2 ring-white shadow-sm"
+          />
+        ) : (
+          <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center text-xs font-bold">
+            {(selectedOption?.label || placeholder || '?').slice(0, 2).toUpperCase()}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-gray-800 truncate">
+            {selectedOption?.label || placeholder}
+          </p>
+          {selectedOption?.subLabel && (
+            <p className="text-[11px] text-gray-500 truncate">{selectedOption.subLabel}</p>
+          )}
+        </div>
+        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-30 mt-2 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+          <div className="p-2 border-b border-gray-100">
+            <div className="relative">
+              <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={searchPlaceholder}
+                className="w-full border border-gray-200 rounded-lg pl-8 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <div className="max-h-64 overflow-y-auto p-1.5 space-y-1">
+            {filteredOptions.length === 0 ? (
+              <div className="px-3 py-6 text-center text-sm text-gray-400">{emptyText}</div>
+            ) : (
+              filteredOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    onChange(option.value);
+                    setIsOpen(false);
+                    setQuery('');
+                  }}
+                  className={`w-full rounded-lg px-2.5 py-2 text-left flex items-center gap-2.5 transition-colors ${
+                    option.value === value ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50 text-gray-700'
+                  }`}
+                >
+                  {option.member ? (
+                    <UserAvatar
+                      user={option.member}
+                      sizeClass="w-7 h-7"
+                      textClass="text-[10px]"
+                      ringClass="ring-2 ring-white"
+                    />
+                  ) : (
+                    <div className="w-7 h-7 rounded-md bg-gray-100 text-gray-600 text-[10px] font-bold flex items-center justify-center">
+                      {option.label.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{option.label}</p>
+                    {option.subLabel && <p className="text-[11px] text-gray-500 truncate">{option.subLabel}</p>}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // --- Project Dashboard View (Like Asana) ---
 function ProjectDashboard({
   project,
@@ -2683,8 +3127,16 @@ function ProjectDashboard({
   const [newMilestoneDate, setNewMilestoneDate] = useState('');
   
   // Local state for Team Notes
-  const [noteSection, setNoteSection] = useState('department'); // 'department' | 'member'
-  const [activeNoteId, setActiveNoteId] = useState('Unassigned');
+  const initialNotesPreferences = project.notesPreferences || {};
+  const [noteSection, setNoteSection] = useState(
+    initialNotesPreferences.section === 'member' ? 'member' : 'department'
+  ); // 'department' | 'member'
+  const [selectedDepartmentNoteId, setSelectedDepartmentNoteId] = useState(
+    initialNotesPreferences.selectedDepartment || 'Unassigned'
+  );
+  const [selectedMemberNoteId, setSelectedMemberNoteId] = useState(
+    initialNotesPreferences.selectedMemberId || ''
+  );
   const [notesContent, setNotesContent] = useState(project.notesContent || {});
   const [teamMembers, setTeamMembers] = useState(() => normalizeProjectTeamMembers(project));
   const [projectPositions, setProjectPositions] = useState(() => normalizeRoles(project.positions || project.roles));
@@ -2700,6 +3152,10 @@ function ProjectDashboard({
     setProjectPositions(normalizeRoles(project.positions || project.roles));
     setProjectDepartments(normalizeDepartments(project.departments));
     setNotesContent(project.notesContent || {});
+    const nextNotesPreferences = project.notesPreferences || {};
+    setNoteSection(nextNotesPreferences.section === 'member' ? 'member' : 'department');
+    setSelectedDepartmentNoteId(nextNotesPreferences.selectedDepartment || 'Unassigned');
+    setSelectedMemberNoteId(nextNotesPreferences.selectedMemberId || '');
   }, [project.id, project.teamMembers, project.positions, project.roles, project.departments, project.notesContent, project.members, project.ownerUsername]);
   
   const statusConfig = {
@@ -3102,7 +3558,7 @@ function ProjectDashboard({
       return;
     }
 
-    const result = onInviteMember(project.id, normalizedIdentifier);
+    const result = await Promise.resolve(onInviteMember(project.id, normalizedIdentifier));
     void popup.alert({
       title: result?.ok ? 'Invitation sent' : 'Invite failed',
       message: result?.message || 'Unable to process invitation.',
@@ -3158,6 +3614,52 @@ function ProjectDashboard({
       : optionsPopupType === 'department'
       ? projectDepartments
       : [];
+  const activeNoteId = noteSection === 'department' ? selectedDepartmentNoteId : selectedMemberNoteId;
+  const departmentNoteOptions = useMemo(
+    () => DEPARTMENTS.map((department) => ({ value: department, label: department })),
+    [DEPARTMENTS]
+  );
+  const memberNoteOptions = useMemo(
+    () =>
+      teamMembers.map((member) => ({
+        value: member.id,
+        label: member.name,
+        subLabel: member.position || 'No position',
+        member,
+      })),
+    [teamMembers]
+  );
+  const selectedNoteMember = useMemo(
+    () => teamMembers.find((member) => member.id === activeNoteId) || null,
+    [teamMembers, activeNoteId]
+  );
+
+  useEffect(() => {
+    const nextDepartment = DEPARTMENTS.includes(selectedDepartmentNoteId)
+      ? selectedDepartmentNoteId
+      : DEPARTMENTS[0] || 'Unassigned';
+
+    if (nextDepartment !== selectedDepartmentNoteId) {
+      setSelectedDepartmentNoteId(nextDepartment);
+      return;
+    }
+
+    const memberExists = teamMembers.some((member) => member.id === selectedMemberNoteId);
+    const nextMemberId = memberExists ? selectedMemberNoteId : teamMembers[0]?.id || '';
+    if (nextMemberId !== selectedMemberNoteId) {
+      setSelectedMemberNoteId(nextMemberId);
+    }
+  }, [DEPARTMENTS, selectedDepartmentNoteId, teamMembers, selectedMemberNoteId]);
+
+  useEffect(() => {
+    onUpdateProject(project.id, {
+      notesPreferences: {
+        section: noteSection,
+        selectedDepartment: selectedDepartmentNoteId,
+        selectedMemberId: selectedMemberNoteId,
+      },
+    });
+  }, [noteSection, selectedDepartmentNoteId, selectedMemberNoteId, project.id]);
 
   const [taskView, setTaskView] = useState('table');
   const [statusFilter, setStatusFilter] = useState([]);
@@ -3284,22 +3786,22 @@ function ProjectDashboard({
   return (
     <div className="flex flex-col h-screen bg-white font-sans relative">
       {/* Dashboard Header */}
-      <header className={`px-6 py-4 flex items-center gap-4 border-b shrink-0 ${projectColor.lightBg}`}>
+      <header className={`px-3 md:px-6 py-2 md:py-4 flex items-center gap-2 md:gap-4 border-b shrink-0 ${projectColor.lightBg}`}>
         <button 
           onClick={onBack}
-          className="p-2 hover:bg-white/50 rounded-full transition-colors text-gray-700"
+          className="p-1.5 md:p-2 hover:bg-white/50 rounded-full transition-colors text-gray-700"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="w-4 h-4 md:w-5 md:h-5" />
         </button>
-        <div className={`w-4 h-4 rounded-full ${projectColor.bg}`}></div>
-        <h1 className="text-2xl font-bold text-gray-800">{project.name}</h1>
+        <div className={`w-3 h-3 md:w-4 md:h-4 rounded-full ${projectColor.bg}`}></div>
+        <h1 className="text-base md:text-2xl font-bold text-gray-800 truncate">{project.name}</h1>
       </header>
 
       {/* Dashboard Body */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col md:flex-row overflow-hidden">
         
         {/* Sidebar */}
-        <aside className="w-64 bg-gray-50 border-r flex flex-col shrink-0 overflow-y-auto">
+        <aside className="hidden md:flex w-64 bg-gray-50 border-r flex-col shrink-0 overflow-y-auto">
           <div className="p-4">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Management</p>
             <nav className="space-y-1">
@@ -3321,22 +3823,46 @@ function ProjectDashboard({
           </div>
         </aside>
 
+        <div
+          className="md:hidden border-b bg-gray-50/90 px-2 py-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden"
+          style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
+        >
+          <nav className="flex items-center gap-1.5 min-w-max">
+            {TABS.map((tab) => (
+              <button
+                key={`mobile-${tab.id}`}
+                onClick={() => setActiveTab(tab.id)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                  activeTab === tab.id
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-white text-gray-600 border border-gray-200'
+                }`}
+              >
+                <tab.icon className="w-4 h-4" />
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto bg-white p-8">
+        <main className="flex-1 overflow-y-auto bg-white px-3 sm:px-4 md:px-8 py-3 md:py-8">
           <div className="max-w-6xl mx-auto">
             
-            <div className="mb-6 pb-4 border-b flex items-center justify-between gap-4">
-              <h2 className="text-2xl font-bold text-gray-800">
+            <div className="mb-4 md:mb-6 pb-2 md:pb-4 border-b flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4">
+              <h2 className="text-xl md:text-2xl font-bold text-gray-800">
                 {TABS.find(t => t.id === activeTab)?.label}
               </h2>
               {activeTab === 'notes' && (
-                <div className="flex bg-gray-100 p-1 rounded-lg border border-gray-200 shrink-0">
+                <div className="w-full md:w-auto inline-flex bg-gray-100 p-1 rounded-lg border border-gray-200 shrink-0">
                   <button
                     onClick={() => {
                       setNoteSection('department');
-                      setActiveNoteId(DEPARTMENTS[0]);
+                      if (!selectedDepartmentNoteId) {
+                        setSelectedDepartmentNoteId(DEPARTMENTS[0] || 'Unassigned');
+                      }
                     }}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    className={`flex-1 md:flex-none px-3 md:px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
                       noteSection === 'department'
                         ? 'bg-white shadow-sm text-blue-700'
                         : 'text-gray-500 hover:text-gray-700'
@@ -3347,9 +3873,11 @@ function ProjectDashboard({
                   <button
                     onClick={() => {
                       setNoteSection('member');
-                      setActiveNoteId(teamMembers.length > 0 ? teamMembers[0].id : '');
+                      if (!selectedMemberNoteId && teamMembers.length > 0) {
+                        setSelectedMemberNoteId(teamMembers[0].id);
+                      }
                     }}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    className={`flex-1 md:flex-none px-3 md:px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
                       noteSection === 'member'
                         ? 'bg-white shadow-sm text-blue-700'
                         : 'text-gray-500 hover:text-gray-700'
@@ -3363,9 +3891,9 @@ function ProjectDashboard({
 
             {/* Content Mockups Based on Active Tab */}
             {activeTab === 'organization' && (
-              <div className="flex flex-col lg:flex-row gap-8">
+              <div className="flex flex-col lg:flex-row gap-4 md:gap-6 lg:gap-8">
                 {/* Main Content (Left) */}
-                <div className="flex-1 space-y-6">
+                <div className="order-2 lg:order-1 flex-1 space-y-4 md:space-y-6">
                   
                   {/* Vision Section */}
                   <EditableSection 
@@ -3386,9 +3914,9 @@ function ProjectDashboard({
                   />
 
                   {/* Description Section */}
-                  <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-                    <div className="flex justify-between items-start mb-4">
-                      <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                  <div className="bg-white p-4 md:p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                    <div className="flex justify-between items-start mb-3 md:mb-4 gap-2">
+                      <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <AlignLeft className="w-5 h-5 text-gray-500" />
                         รายละเอียดโปรเจกต์ (Project Description)
                       </h3>
@@ -3439,16 +3967,16 @@ function ProjectDashboard({
                   </div>
 
                   {/* Milestones / Goals Section */}
-                  <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
-                    <div className="flex justify-between items-center mb-4">
-                      <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                  <div className="bg-white p-4 md:p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                    <div className="flex justify-between items-start md:items-center gap-3 mb-3 md:mb-4">
+                      <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <Target className="w-5 h-5 text-gray-500" />
                         เป้าหมายหลัก & จุดวิกฤต (Milestones)
                       </h3>
                       {!isAddingMilestone && (
                         <button 
                           onClick={() => setIsAddingMilestone(true)}
-                          className="text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center gap-1 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
+                          className="text-blue-600 hover:text-blue-800 text-xs md:text-sm font-medium flex items-center gap-1 bg-blue-50 hover:bg-blue-100 px-2.5 md:px-3 py-1.5 rounded-lg transition-colors shrink-0"
                         >
                           <Plus className="w-4 h-4" /> เพิ่มเป้าหมาย
                         </button>
@@ -3467,7 +3995,7 @@ function ProjectDashboard({
                             </div>
                             <span className={`font-medium ${m.status === 'completed' ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{m.name}</span>
                           </div>
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-3 md:gap-4">
                             <span className={`text-sm ${m.status === 'completed' ? 'text-gray-400' : 'text-blue-600 font-medium'}`}>{m.date}</span>
                             <button 
                               onClick={async (e) => {
@@ -3499,7 +4027,7 @@ function ProjectDashboard({
 
                       {/* Add Milestone Form */}
                       {isAddingMilestone && (
-                        <div className="p-4 bg-blue-50/50 rounded-lg border border-blue-100 flex flex-col gap-3 mt-4">
+                        <div className="p-3 md:p-4 bg-blue-50/50 rounded-lg border border-blue-100 flex flex-col gap-3 mt-4">
                           <input 
                             type="text" 
                             placeholder="ชื่อเป้าหมาย / Milestone..." 
@@ -3508,7 +4036,7 @@ function ProjectDashboard({
                             className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500"
                             autoFocus
                           />
-                          <div className="flex items-center gap-3">
+                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                             <input 
                               type="date" 
                               value={newMilestoneDate}
@@ -3549,10 +4077,10 @@ function ProjectDashboard({
                 </div>
 
                 {/* Sidebar (Right) */}
-                <div className="w-full lg:w-[340px] flex flex-col gap-6 shrink-0">
+                <div className="order-1 lg:order-2 w-full lg:w-[340px] flex flex-col gap-3 md:gap-6 shrink-0">
                   
                   {/* Status Dropdown */}
-                  <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm relative">
+                  <div className="bg-white p-4 md:p-5 rounded-xl border border-gray-200 shadow-sm relative">
                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
                       <Activity className="w-4 h-4" /> สถานะโปรเจกต์
                     </h3>
@@ -3597,22 +4125,22 @@ function ProjectDashboard({
               <div className="space-y-6">
                 
                 {/* Controls: Filter & View Toggle */}
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
-                  <div className="relative">
+                <div className="flex items-center md:justify-between gap-2 md:gap-4 bg-gray-50 p-2 md:p-4 rounded-xl border border-gray-200">
+                  <div className="relative shrink-0">
                     <button 
                       onClick={() => setShowFilterPopup(!showFilterPopup)}
-                      className="flex items-center gap-2 bg-white border border-gray-300 hover:bg-gray-50 px-4 py-2 rounded-lg text-sm font-medium text-gray-700 transition-colors shadow-sm"
+                      className="relative h-10 w-10 md:h-auto md:w-auto flex items-center justify-center md:justify-start gap-2 bg-white border border-gray-300 hover:bg-gray-50 px-0 md:px-4 md:py-2 rounded-lg text-sm font-medium text-gray-700 transition-colors shadow-sm shrink-0 [&>span:first-of-type]:hidden md:[&>span:first-of-type]:inline"
                     >
                       <Filter className="w-4 h-4 text-gray-500" />
                       <span>ฟิลเตอร์</span>
                       {(statusFilter.length > 0 || deptFilter.length > 0) && (
-                        <span className="w-2 h-2 rounded-full bg-blue-500 ml-1"></span>
+                        <span className="absolute top-1.5 right-1.5 md:static md:ml-1 w-2 h-2 rounded-full bg-blue-500"></span>
                       )}
                     </button>
                     
                     {/* Filter Popup */}
                     {showFilterPopup && (
-                      <div className="absolute top-full left-0 mt-2 w-72 bg-white border border-gray-200 shadow-xl rounded-xl p-4 z-20">
+                      <div className="absolute top-full left-0 mt-2 w-[min(18rem,calc(100vw-2.5rem))] md:w-72 bg-white border border-gray-200 shadow-xl rounded-xl p-4 z-20">
                         <div className="flex justify-between items-center mb-4">
                           <h4 className="font-semibold text-gray-800">ตั้งค่าฟิลเตอร์</h4>
                           <button onClick={() => setShowFilterPopup(false)} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
@@ -3676,17 +4204,17 @@ function ProjectDashboard({
                     )}
                   </div>
                   
-                  <div className="flex items-center gap-3 w-full md:w-auto">
+                  <div className="flex items-center gap-2 md:gap-3 shrink-0 md:ml-auto">
                     <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm shrink-0">
                       <button 
                         onClick={() => setTaskView('table')}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md flex items-center gap-2 transition-colors ${taskView === 'table' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'table' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
                       >
                         <AlignLeft className="w-4 h-4" /> Table
                       </button>
                       <button 
                         onClick={() => setTaskView('gallery')}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md flex items-center gap-2 transition-colors ${taskView === 'gallery' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'gallery' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
                       >
                         <LayoutGrid className="w-4 h-4" /> Gallery
                       </button>
@@ -3695,9 +4223,9 @@ function ProjectDashboard({
                     {/* Production Ready "Add Task" Button */}
                     <button 
                       onClick={openAddTask}
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors shadow-sm whitespace-nowrap"
+                      className="h-10 w-10 md:h-auto md:w-auto bg-blue-600 hover:bg-blue-700 text-white px-0 md:px-4 md:py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors shadow-sm whitespace-nowrap shrink-0"
                     >
-                      <Plus className="w-4 h-4" /> <span className="hidden sm:inline">เพิ่ม Task</span>
+                      <Plus className="w-4 h-4" /> <span className="hidden md:inline">เพิ่ม Task</span>
                     </button>
                   </div>
                 </div>
@@ -3715,7 +4243,7 @@ function ProjectDashboard({
                     {taskView === 'table' && (
                       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                         <div className="overflow-x-auto">
-                          <table className="w-full text-left text-sm whitespace-nowrap">
+                          <table className="w-full min-w-[720px] text-left text-sm whitespace-nowrap">
                             <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
                               <tr>
                                 <th className="px-5 py-4 font-medium">ชื่องาน (Task)</th>
@@ -3820,9 +4348,9 @@ function ProjectDashboard({
             )}
 
             {activeTab === 'team' && (
-              <div className="space-y-8">
+              <div className="space-y-6 md:space-y-8">
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                  <div className="p-6 border-b border-gray-100 flex justify-between items-center">
+                  <div className="p-4 md:p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                     <div>
                       <h3 className="text-lg font-semibold text-gray-800">Project Members</h3>
                       <p className="text-sm text-gray-500 mt-1">Manage member, position and department from one place.</p>
@@ -3831,14 +4359,14 @@ function ProjectDashboard({
                       onClick={handleAddMember}
                       disabled={!canManageMembers}
                       title={canManageMembers ? 'Invite member' : 'Only owner can invite members'}
-                      className={`flex items-center gap-2 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm ${canManageMembers ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-300 cursor-not-allowed'}`}
+                      className={`w-full md:w-auto flex items-center justify-center gap-2 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm ${canManageMembers ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-300 cursor-not-allowed'}`}
                     >
                       <Plus className="w-4 h-4" /> Add member
                     </button>
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
+                    <table className="w-full min-w-[760px] text-left text-sm">
                       <thead className="bg-gray-50 text-gray-600">
                         <tr>
                           <th className="px-6 py-4 font-medium w-[34%]">Member</th>
@@ -3977,8 +4505,8 @@ function ProjectDashboard({
                   </div>
                 </div>
 
-                <div className="bg-gradient-to-b from-slate-50 to-white rounded-2xl border border-slate-200 shadow-sm p-8 overflow-hidden relative">
-                  <div className="flex justify-between items-center mb-8">
+                <div className="bg-gradient-to-b from-slate-50 to-white rounded-2xl border border-slate-200 shadow-sm p-4 md:p-8 overflow-hidden relative">
+                  <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-6 md:mb-8">
                     <h3 className="text-lg font-semibold text-gray-800">Organization Structure</h3>
                     <button
                       onClick={() => setIsOrgEditMode((prev) => !prev)}
@@ -3990,7 +4518,7 @@ function ProjectDashboard({
                   </div>
 
                   {isOrgEditMode && canManageMembers && (
-                    <div className="mb-8 p-4 bg-white border border-gray-200 rounded-lg space-y-3">
+                    <div className="mb-6 md:mb-8 p-4 bg-white border border-gray-200 rounded-lg space-y-3">
                       {teamMembers.map((member) => (
                         <div key={`manager-${member.id}`} className="grid grid-cols-1 md:grid-cols-[1fr,1fr] gap-3 items-center">
                           <span className="text-sm font-medium text-gray-700 truncate">{member.name}</span>
@@ -4124,51 +4652,36 @@ function ProjectDashboard({
               </div>
             )}
             {activeTab === 'notes' && (
-              <div className="flex flex-col h-[calc(100vh-180px)]">
+              <div className="flex flex-col min-h-[65vh] md:h-[calc(100vh-180px)]">
                  {/* Content Area */}
-                 <div className="flex gap-6 flex-1 min-h-0">
-                    {/* Sidebar List */}
-                    <div className="w-64 bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col shrink-0">
-                      <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                         {noteSection === 'department' ? (
-                           DEPARTMENTS.map(dept => (
-                             <button
-                               key={dept}
-                               onClick={() => setActiveNoteId(dept)}
-                               className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeNoteId === dept ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
-                             >
-                               {dept}
-                             </button>
-                           ))
-                         ) : (
-	                           teamMembers.map(member => (
-	                             <button
-	                               key={member.id}
-	                               onClick={() => setActiveNoteId(member.id)}
-	                               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${activeNoteId === member.id ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
-	                             >
-	                               <UserAvatar
-	                                 user={member}
-	                                 sizeClass="w-8 h-8"
-	                                 textClass="text-[10px]"
-	                                 ringClass="ring-2 ring-white shadow-sm"
-	                               />
-	                               <div className="flex-1 overflow-hidden text-left">
-	                                 <span className="truncate block leading-tight">{member.name}</span>
-	                                 <span className="text-[10px] opacity-70 truncate block">{member.position || 'No position'}</span>
-	                               </div>
-	                             </button>
-                           ))
-                         )}
-                      </div>
+                 <div className="flex flex-col md:flex-row gap-4 md:gap-6 flex-1 min-h-0">
+                    {/* Selector */}
+                    <div className="w-full md:w-72 bg-white border border-gray-200 rounded-xl shadow-sm p-3 shrink-0 space-y-2">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                        {noteSection === 'department' ? 'Select department' : 'Select member'}
+                      </p>
+                      <NoteTargetSelect
+                        options={noteSection === 'department' ? departmentNoteOptions : memberNoteOptions}
+                        value={activeNoteId}
+                        onChange={(nextValue) => {
+                          if (noteSection === 'department') {
+                            setSelectedDepartmentNoteId(nextValue);
+                          } else {
+                            setSelectedMemberNoteId(nextValue);
+                          }
+                        }}
+                        placeholder={noteSection === 'department' ? 'Choose department' : 'Choose member'}
+                        searchPlaceholder={noteSection === 'department' ? 'Search department...' : 'Search member...'}
+                        emptyText={noteSection === 'department' ? 'No department found' : 'No member found'}
+                      />
                     </div>
 
                     {/* Note Editor Area */}
-                    <div className="flex-1 h-full">
+                    <div className="flex-1 h-full min-h-[380px] md:min-h-0">
                       {activeNoteId ? (
                         <NoteEditor 
                           noteId={activeNoteId} 
-                          noteTitle={noteSection === 'department' ? `บันทึกของฝ่าย: ${activeNoteId}` : `บันทึกของ: ${teamMembers.find(m => m.id === activeNoteId)?.name || 'Unknown'}`}
+                          noteTitle={noteSection === 'department' ? `บันทึกของฝ่าย: ${activeNoteId}` : `บันทึกของ: ${selectedNoteMember?.name || 'Unknown'}`}
                           initialContent={notesContent[activeNoteId] || ''}
                           onSave={(id, content) => {
                             const nextNotes = { ...notesContent, [id]: content };
@@ -4667,80 +5180,493 @@ function OrgNode({ member }) {
 // --- Note Editor Component for Team Notes ---
 function NoteEditor({ noteId, noteTitle, initialContent, onSave }) {
   const popup = usePopup();
+  const editorContainerRef = React.useRef(null);
   const editorRef = React.useRef(null);
-  
+  const uploadInputRef = React.useRef(null);
+  const dragImageIdRef = React.useRef('');
+  const longPressTimerRef = React.useRef(null);
+  const touchDragStateRef = React.useRef({
+    imageId: '',
+    active: false,
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+  });
+  const [imageMenuState, setImageMenuState] = useState(null);
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const resetTouchDragState = () => {
+    const currentImageId = touchDragStateRef.current.imageId;
+    if (currentImageId) {
+      const imageNode = getImageById(currentImageId);
+      if (imageNode) {
+        imageNode.style.opacity = '';
+        imageNode.style.cursor = 'grab';
+      }
+    }
+    touchDragStateRef.current = {
+      imageId: '',
+      active: false,
+      startX: 0,
+      startY: 0,
+      lastX: 0,
+      lastY: 0,
+    };
+    clearLongPressTimer();
+  };
+
+  const getImageById = (imageId) => {
+    if (!imageId || !editorRef.current) return null;
+    return editorRef.current.querySelector(`img[data-note-image-id="${imageId}"]`);
+  };
+
+  const applyImageLayout = (imgElement, layout) => {
+    if (!imgElement) return;
+    const nextLayout = layout || 'below';
+    imgElement.dataset.layout = nextLayout;
+    imgElement.style.maxWidth = '100%';
+    imgElement.style.borderRadius = '10px';
+    imgElement.style.cursor = 'grab';
+    imgElement.style.float = 'none';
+    imgElement.style.position = 'static';
+    imgElement.style.left = 'auto';
+    imgElement.style.top = 'auto';
+    imgElement.style.touchAction = 'manipulation';
+
+    if (nextLayout === 'inline') {
+      imgElement.style.display = 'inline-block';
+      imgElement.style.margin = '0 0.4rem 0.2rem 0';
+      imgElement.style.width = 'min(280px, 100%)';
+      imgElement.style.height = 'auto';
+      imgElement.style.objectFit = 'contain';
+      return;
+    }
+
+    if (nextLayout === 'wrap') {
+      imgElement.style.display = 'block';
+      imgElement.style.float = 'left';
+      imgElement.style.margin = '0.3rem 0.8rem 0.6rem 0';
+      imgElement.style.width = 'min(240px, 100%)';
+      imgElement.style.height = 'auto';
+      imgElement.style.objectFit = 'cover';
+      return;
+    }
+
+    imgElement.style.display = 'block';
+    imgElement.style.margin = '0.75rem auto';
+    imgElement.style.width = 'min(420px, 100%)';
+    imgElement.style.height = 'auto';
+    imgElement.style.objectFit = 'contain';
+  };
+
+  const normalizeEditorImages = () => {
+    if (!editorRef.current) return;
+    const images = editorRef.current.querySelectorAll('img');
+    images.forEach((imgElement) => {
+      if (!imgElement.dataset.noteImageId) {
+        imgElement.dataset.noteImageId = `img-${generateId()}`;
+      }
+      imgElement.setAttribute('draggable', 'true');
+      applyImageLayout(imgElement, imgElement.dataset.layout || 'below');
+    });
+  };
+
+  const handleInput = () => {
+    normalizeEditorImages();
+    if (editorRef.current) {
+      onSave(noteId, editorRef.current.innerHTML);
+    }
+  };
+
+  const openImageMenu = (imgElement) => {
+    if (!imgElement || !editorContainerRef.current) return;
+    const container = editorContainerRef.current;
+    const containerRect = container.getBoundingClientRect();
+    const imageRect = imgElement.getBoundingClientRect();
+    const rawX = imageRect.left - containerRect.left + editorContainerRef.current.scrollLeft;
+    const rawY = imageRect.bottom - containerRect.top + editorContainerRef.current.scrollTop + 8;
+    const maxX = Math.max(8, container.clientWidth - 248);
+    setImageMenuState({
+      imageId: imgElement.dataset.noteImageId,
+      x: Math.min(Math.max(8, rawX), maxX),
+      y: Math.max(8, rawY),
+    });
+  };
+
+  const getCaretRangeFromPoint = (clientX, clientY) => {
+    if (document.caretRangeFromPoint) {
+      return document.caretRangeFromPoint(clientX, clientY);
+    }
+    if (document.caretPositionFromPoint) {
+      const position = document.caretPositionFromPoint(clientX, clientY);
+      if (position) {
+        const range = document.createRange();
+        range.setStart(position.offsetNode, position.offset);
+        range.collapse(true);
+        return range;
+      }
+    }
+    return null;
+  };
+
+  const placeImageAtPoint = (imageId, clientX, clientY) => {
+    if (!editorRef.current || !imageId) return null;
+    const editor = editorRef.current;
+    const movingImage = getImageById(imageId);
+    if (!movingImage) return null;
+
+    const range = getCaretRangeFromPoint(clientX, clientY);
+    if (range && editor.contains(range.startContainer)) {
+      range.insertNode(movingImage);
+    } else {
+      editor.appendChild(movingImage);
+    }
+
+    const selection = window.getSelection();
+    if (selection) {
+      const nextRange = document.createRange();
+      nextRange.setStartAfter(movingImage);
+      nextRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+    }
+
+    return movingImage;
+  };
+
+  const insertImageAtCursor = (imageSrc) => {
+    if (!editorRef.current || !imageSrc) return;
+    const editor = editorRef.current;
+    editor.focus();
+
+    const imageNode = document.createElement('img');
+    imageNode.src = imageSrc;
+    imageNode.alt = 'uploaded-note-image';
+    imageNode.dataset.noteImageId = `img-${generateId()}`;
+    imageNode.setAttribute('draggable', 'true');
+    applyImageLayout(imageNode, 'below');
+
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0 && editor.contains(selection.anchorNode)) {
+      const range = selection.getRangeAt(0);
+      range.collapse(false);
+      range.insertNode(imageNode);
+
+      const spacer = document.createElement('p');
+      spacer.innerHTML = '<br />';
+      imageNode.after(spacer);
+
+      const nextRange = document.createRange();
+      nextRange.setStartAfter(spacer);
+      nextRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+    } else {
+      editor.appendChild(imageNode);
+      const spacer = document.createElement('p');
+      spacer.innerHTML = '<br />';
+      editor.appendChild(spacer);
+    }
+
+    openImageMenu(imageNode);
+    handleInput();
+  };
+
+  const handleUploadImage = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const resultSrc = typeof reader.result === 'string' ? reader.result : '';
+      if (!resultSrc) return;
+      insertImageAtCursor(resultSrc);
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  const handleImageLayoutChange = (layout) => {
+    const targetImage = getImageById(imageMenuState?.imageId);
+    if (!targetImage) return;
+    applyImageLayout(targetImage, layout);
+    handleInput();
+    openImageMenu(targetImage);
+  };
+
+  const handleCropImage = async () => {
+    const targetImage = getImageById(imageMenuState?.imageId);
+    if (!targetImage) return;
+    const cropSize = await popup.prompt({
+      title: 'Crop image',
+      message: 'Enter crop size in px',
+      placeholder: '220',
+      defaultValue: '220',
+      confirmText: 'Apply',
+    });
+    if (!cropSize) return;
+    const nextSize = Number(cropSize);
+    if (!Number.isFinite(nextSize) || nextSize <= 20) return;
+    targetImage.style.width = `${nextSize}px`;
+    targetImage.style.height = `${nextSize}px`;
+    targetImage.style.objectFit = 'cover';
+    targetImage.style.maxWidth = '100%';
+    handleInput();
+    openImageMenu(targetImage);
+  };
+
+  const handleCopyOrCutImage = async (isCut) => {
+    const targetImage = getImageById(imageMenuState?.imageId);
+    if (!targetImage) return;
+    const imageSrc = targetImage.src;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(imageSrc);
+      }
+    } catch {
+      // Ignore clipboard permission errors.
+    }
+    if (isCut) {
+      targetImage.remove();
+      setImageMenuState(null);
+      handleInput();
+    }
+  };
+
+  const handleDuplicateImage = () => {
+    const targetImage = getImageById(imageMenuState?.imageId);
+    if (!targetImage) return;
+    const cloned = targetImage.cloneNode(true);
+    cloned.dataset.noteImageId = `img-${generateId()}`;
+    targetImage.after(cloned);
+    applyImageLayout(cloned, cloned.dataset.layout || 'below');
+    handleInput();
+    openImageMenu(cloned);
+  };
+
+  const handleEditorClick = (event) => {
+    const imageNode = event.target.closest('img[data-note-image-id]');
+    if (imageNode && editorRef.current?.contains(imageNode)) {
+      openImageMenu(imageNode);
+      return;
+    }
+    if (!event.target.closest('[data-note-image-menu]')) {
+      setImageMenuState(null);
+    }
+  };
+
+  const handleEditorDragStart = (event) => {
+    const imageNode = event.target.closest('img[data-note-image-id]');
+    if (!imageNode) return;
+    dragImageIdRef.current = imageNode.dataset.noteImageId;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', dragImageIdRef.current);
+  };
+
+  const handleEditorDrop = (event) => {
+    if (!dragImageIdRef.current || !editorRef.current) return;
+    event.preventDefault();
+    const movedImage = placeImageAtPoint(dragImageIdRef.current, event.clientX, event.clientY);
+    if (!movedImage) {
+      dragImageIdRef.current = '';
+      return;
+    }
+    dragImageIdRef.current = '';
+    handleInput();
+    openImageMenu(movedImage);
+  };
+
+  const handleEditorTouchStart = (event) => {
+    const imageNode = event.target.closest('img[data-note-image-id]');
+    if (!imageNode) {
+      resetTouchDragState();
+      return;
+    }
+
+    const touch = event.touches?.[0];
+    if (!touch) return;
+
+    clearLongPressTimer();
+    touchDragStateRef.current = {
+      imageId: imageNode.dataset.noteImageId || '',
+      active: false,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
+    };
+
+    longPressTimerRef.current = window.setTimeout(() => {
+      const current = touchDragStateRef.current;
+      if (!current.imageId || current.imageId !== imageNode.dataset.noteImageId) return;
+      current.active = true;
+      imageNode.style.opacity = '0.6';
+      imageNode.style.cursor = 'grabbing';
+      setImageMenuState(null);
+    }, 320);
+  };
+
+  const handleEditorTouchMove = (event) => {
+    const current = touchDragStateRef.current;
+    if (!current.imageId) return;
+
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    current.lastX = touch.clientX;
+    current.lastY = touch.clientY;
+
+    if (!current.active) {
+      const movedDistance = Math.hypot(touch.clientX - current.startX, touch.clientY - current.startY);
+      if (movedDistance > 10) {
+        resetTouchDragState();
+      }
+      return;
+    }
+
+    event.preventDefault();
+  };
+
+  const handleEditorTouchEnd = (event) => {
+    const current = touchDragStateRef.current;
+    if (!current.imageId) {
+      clearLongPressTimer();
+      return;
+    }
+
+    const wasActive = current.active;
+    const touchPoint = event.changedTouches?.[0];
+    resetTouchDragState();
+
+    if (!wasActive) return;
+
+    const dropX = touchPoint?.clientX ?? current.lastX;
+    const dropY = touchPoint?.clientY ?? current.lastY;
+    const movedImage = placeImageAtPoint(current.imageId, dropX, dropY);
+    if (!movedImage) return;
+
+    handleInput();
+    openImageMenu(movedImage);
+  };
+
   React.useEffect(() => {
     if (editorRef.current) {
       editorRef.current.innerHTML = initialContent || '';
+      normalizeEditorImages();
+      setImageMenuState(null);
     }
-  }, [noteId]);
+  }, [noteId, initialContent]);
 
-  const handleInput = () => {
-     if (editorRef.current) {
-       onSave(noteId, editorRef.current.innerHTML);
-     }
-  };
+  React.useEffect(() => {
+    if (!imageMenuState) return undefined;
+    const closeMenuIfOutside = (event) => {
+      if (!editorContainerRef.current?.contains(event.target)) {
+        setImageMenuState(null);
+      }
+    };
+    document.addEventListener('pointerdown', closeMenuIfOutside);
+    return () => document.removeEventListener('pointerdown', closeMenuIfOutside);
+  }, [imageMenuState]);
 
-  const insertImage = async () => {
-     const url = await popup.prompt({
-       title: 'Insert image',
-       message: 'ใส่ URL รูปภาพ (หรือคุณสามารถกด Ctrl+V เพื่อวางรูปภาพในพื้นที่พิมพ์ได้เลย):',
-       defaultValue: 'https://images.unsplash.com/photo-1557683316-973673baf926?w=400&q=80',
-       placeholder: 'https://...',
-       confirmText: 'Insert',
-     });
-     if (url) {
-        document.execCommand('insertImage', false, url);
-        handleInput();
-     }
-  };
+  React.useEffect(
+    () => () => {
+      clearLongPressTimer();
+    },
+    []
+  );
 
   const execCmd = (cmd) => {
-     document.execCommand(cmd, false, null);
-     handleInput();
+    document.execCommand(cmd, false, null);
+    handleInput();
   };
 
   return (
-     <div className="flex flex-col h-full bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-        {/* Editor Toolbar */}
-        <div className="bg-gray-50 border-b border-gray-200 p-3 flex items-center gap-2">
-           <h3 className="font-semibold text-gray-700 mr-auto flex items-center gap-2">
-             <FileText className="w-4 h-4 text-blue-500" /> {noteTitle}
-           </h3>
-           
-           <div className="flex items-center bg-white border border-gray-200 rounded-md p-1 shadow-sm">
-             <button onClick={() => execCmd('bold')} className="p-1.5 hover:bg-gray-100 rounded text-gray-600 transition-colors" title="ตัวหนา (Ctrl+B)"><Bold size={16}/></button>
-             <button onClick={() => execCmd('italic')} className="p-1.5 hover:bg-gray-100 rounded text-gray-600 transition-colors" title="ตัวเอียง (Ctrl+I)"><Italic size={16}/></button>
-             <button onClick={() => execCmd('underline')} className="p-1.5 hover:bg-gray-100 rounded text-gray-600 transition-colors" title="ขีดเส้นใต้ (Ctrl+U)"><Underline size={16}/></button>
-           </div>
-           
-           <div className="w-px h-6 bg-gray-300 mx-1"></div>
-           
-           <button 
-             onClick={insertImage} 
-             className="p-1.5 px-3 bg-white border border-gray-200 hover:bg-gray-50 rounded-md text-gray-700 flex items-center gap-1.5 text-sm font-medium transition-colors shadow-sm"
-           >
-             <ImageIcon size={16} className="text-blue-500"/> แทรกรูป
-           </button>
+    <div ref={editorContainerRef} className="relative flex flex-col h-full bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-gray-50 border-b border-gray-200 p-3 flex items-center gap-2">
+        <h3 className="font-semibold text-gray-700 mr-auto flex items-center gap-2">
+          <FileText className="w-4 h-4 text-blue-500" /> {noteTitle}
+        </h3>
+
+        <div className="flex items-center bg-white border border-gray-200 rounded-md p-1 shadow-sm">
+          <button onClick={() => execCmd('bold')} className="p-1.5 hover:bg-gray-100 rounded text-gray-600 transition-colors" title="Bold (Ctrl+B)"><Bold size={16} /></button>
+          <button onClick={() => execCmd('italic')} className="p-1.5 hover:bg-gray-100 rounded text-gray-600 transition-colors" title="Italic (Ctrl+I)"><Italic size={16} /></button>
+          <button onClick={() => execCmd('underline')} className="p-1.5 hover:bg-gray-100 rounded text-gray-600 transition-colors" title="Underline (Ctrl+U)"><Underline size={16} /></button>
         </div>
 
-        {/* Editable Content Area */}
-        <div 
-           ref={editorRef}
-           contentEditable
-           onInput={handleInput}
-           data-placeholder="พิมพ์ข้อความ... หรือกด Ctrl+V เพื่อแปะรูปภาพได้ทันที"
-           className="rich-editor flex-1 p-6 outline-none overflow-y-auto text-gray-800 text-sm md:text-base leading-relaxed bg-white prose max-w-none"
-           style={{ minHeight: '300px' }}
-        ></div>
-        
-        <div className="p-2 bg-gray-50 border-t border-gray-100 text-[11px] text-gray-400 text-right">
-          ข้อมูลจะถูกบันทึกอัตโนมัติ (Auto-saved)
+        <div className="w-px h-6 bg-gray-300 mx-1"></div>
+
+        <input
+          ref={uploadInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleUploadImage}
+          className="hidden"
+        />
+        <button
+          type="button"
+          onClick={() => uploadInputRef.current?.click()}
+          className="h-10 w-10 bg-white border border-gray-200 hover:bg-gray-50 rounded-md text-gray-700 flex items-center justify-center transition-colors shadow-sm"
+          title="Upload image"
+        >
+          <ImageIcon size={16} className="text-blue-500" />
+        </button>
+      </div>
+
+      <div
+        ref={editorRef}
+        contentEditable
+        onInput={handleInput}
+        onClick={handleEditorClick}
+        onDragStart={handleEditorDragStart}
+        onDragOver={(event) => {
+          if (dragImageIdRef.current) {
+            event.preventDefault();
+          }
+        }}
+        onDrop={handleEditorDrop}
+        onDragEnd={() => {
+          dragImageIdRef.current = '';
+        }}
+        onTouchStart={handleEditorTouchStart}
+        onTouchMove={handleEditorTouchMove}
+        onTouchEnd={handleEditorTouchEnd}
+        onTouchCancel={handleEditorTouchEnd}
+        data-placeholder="Type your note... and upload images with the image button"
+        className="rich-editor flex-1 p-6 outline-none overflow-y-auto text-gray-800 text-sm md:text-base leading-relaxed bg-white prose max-w-none"
+        style={{ minHeight: '300px' }}
+      ></div>
+
+      {imageMenuState && (
+        <div
+          data-note-image-menu
+          className="absolute z-30 bg-white border border-gray-200 rounded-xl shadow-xl px-2 py-1.5 flex flex-wrap items-center gap-1.5 max-w-[calc(100%-16px)]"
+          style={{
+            left: `${Math.max(8, imageMenuState.x)}px`,
+            top: `${Math.max(8, imageMenuState.y)}px`,
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button type="button" onClick={() => handleImageLayoutChange('inline')} className="px-2 py-1 text-xs rounded-md hover:bg-gray-100">Inline</button>
+          <button type="button" onClick={() => handleImageLayoutChange('below')} className="px-2 py-1 text-xs rounded-md hover:bg-gray-100">Below text</button>
+          <button type="button" onClick={() => handleImageLayoutChange('wrap')} className="px-2 py-1 text-xs rounded-md hover:bg-gray-100">Wrap text</button>
+          <button type="button" onClick={handleCropImage} className="px-2 py-1 text-xs rounded-md hover:bg-gray-100">Crop</button>
+          <button type="button" onClick={() => void handleCopyOrCutImage(true)} className="px-2 py-1 text-xs rounded-md hover:bg-red-50 text-red-600">Cut</button>
+          <button type="button" onClick={() => void handleCopyOrCutImage(false)} className="px-2 py-1 text-xs rounded-md hover:bg-gray-100">Copy</button>
+          <button type="button" onClick={handleDuplicateImage} className="px-2 py-1 text-xs rounded-md hover:bg-gray-100">Duplicate</button>
         </div>
-     </div>
-  )
+      )}
+
+      <div className="p-2 bg-gray-50 border-t border-gray-100 text-[11px] text-gray-400 text-right">
+        Auto-saved
+      </div>
+    </div>
+  );
 }
-
 function MonthGrid({
   year,
   month,
@@ -4999,9 +5925,9 @@ function ProjectManagerModal({
     setEditName('');
   };
 
-  const handleInvite = (projectId) => {
+  const handleInvite = async (projectId) => {
     const inputValue = inviteInputs[projectId] || '';
-    const result = onInviteMember(projectId, inputValue);
+    const result = await Promise.resolve(onInviteMember(projectId, inputValue));
 
     if (result?.message) {
       void popup.alert({
@@ -5286,19 +6212,19 @@ function ProjectManagerModal({
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
               <CalendarDays className="w-5 h-5 text-gray-500" /> Display Settings
             </h3>
-            <div className="flex items-center gap-2 text-sm">
+            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-sm">
               <input
                 type="month"
                 value={displayRange.start}
                 onChange={(e) => setDisplayRange((prev) => ({ ...prev, start: e.target.value }))}
-                className="border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500 outline-none flex-1 bg-gray-50"
+                className="w-full min-w-0 border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-gray-50"
               />
-              <span className="text-gray-500 font-medium">to</span>
+              <span className="text-gray-500 font-medium text-center">to</span>
               <input
                 type="month"
                 value={displayRange.end}
                 onChange={(e) => setDisplayRange((prev) => ({ ...prev, end: e.target.value }))}
-                className="border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500 outline-none flex-1 bg-gray-50"
+                className="w-full min-w-0 border border-gray-300 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-gray-50"
               />
             </div>
             <label className="flex items-start gap-3 text-sm text-gray-700 cursor-pointer mt-2 p-2 rounded-md hover:bg-gray-50 transition-colors">
@@ -5477,6 +6403,7 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
     </div>
   );
 }
+
 
 
 
