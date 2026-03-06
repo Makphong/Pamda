@@ -134,6 +134,163 @@ const postAuthApi = async (path, payload) => {
   return result;
 };
 
+const PopupContext = React.createContext(null);
+
+const toPopupOptions = (messageOrOptions, options = {}) => {
+  if (typeof messageOrOptions === 'object' && messageOrOptions !== null) {
+    return messageOrOptions;
+  }
+
+  return {
+    ...options,
+    message: String(messageOrOptions || ''),
+  };
+};
+
+function PopupProvider({ children }) {
+  const [popupState, setPopupState] = useState(null);
+  const [promptValue, setPromptValue] = useState('');
+  const resolverRef = useRef(null);
+
+  const closePopup = (result) => {
+    const resolve = resolverRef.current;
+    resolverRef.current = null;
+    setPopupState(null);
+    setPromptValue('');
+    if (resolve) resolve(result);
+  };
+
+  const openPopup = (nextState, fallbackResult) =>
+    new Promise((resolve) => {
+      if (resolverRef.current) {
+        resolverRef.current(fallbackResult);
+      }
+      resolverRef.current = resolve;
+      setPopupState(nextState);
+      setPromptValue(String(nextState?.defaultValue || ''));
+    });
+
+  const showAlert = (messageOrOptions, options = {}) => {
+    const config = toPopupOptions(messageOrOptions, options);
+    return openPopup(
+      {
+        type: 'alert',
+        title: config.title || 'Notice',
+        message: config.message || '',
+        confirmText: config.confirmText || 'OK',
+        tone: config.tone || 'info',
+      },
+      true
+    );
+  };
+
+  const showConfirm = (messageOrOptions, options = {}) => {
+    const config = toPopupOptions(messageOrOptions, options);
+    return openPopup(
+      {
+        type: 'confirm',
+        title: config.title || 'Please confirm',
+        message: config.message || '',
+        confirmText: config.confirmText || 'Confirm',
+        cancelText: config.cancelText || 'Cancel',
+        tone: config.tone || 'info',
+      },
+      false
+    );
+  };
+
+  const showPrompt = (messageOrOptions, options = {}) => {
+    const config = toPopupOptions(messageOrOptions, options);
+    return openPopup(
+      {
+        type: 'prompt',
+        title: config.title || 'Enter value',
+        message: config.message || '',
+        confirmText: config.confirmText || 'Save',
+        cancelText: config.cancelText || 'Cancel',
+        placeholder: config.placeholder || '',
+        defaultValue: config.defaultValue || '',
+        tone: config.tone || 'info',
+      },
+      null
+    );
+  };
+
+  const value = useMemo(
+    () => ({
+      alert: showAlert,
+      confirm: showConfirm,
+      prompt: showPrompt,
+    }),
+    []
+  );
+
+  const isDanger = popupState?.tone === 'danger';
+  const confirmButtonClass = isDanger
+    ? 'bg-red-600 hover:bg-red-700 text-white'
+    : 'bg-blue-600 hover:bg-blue-700 text-white';
+
+  return (
+    <PopupContext.Provider value={value}>
+      {children}
+      {popupState && (
+        <div className="fixed inset-0 z-[120] bg-slate-900/45 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
+              <h3 className="text-base font-semibold text-slate-800">{popupState.title}</h3>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              {popupState.message && <p className="text-sm text-slate-600 whitespace-pre-wrap">{popupState.message}</p>}
+              {popupState.type === 'prompt' && (
+                <input
+                  type="text"
+                  value={promptValue}
+                  onChange={(e) => setPromptValue(e.target.value)}
+                  placeholder={popupState.placeholder}
+                  autoFocus
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      closePopup(promptValue);
+                    }
+                  }}
+                />
+              )}
+            </div>
+            <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+              {popupState.type !== 'alert' && (
+                <button
+                  type="button"
+                  onClick={() => closePopup(popupState.type === 'confirm' ? false : null)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition-colors text-sm font-medium"
+                >
+                  {popupState.cancelText || 'Cancel'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => closePopup(popupState.type === 'confirm' ? true : popupState.type === 'prompt' ? promptValue : true)}
+                className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${confirmButtonClass}`}
+              >
+                {popupState.confirmText || 'OK'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </PopupContext.Provider>
+  );
+}
+
+function usePopup() {
+  const context = React.useContext(PopupContext);
+  if (!context) {
+    throw new Error('usePopup must be used inside PopupProvider.');
+  }
+  return context;
+}
+
 const migrateProjectUsername = (project, oldUsername, newUsername) => {
   const normalizedOld = String(oldUsername || '').trim().toLowerCase();
   const normalizedNew = String(newUsername || '').trim().toLowerCase();
@@ -329,16 +486,18 @@ export default function App() {
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(safeUser));
   };
 
-  if (!currentUser) {
-    return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
-  }
-
   return (
-    <CalendarApp
-      currentUser={currentUser}
-      onLogout={handleLogout}
-      onUpdateCurrentUser={handleCurrentUserUpdate}
-    />
+    <PopupProvider>
+      {!currentUser ? (
+        <AuthScreen onAuthSuccess={handleAuthSuccess} />
+      ) : (
+        <CalendarApp
+          currentUser={currentUser}
+          onLogout={handleLogout}
+          onUpdateCurrentUser={handleCurrentUserUpdate}
+        />
+      )}
+    </PopupProvider>
   );
 }
 
@@ -358,6 +517,7 @@ function AuthScreen({ onAuthSuccess }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const googleButtonRef = useRef(null);
+  const googleTokenClientRef = useRef(null);
 
   const resetForm = () => {
     setUsername('');
@@ -380,19 +540,21 @@ function AuthScreen({ onAuthSuccess }) {
     resetForm();
   };
 
-  const syncUserToLocalCache = (user) => {
+  const syncUserToLocalCache = (user, passwordOverride = null) => {
     const normalized = normalizeAuthUser(user);
     if (!normalized) return;
 
     const users = getLocalUsers();
     const existingIndex = users.findIndex((entry) => entry.id === normalized.id);
+    const existingPassword = existingIndex >= 0 ? String(users[existingIndex].password || '') : '';
+    const nextPassword = passwordOverride !== null ? String(passwordOverride || '') : existingPassword;
     const nextUserRecord = {
       ...(existingIndex >= 0 ? users[existingIndex] : {}),
       id: normalized.id,
       username: normalized.username,
       email: normalized.email,
       avatarUrl: normalized.avatarUrl || '',
-      password: existingIndex >= 0 ? users[existingIndex].password || '' : '',
+      password: nextPassword,
     };
 
     if (existingIndex >= 0) {
@@ -404,19 +566,13 @@ function AuthScreen({ onAuthSuccess }) {
     }
   };
 
-  const handleGoogleCredential = async (response) => {
-    const idToken = response?.credential;
-    if (!idToken) {
-      setError('Google sign-in failed. Please try again.');
-      return;
-    }
-
+  const authenticateWithGoogle = async (payload) => {
     setIsSubmitting(true);
     setError('');
     setSuccess('');
 
     try {
-      const result = await postAuthApi('/auth/google', { idToken });
+      const result = await postAuthApi('/auth/google', payload);
       syncUserToLocalCache(result.user);
       onAuthSuccess(result.user);
     } catch (err) {
@@ -424,6 +580,16 @@ function AuthScreen({ onAuthSuccess }) {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleGoogleCredential = async (response) => {
+    const idToken = String(response?.credential || '').trim();
+    if (!idToken) {
+      setError('Google sign-in failed. Please try again.');
+      return;
+    }
+
+    await authenticateWithGoogle({ idToken });
   };
 
   const handleGoogleButtonClick = () => {
@@ -440,7 +606,19 @@ function AuthScreen({ onAuthSuccess }) {
       return;
     }
 
-    window.google.accounts.id.prompt();
+    if (googleTokenClientRef.current?.requestAccessToken) {
+      googleTokenClientRef.current.requestAccessToken({ prompt: 'select_account' });
+      return;
+    }
+
+    window.google.accounts.id.prompt((notification) => {
+      if (notification.isNotDisplayed()) {
+        const reason = notification.getNotDisplayedReason?.() || 'unknown_reason';
+        setError(`Google sign-in is unavailable (${reason}). Check OAuth Authorized JavaScript origins.`);
+      } else if (notification.isSkippedMoment()) {
+        setError('Google sign-in was skipped. Please try again.');
+      }
+    });
   };
 
   useEffect(() => {
@@ -454,12 +632,42 @@ function AuthScreen({ onAuthSuccess }) {
         client_id: GOOGLE_CLIENT_ID,
         callback: handleGoogleCredential,
       });
+
+      if (window.google.accounts.oauth2?.initTokenClient) {
+        googleTokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: 'openid email profile',
+          callback: (tokenResponse) => {
+            const accessToken = String(tokenResponse?.access_token || '').trim();
+            if (!accessToken) {
+              const errorText = tokenResponse?.error || 'Google sign-in failed.';
+              setError(errorText);
+              return;
+            }
+
+            void authenticateWithGoogle({ accessToken });
+          },
+          error_callback: () => {
+            setError('Google popup was blocked or closed. Please allow popups and try again.');
+          },
+        });
+      }
     };
 
     if (window.google?.accounts?.id) {
       initializeGoogle();
       return () => {
         isCancelled = true;
+        googleTokenClientRef.current = null;
+      };
+    }
+
+    const existingScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+    if (existingScript) {
+      existingScript.addEventListener('load', initializeGoogle, { once: true });
+      return () => {
+        isCancelled = true;
+        googleTokenClientRef.current = null;
       };
     }
 
@@ -468,10 +676,16 @@ function AuthScreen({ onAuthSuccess }) {
     script.async = true;
     script.defer = true;
     script.onload = initializeGoogle;
+    script.onerror = () => {
+      if (!isCancelled) {
+        setError('Failed to load Google SDK. Please refresh and try again.');
+      }
+    };
     document.head.appendChild(script);
 
     return () => {
       isCancelled = true;
+      googleTokenClientRef.current = null;
     };
   }, [isLoginMode]);
 
@@ -510,12 +724,26 @@ function AuthScreen({ onAuthSuccess }) {
           throw new Error('Please enter username/email and password.');
         }
 
-        const result = await postAuthApi('/auth/login', {
-          identifier: normalizedIdentifier,
-          password,
+        const users = getLocalUsers();
+        const matchedUser = users.find((entry) => {
+          const usernameValue = String(entry.username || '').trim().toLowerCase();
+          const emailValue = String(entry.email || '').trim().toLowerCase();
+          return usernameValue === normalizedIdentifier || emailValue === normalizedIdentifier;
         });
-        syncUserToLocalCache(result.user);
-        onAuthSuccess(result.user);
+
+        if (!matchedUser) {
+          throw new Error('Invalid username/email or password.');
+        }
+
+        const storedPassword = String(matchedUser.password || '');
+        if (!storedPassword) {
+          throw new Error('This account does not have a local password. Please login with Google.');
+        }
+        if (storedPassword !== password) {
+          throw new Error('Invalid username/email or password.');
+        }
+
+        onAuthSuccess(matchedUser);
         return;
       }
 
@@ -547,7 +775,7 @@ function AuthScreen({ onAuthSuccess }) {
         password,
         otp: otpCode.trim(),
       });
-      syncUserToLocalCache(result.user);
+      syncUserToLocalCache(result.user, password);
       onAuthSuccess(result.user);
     } catch (err) {
       setError(err.message || 'Authentication failed.');
@@ -623,7 +851,7 @@ function AuthScreen({ onAuthSuccess }) {
             <div className="h-px bg-gray-200 flex-1" />
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleSubmit} noValidate className="space-y-3">
             {isLoginMode ? (
               <>
                 <input
@@ -632,7 +860,6 @@ function AuthScreen({ onAuthSuccess }) {
                   onChange={(e) => setIdentifier(e.target.value)}
                   placeholder="Email or Username"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
                 />
                 <input
                   type="password"
@@ -640,7 +867,6 @@ function AuthScreen({ onAuthSuccess }) {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Password"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
                 />
                 <label className="inline-flex items-center gap-2 text-sm text-gray-600">
                   <input
@@ -660,7 +886,6 @@ function AuthScreen({ onAuthSuccess }) {
                   onChange={(e) => setUsername(e.target.value)}
                   placeholder="Username"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
                 />
                 <input
                   type="email"
@@ -668,7 +893,6 @@ function AuthScreen({ onAuthSuccess }) {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="Email"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
                 />
                 <input
                   type="password"
@@ -676,7 +900,6 @@ function AuthScreen({ onAuthSuccess }) {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Password"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
                 />
                 <input
                   type="password"
@@ -684,7 +907,6 @@ function AuthScreen({ onAuthSuccess }) {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm password"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
                 />
                 <div className="grid grid-cols-[1fr,auto] gap-2">
                   <input
@@ -866,6 +1088,7 @@ function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassw
           <div className="space-y-6">
             <form
               onSubmit={handleProfileSubmit}
+              noValidate
               className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5"
             >
               <div className="flex items-center justify-between">
@@ -881,7 +1104,6 @@ function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassw
                     onChange={(e) => setUsername(e.target.value)}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="username"
-                    required
                   />
                 </label>
 
@@ -893,7 +1115,6 @@ function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassw
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="name@company.com"
-                    required
                   />
                 </label>
               </div>
@@ -1050,52 +1271,11 @@ function ProfileSettingsView({ currentUser, onBack, onSaveProfile, onChangePassw
 }
 
 function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
+  const popup = usePopup();
   // --- State ---
-  const [projects, setProjects] = useState([
-    { 
-      id: 'p1', name: 'Project Alpha', colorIndex: 0, isVisible: true, 
-      status: 'on_track', 
-      vision: 'มุ่งมั่นที่จะเป็นผู้นำในการพัฒนานวัตกรรมที่ตอบโจทย์ความต้องการของผู้ใช้งานระดับโลก',
-      mission: '1. พัฒนาผลิตภัณฑ์ที่มีคุณภาพสูง\n2. ส่งเสริมการเรียนรู้และพัฒนาศักยภาพของทีมงานอย่างต่อเนื่อง',
-      description: 'โปรเจกต์ Project Alpha มีจุดประสงค์เพื่อจัดการและติดตามความคืบหน้าของงานทั้งหมดที่เกี่ยวข้องกับเป้าหมายหลัก\n\n- เพิ่มยอด Engagement 20% ภายในไตรมาสนี้\n- พัฒนาและอัปเดตระบบให้รองรับผู้ใช้งานมากขึ้น\n- ลดข้อผิดพลาด (Bugs) ในระบบหลักลง 50%', 
-      milestones: [
-        { id: 'm1', name: 'วางแผนและกำหนดขอบเขต (Project Kickoff)', date: '2026-03-15', status: 'completed' },
-        { id: 'm2', name: 'ส่งมอบผลงานเฟสที่ 1 (Phase 1 Delivery)', date: '2026-04-30', status: 'pending' },
-        { id: 'm3', name: 'ทดสอบระบบและแก้ไข (UAT)', date: '2026-05-15', status: 'pending' }
-      ] 
-    },
-    { id: 'p2', name: 'Marketing Q1', colorIndex: 1, isVisible: true, status: 'on_track', vision: '', mission: '', description: '', milestones: [] },
-    { id: 'p3', name: 'Website Revamp', colorIndex: 2, isVisible: true, status: 'at_risk', vision: '', mission: '', description: '', milestones: [] },
-    { id: 'p4', name: 'Team Outing', colorIndex: 3, isVisible: true, status: 'on_track', vision: '', mission: '', description: '', milestones: [] },
-    { id: 'p5', name: 'Backlog', colorIndex: 4, isVisible: false, status: 'off_track', vision: '', mission: '', description: '', milestones: [] },
-  ]);
+  const [projects, setProjects] = useState([]);
 
-  const [events, setEvents] = useState([
-    {
-      id: 'e1', projectId: 'p1', title: 'Kickoff Meeting',
-      startDate: '2026-03-05', endDate: '2026-03-05',
-      startTime: '10:00', endTime: '12:00', description: 'เริ่มโปรเจกต์ใหม่',
-      status: 'Done', department: 'Management', assigneeId: 'u1'
-    },
-    {
-      id: 'e2', projectId: 'p2', title: 'Ad Campaign',
-      startDate: '2026-03-10', endDate: '2026-03-15',
-      startTime: '09:00', endTime: '18:00', description: 'ยิงแอด Facebook',
-      status: 'In Progress', department: 'Marketing', assigneeId: 'u2'
-    },
-    {
-      id: 'e3', projectId: 'p1', title: 'Design System Update',
-      startDate: '2026-03-12', endDate: '2026-03-18',
-      startTime: '13:00', endTime: '17:00', description: 'อัปเดต UI Components',
-      status: 'To Do', department: 'Design', assigneeId: 'u2'
-    },
-    {
-      id: 'e4', projectId: 'p1', title: 'API Integration',
-      startDate: '2026-03-20', endDate: '2026-03-25',
-      startTime: '09:00', endTime: '18:00', description: 'เชื่อมต่อ Backend',
-      status: 'Review', department: 'Development', assigneeId: 'u3'
-    }
-  ]);
+  const [events, setEvents] = useState([]);
 
   const accountDbKey = useMemo(() => getAccountDbKey(currentUser.id), [currentUser.id]);
   const [isAccountDataHydrated, setIsAccountDataHydrated] = useState(false);
@@ -1129,7 +1309,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     try {
       const rawData = localStorage.getItem(accountDbKey);
       if (!rawData) {
-        setProjects((prev) => prev.map((project) => ensureProjectOwnership(project, currentUser)));
+        setProjects([]);
+        setEvents([]);
         setIsAccountDataHydrated(true);
         return;
       }
@@ -1139,11 +1320,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       if (Array.isArray(parsed.projects)) {
         setProjects(parsed.projects.map((project) => ensureProjectOwnership(project, currentUser)));
       } else {
-        setProjects((prev) => prev.map((project) => ensureProjectOwnership(project, currentUser)));
+        setProjects([]);
       }
 
       if (Array.isArray(parsed.events)) {
         setEvents(parsed.events);
+      } else {
+        setEvents([]);
       }
 
       if (parsed.displayRange?.start && parsed.displayRange?.end) {
@@ -1154,7 +1337,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         setHidePastWeeks(parsed.hidePastWeeks);
       }
     } catch {
-      setProjects((prev) => prev.map((project) => ensureProjectOwnership(project, currentUser)));
+      setProjects([]);
+      setEvents([]);
     } finally {
       setIsAccountDataHydrated(true);
     }
@@ -1265,7 +1449,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       if (p.id === projectId) {
         // Prevent enabling if already 4 visible
         if (!p.isVisible && visibleProjects.length >= 4) {
-          alert("คุณสามารถแสดงได้สูงสุดเพียง 4 โปรเจกต์ในหน้าจอหลัก");
+          void popup.alert({
+            title: 'Display limit',
+            message: 'คุณสามารถแสดงได้สูงสุดเพียง 4 โปรเจกต์ในหน้าจอหลัก',
+          });
           return p;
         }
         return { ...p, isVisible: !p.isVisible };
@@ -1278,7 +1465,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (projectData.id) {
       const targetProject = projects.find((project) => project.id === projectData.id);
       if (targetProject && targetProject.ownerId !== currentUser.id) {
-        alert('Only the project creator can edit this project.');
+        void popup.alert({
+          title: 'Permission denied',
+          message: 'Only the project creator can edit this project.',
+        });
         return;
       }
 
@@ -1318,7 +1508,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!projectToDelete) return;
 
     if (projectToDelete.ownerId !== currentUser.id) {
-      alert('Only the project creator can delete this project.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only the project creator can delete this project.',
+      });
       return;
     }
 
@@ -1468,6 +1661,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     return { ok: true, message: 'Password changed successfully.' };
   };
+
+  if (!isAccountDataHydrated) {
+    return (
+      <div className="h-screen bg-gray-50 flex items-center justify-center">
+        <div className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-600 shadow-sm">
+          <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+          Loading your calendar...
+        </div>
+      </div>
+    );
+  }
 
   if (isProfileViewOpen) {
     return (
@@ -1628,8 +1832,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                 {monthsToRender.map(({ month, year }, idx) => (
                   <div key={`${year}-${month}`} className="border-b-4 border-gray-200">
                     {/* Month Title */}
-                    <div className="bg-gray-100 py-2 px-4 sticky top-16 z-0 shadow-sm border-b border-gray-200">
-                      <h2 className="text-lg font-bold text-gray-800">
+                    <div className="bg-gray-100 py-2 px-4 sticky top-16 z-[5] shadow-sm border-b border-gray-200">
+                      <h2 className="text-lg font-bold text-gray-800 whitespace-nowrap">
                         {THAI_MONTHS[month]} {year}
                       </h2>
                     </div>
@@ -1785,6 +1989,7 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
 
 // --- Project Dashboard View (Like Asana) ---
 function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent, onSaveTask, onDeleteTask, onUpdateProject }) {
+  const popup = usePopup();
   // เปลี่ยนค่าเริ่มต้นให้เปิดหน้า Project Organization เป็นอันดับแรก
   const [activeTab, setActiveTab] = useState('organization'); 
   const projectColor = PROJECT_COLORS[project.colorIndex] || PROJECT_COLORS[0];
@@ -1875,13 +2080,22 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
   const CREATE_POSITION_OPTION = '__create_position__';
   const CREATE_DEPARTMENT_OPTION = '__create_department__';
 
-  const handleCreatePosition = (memberId = null, optionName = '') => {
+  const handleCreatePosition = async (memberId = null, optionName = '') => {
     if (!canManageMembers) {
-      alert('Only project owner can manage positions.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can manage positions.',
+      });
       return null;
     }
 
-    const positionName = optionName || window.prompt('Create new position');
+    const positionName =
+      optionName ||
+      (await popup.prompt({
+        title: 'Create position',
+        message: 'Enter a new position name',
+        placeholder: 'e.g. Product Manager',
+      }));
     if (!positionName) return null;
 
     const trimmedPosition = positionName.trim();
@@ -1891,7 +2105,10 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
       (position) => position.toLowerCase() === trimmedPosition.toLowerCase()
     );
     if (duplicated) {
-      alert('This position already exists.');
+      void popup.alert({
+        title: 'Duplicate position',
+        message: 'This position already exists.',
+      });
       return null;
     }
 
@@ -1913,13 +2130,22 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     return trimmedPosition;
   };
 
-  const handleCreateDepartment = (memberId = null, optionName = '') => {
+  const handleCreateDepartment = async (memberId = null, optionName = '') => {
     if (!canManageMembers) {
-      alert('Only project owner can manage departments.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can manage departments.',
+      });
       return null;
     }
 
-    const departmentName = optionName || window.prompt('Create new department');
+    const departmentName =
+      optionName ||
+      (await popup.prompt({
+        title: 'Create department',
+        message: 'Enter a new department name',
+        placeholder: 'e.g. Engineering',
+      }));
     if (!departmentName) return null;
 
     const trimmedDepartment = departmentName.trim();
@@ -1929,7 +2155,10 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
       (department) => department.toLowerCase() === trimmedDepartment.toLowerCase()
     );
     if (duplicated) {
-      alert('This department already exists.');
+      void popup.alert({
+        title: 'Duplicate department',
+        message: 'This department already exists.',
+      });
       return null;
     }
 
@@ -1944,14 +2173,17 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     return trimmedDepartment;
   };
 
-  const handleAssignPosition = (memberId, selectedPosition) => {
+  const handleAssignPosition = async (memberId, selectedPosition) => {
     if (!canManageMembers) {
-      alert('Only project owner can manage positions.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can manage positions.',
+      });
       return;
     }
 
     if (selectedPosition === CREATE_POSITION_OPTION) {
-      handleCreatePosition(memberId);
+      await handleCreatePosition(memberId);
       return;
     }
 
@@ -1970,14 +2202,17 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     persistTeamManagement(nextMembers, projectPositions, projectDepartments);
   };
 
-  const handleAssignDepartment = (memberId, selectedDepartment) => {
+  const handleAssignDepartment = async (memberId, selectedDepartment) => {
     if (!canManageMembers) {
-      alert('Only project owner can manage departments.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can manage departments.',
+      });
       return;
     }
 
     if (selectedDepartment === CREATE_DEPARTMENT_OPTION) {
-      handleCreateDepartment(memberId);
+      await handleCreateDepartment(memberId);
       return;
     }
 
@@ -1988,16 +2223,25 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     persistTeamManagement(nextMembers, projectPositions, projectDepartments);
   };
 
-  const handleDeletePositionOption = (positionName) => {
+  const handleDeletePositionOption = async (positionName) => {
     if (!canManageMembers) {
-      alert('Only project owner can manage positions.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can manage positions.',
+      });
       return;
     }
 
     const normalizedTarget = String(positionName || '').trim().toLowerCase();
     if (!normalizedTarget) return;
 
-    if (!window.confirm(`Delete position "${positionName}"?`)) return;
+    const shouldDelete = await popup.confirm({
+      title: 'Delete position',
+      message: `Delete position "${positionName}"?`,
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!shouldDelete) return;
 
     const nextPositions = projectPositions.filter(
       (position) => String(position || '').trim().toLowerCase() !== normalizedTarget
@@ -2017,16 +2261,25 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     persistTeamManagement(nextMembers, nextPositions, projectDepartments);
   };
 
-  const handleDeleteDepartmentOption = (departmentName) => {
+  const handleDeleteDepartmentOption = async (departmentName) => {
     if (!canManageMembers) {
-      alert('Only project owner can manage departments.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can manage departments.',
+      });
       return;
     }
 
     const normalizedTarget = String(departmentName || '').trim().toLowerCase();
     if (!normalizedTarget || normalizedTarget === 'unassigned') return;
 
-    if (!window.confirm(`Delete department "${departmentName}"?`)) return;
+    const shouldDelete = await popup.confirm({
+      title: 'Delete department',
+      message: `Delete department "${departmentName}"?`,
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!shouldDelete) return;
 
     const nextDepartments = projectDepartments.filter(
       (department) => String(department || '').trim().toLowerCase() !== normalizedTarget
@@ -2042,7 +2295,10 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
 
   const handleRenamePositionOption = (currentName, nextName) => {
     if (!canManageMembers) {
-      alert('Only project owner can manage positions.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can manage positions.',
+      });
       return false;
     }
 
@@ -2057,7 +2313,10 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
         String(position || '').trim().toLowerCase() !== currentTrimmed.toLowerCase()
     );
     if (duplicated) {
-      alert('This position already exists.');
+      void popup.alert({
+        title: 'Duplicate position',
+        message: 'This position already exists.',
+      });
       return false;
     }
 
@@ -2081,7 +2340,10 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
 
   const handleRenameDepartmentOption = (currentName, nextName) => {
     if (!canManageMembers) {
-      alert('Only project owner can manage departments.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can manage departments.',
+      });
       return false;
     }
 
@@ -2097,7 +2359,10 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
         String(department || '').trim().toLowerCase() !== currentTrimmed.toLowerCase()
     );
     if (duplicated) {
-      alert('This department already exists.');
+      void popup.alert({
+        title: 'Duplicate department',
+        message: 'This department already exists.',
+      });
       return false;
     }
 
@@ -2129,13 +2394,21 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     setEditingOptionValue('');
   };
 
-  const handleAddMember = () => {
+  const handleAddMember = async () => {
     if (!canManageMembers) {
-      alert('Only project owner can invite members.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can invite members.',
+      });
       return;
     }
 
-    const identifier = window.prompt('Invite member by username or email');
+    const identifier = await popup.prompt({
+      title: 'Invite member',
+      message: 'Invite member by username or email',
+      placeholder: 'username or email',
+      confirmText: 'Invite',
+    });
     if (!identifier) return;
 
     const normalizedIdentifier = identifier.trim().toLowerCase();
@@ -2147,12 +2420,18 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     );
 
     if (!foundUser) {
-      alert('User not found.');
+      void popup.alert({
+        title: 'User not found',
+        message: 'User not found.',
+      });
       return;
     }
 
     if (teamMembers.some((member) => member.username === foundUser.username)) {
-      alert('This member is already in the project.');
+      void popup.alert({
+        title: 'Duplicate member',
+        message: 'This member is already in the project.',
+      });
       return;
     }
 
@@ -2169,9 +2448,12 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     persistTeamManagement(nextMembers, projectPositions, projectDepartments);
   };
 
-  const removeMember = (id) => {
+  const removeMember = async (id) => {
     if (!canManageMembers) {
-      alert('Only project owner can remove members.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can remove members.',
+      });
       return;
     }
 
@@ -2179,11 +2461,20 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
     if (!targetMember) return;
 
     if (targetMember.username === project.ownerUsername) {
-      alert('Cannot remove project owner.');
+      void popup.alert({
+        title: 'Action blocked',
+        message: 'Cannot remove project owner.',
+      });
       return;
     }
 
-    if (window.confirm('Remove this member from the project?')) {
+    const shouldRemove = await popup.confirm({
+      title: 'Remove member',
+      message: 'Remove this member from the project?',
+      confirmText: 'Remove',
+      tone: 'danger',
+    });
+    if (shouldRemove) {
       const nextMembers = teamMembers.filter((member) => member.id !== id);
       persistTeamManagement(nextMembers, projectPositions, projectDepartments);
     }
@@ -2277,12 +2568,18 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
 
   const handleChangeMemberManager = (memberId, managerId) => {
     if (!canManageMembers) {
-      alert('Only project owner can edit organization structure.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project owner can edit organization structure.',
+      });
       return;
     }
 
     if (memberId === managerId) {
-      alert('A member cannot report to themselves.');
+      void popup.alert({
+        title: 'Invalid structure',
+        message: 'A member cannot report to themselves.',
+      });
       return;
     }
 
@@ -2503,9 +2800,15 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                           <div className="flex items-center gap-4">
                             <span className={`text-sm ${m.status === 'completed' ? 'text-gray-400' : 'text-blue-600 font-medium'}`}>{m.date}</span>
                             <button 
-                              onClick={(e) => {
+                              onClick={async (e) => {
                                 e.stopPropagation();
-                                if(window.confirm('ลบเป้าหมายนี้?')) {
+                                const shouldDelete = await popup.confirm({
+                                  title: 'Delete milestone',
+                                  message: 'ลบเป้าหมายนี้?',
+                                  confirmText: 'Delete',
+                                  tone: 'danger',
+                                });
+                                if (shouldDelete) {
                                   const updatedMilestones = (project.milestones || []).filter(ms => ms.id !== m.id);
                                   onUpdateProject(project.id, { milestones: updatedMilestones });
                                 }
@@ -2544,7 +2847,13 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                             />
                             <button 
                               onClick={() => {
-                                if (!newMilestoneName || !newMilestoneDate) return alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+                                if (!newMilestoneName || !newMilestoneDate) {
+                                  void popup.alert({
+                                    title: 'Incomplete form',
+                                    message: 'กรุณากรอกข้อมูลให้ครบถ้วน',
+                                  });
+                                  return;
+                                }
                                 const updatedMilestones = [...(project.milestones || []), { id: generateId(), name: newMilestoneName, date: newMilestoneDate, status: 'pending' }];
                                 onUpdateProject(project.id, { milestones: updatedMilestones });
                                 setNewMilestoneName('');
@@ -2914,7 +3223,9 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                             <td className="px-6 py-4">
                               {projectPositions.length === 0 ? (
                                 <button
-                                  onClick={() => handleCreatePosition()}
+                                  onClick={() => {
+                                    void handleCreatePosition();
+                                  }}
                                   disabled={!canManageMembers}
                                   className={`text-xs border px-3 py-1.5 rounded-lg font-medium transition-colors ${canManageMembers ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`}
                                 >
@@ -2923,7 +3234,9 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                               ) : (
                                 <select
                                   value={member.position || ''}
-                                  onChange={(e) => handleAssignPosition(member.id, e.target.value)}
+                                  onChange={(e) => {
+                                    void handleAssignPosition(member.id, e.target.value);
+                                  }}
                                   disabled={!canManageMembers}
                                   className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-blue-500"
                                 >
@@ -2943,7 +3256,9 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                             <td className="px-6 py-4">
                               {projectDepartments.length === 0 ? (
                                 <button
-                                  onClick={() => handleCreateDepartment()}
+                                  onClick={() => {
+                                    void handleCreateDepartment();
+                                  }}
                                   disabled={!canManageMembers}
                                   className={`text-xs border px-3 py-1.5 rounded-lg font-medium transition-colors ${canManageMembers ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`}
                                 >
@@ -2952,7 +3267,9 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                               ) : (
                                 <select
                                   value={member.department || 'Unassigned'}
-                                  onChange={(e) => handleAssignDepartment(member.id, e.target.value)}
+                                  onChange={(e) => {
+                                    void handleAssignDepartment(member.id, e.target.value);
+                                  }}
                                   disabled={!canManageMembers}
                                   className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-blue-500"
                                 >
@@ -2967,7 +3284,9 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                             </td>
                             <td className="px-6 py-4 text-right">
                               <button
-                                onClick={() => removeMember(member.id)}
+                                onClick={() => {
+                                  void removeMember(member.id);
+                                }}
                                 disabled={!canManageMembers}
                                 className={`p-2 rounded-lg transition-all ${canManageMembers ? 'text-gray-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100' : 'text-gray-300 cursor-not-allowed opacity-40'}`}
                                 title="Remove member"
@@ -3142,12 +3461,12 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                 />
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     if (optionsPopupType === 'position') {
-                      const created = handleCreatePosition(null, newOptionValue);
+                      const created = await handleCreatePosition(null, newOptionValue);
                       if (created) setNewOptionValue('');
                     } else {
-                      const created = handleCreateDepartment(null, newOptionValue);
+                      const created = await handleCreateDepartment(null, newOptionValue);
                       if (created) setNewOptionValue('');
                     }
                   }}
@@ -3241,9 +3560,9 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
                                 type="button"
                                 onClick={() => {
                                   if (optionsPopupType === 'position') {
-                                    handleDeletePositionOption(optionValue);
+                                    void handleDeletePositionOption(optionValue);
                                   } else {
-                                    handleDeleteDepartmentOption(optionValue);
+                                    void handleDeleteDepartmentOption(optionValue);
                                   }
                                 }}
                                 disabled={isLockedOption}
@@ -3274,6 +3593,7 @@ function ProjectDashboard({ project, currentUser, events, onBack, onUpdateEvent,
 
 // --- Task Detail & Edit Slide-over Pane ---
 function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, TASK_STATUSES, DEPARTMENTS }) {
+  const popup = usePopup();
   const [isEditing, setIsEditing] = useState(false);
 
   // Form states
@@ -3321,7 +3641,13 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
   // Handle Save
   const handleSave = (e) => {
     e.preventDefault();
-    if (!title || !startDate || !endDate) return alert('กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน');
+    if (!title || !startDate || !endDate) {
+      void popup.alert({
+        title: 'Incomplete form',
+        message: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน',
+      });
+      return;
+    }
     
     onSave({
       id: task?.id,
@@ -3364,7 +3690,15 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
                   <Edit2 className="w-4 h-4" />
                 </button>
                 <button 
-                  onClick={() => { if(window.confirm('คุณแน่ใจหรือไม่ที่จะลบ Task นี้?')) onDelete(task.id); }} 
+                  onClick={async () => {
+                    const shouldDelete = await popup.confirm({
+                      title: 'Delete task',
+                      message: 'คุณแน่ใจหรือไม่ที่จะลบ Task นี้?',
+                      confirmText: 'Delete',
+                      tone: 'danger',
+                    });
+                    if (shouldDelete) onDelete(task.id);
+                  }} 
                   className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="ลบ"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -3382,7 +3716,7 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
         <div className="flex-1 overflow-y-auto">
           {isEditing ? (
             // --- Edit / Create Form ---
-            <form id="task-form" onSubmit={handleSave} className="p-6 flex flex-col gap-6">
+            <form id="task-form" onSubmit={handleSave} noValidate className="p-6 flex flex-col gap-6">
               <div>
                 <input 
                   type="text" 
@@ -3391,7 +3725,6 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
                   onChange={(e) => setTitle(e.target.value)}
                   className="text-2xl font-bold border-none focus:ring-0 placeholder-gray-300 w-full p-0 text-gray-800 outline-none"
                   autoFocus
-                  required
                 />
               </div>
 
@@ -3406,13 +3739,13 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
 
                 <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> วันที่เริ่มต้น</div>
                 <div className="flex items-center gap-2">
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1" required />
+                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1" />
                   <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 w-28" />
                 </div>
 
                 <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> วันที่สิ้นสุด</div>
                 <div className="flex items-center gap-2">
-                  <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1" required />
+                  <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1" />
                   <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 w-28" />
                 </div>
 
@@ -3547,6 +3880,7 @@ function OrgNode({ member }) {
 
 // --- Note Editor Component for Team Notes ---
 function NoteEditor({ noteId, noteTitle, initialContent, onSave }) {
+  const popup = usePopup();
   const editorRef = React.useRef(null);
   
   React.useEffect(() => {
@@ -3561,8 +3895,14 @@ function NoteEditor({ noteId, noteTitle, initialContent, onSave }) {
      }
   };
 
-  const insertImage = () => {
-     const url = prompt('ใส่ URL รูปภาพ (หรือคุณสามารถกด Ctrl+V เพื่อวางรูปภาพในพื้นที่พิมพ์ได้เลย):', 'https://images.unsplash.com/photo-1557683316-973673baf926?w=400&q=80');
+  const insertImage = async () => {
+     const url = await popup.prompt({
+       title: 'Insert image',
+       message: 'ใส่ URL รูปภาพ (หรือคุณสามารถกด Ctrl+V เพื่อวางรูปภาพในพื้นที่พิมพ์ได้เลย):',
+       defaultValue: 'https://images.unsplash.com/photo-1557683316-973673baf926?w=400&q=80',
+       placeholder: 'https://...',
+       confirmText: 'Insert',
+     });
      if (url) {
         document.execCommand('insertImage', false, url);
         handleInput();
@@ -3832,6 +4172,7 @@ function ProjectManagerModal({
   hidePastWeeks,
   setHidePastWeeks,
 }) {
+  const popup = usePopup();
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
   const [editColorIndex, setEditColorIndex] = useState(0);
@@ -3839,7 +4180,10 @@ function ProjectManagerModal({
 
   const startEdit = (project) => {
     if (project.ownerId !== currentUser.id) {
-      alert('Only the project creator can edit this project.');
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only the project creator can edit this project.',
+      });
       return;
     }
 
@@ -3871,7 +4215,10 @@ function ProjectManagerModal({
     const result = onInviteMember(projectId, inputValue);
 
     if (result?.message) {
-      alert(result.message);
+      void popup.alert({
+        title: result.ok ? 'Invite result' : 'Invite failed',
+        message: result.message,
+      });
     }
 
     if (result?.ok) {
@@ -3960,10 +4307,14 @@ function ProjectManagerModal({
                             </button>
                           )}
                           <button
-                            onClick={() => {
-                              if (window.confirm(`Delete project "${project.name}" and all related events?`)) {
-                                onDeleteProject(project.id);
-                              }
+                            onClick={async () => {
+                              const shouldDelete = await popup.confirm({
+                                title: 'Delete project',
+                                message: `Delete project "${project.name}" and all related events?`,
+                                confirmText: 'Delete',
+                                tone: 'danger',
+                              });
+                              if (shouldDelete) onDeleteProject(project.id);
                             }}
                             disabled={!isOwner}
                             title={isOwner ? 'Delete project' : 'Only creator can delete'}
@@ -4097,6 +4448,7 @@ function ProjectManagerModal({
 }
 // --- Event Form Modal ---
 function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, onSave, onDelete }) {
+  const popup = usePopup();
   const [title, setTitle] = useState(event?.title || '');
   const [projectId, setProjectId] = useState(event?.projectId || defaultProjectId || (projects[0]?.id || ''));
   const [startDate, setStartDate] = useState(event?.startDate || defaultDate || '');
@@ -4114,7 +4466,13 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!title || !startDate || !endDate) return alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+    if (!title || !startDate || !endDate) {
+      void popup.alert({
+        title: 'Incomplete form',
+        message: 'กรุณากรอกข้อมูลให้ครบถ้วน',
+      });
+      return;
+    }
     
     onSave({
       title, projectId, startDate, endDate, startTime, endTime, description
@@ -4131,7 +4489,7 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto">
+        <form onSubmit={handleSubmit} noValidate className="p-5 flex flex-col gap-4 overflow-y-auto">
           {/* Title Input */}
           <input 
             type="text" 
@@ -4140,7 +4498,6 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
             onChange={(e) => setTitle(e.target.value)}
             className="text-xl font-medium border-b-2 border-transparent hover:border-gray-200 focus:border-blue-500 focus:outline-none w-full pb-1 transition-colors"
             autoFocus
-            required
           />
 
           {/* Project Selector */}
@@ -4150,7 +4507,6 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
               className="flex-1 border-gray-300 rounded-md p-2 bg-gray-50 focus:ring-blue-500 focus:border-blue-500"
-              required
             >
               <option value="" disabled>เลือก Project</option>
               {projects.map(p => (
@@ -4169,14 +4525,12 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
                   className="border-gray-300 rounded-md p-1.5 bg-gray-50 text-sm flex-1"
-                  required
                 />
                 <input 
                   type="time" 
                   value={startTime}
                   onChange={(e) => setStartTime(e.target.value)}
                   className="border-gray-300 rounded-md p-1.5 bg-gray-50 text-sm w-28"
-                  required
                 />
                 <span className="text-gray-400">-</span>
                 <input 
@@ -4184,7 +4538,6 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
                   value={endTime}
                   onChange={(e) => setEndTime(e.target.value)}
                   className="border-gray-300 rounded-md p-1.5 bg-gray-50 text-sm w-28"
-                  required
                 />
               </div>
               
@@ -4196,7 +4549,6 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
                   min={startDate}
                   onChange={(e) => setEndDate(e.target.value)}
                   className="border-gray-300 rounded-md p-1.5 bg-gray-50 text-sm flex-1"
-                  required
                 />
               </div>
             </div>
@@ -4218,8 +4570,14 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
             {event && (
               <button 
                 type="button" 
-                onClick={() => {
-                  if(window.confirm('คุณแน่ใจหรือไม่ที่จะลบ Event นี้?')) onDelete(event.id);
+                onClick={async () => {
+                  const shouldDelete = await popup.confirm({
+                    title: 'Delete event',
+                    message: 'คุณแน่ใจหรือไม่ที่จะลบ Event นี้?',
+                    confirmText: 'Delete',
+                    tone: 'danger',
+                  });
+                  if (shouldDelete) onDelete(event.id);
                 }}
                 className="text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg font-medium transition-colors mr-auto"
               >
@@ -4245,6 +4603,7 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
     </div>
   );
 }
+
 
 
 

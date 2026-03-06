@@ -5,6 +5,7 @@ Backend service for:
 2. Register/Login with username/email + password
 3. Google OAuth login (ID token verification)
 4. Persistent storage in Firestore (Cloud Run-safe)
+5. `/auth/google` accepts `idToken` or `accessToken`
 
 ## Required Environment Variables
 

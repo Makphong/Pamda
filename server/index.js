@@ -256,13 +256,29 @@ app.post('/auth/login', async (req, res) => {
     if (!user) {
       return res.status(401).json({ message: 'Invalid username/email or password.' });
     }
-    if (!user.passwordHash) {
+
+    const passwordHash = String(user.passwordHash || '').trim();
+    const legacyPassword = String(user.password || '');
+    if (!passwordHash && !legacyPassword) {
       return res.status(400).json({ message: 'This account uses Google sign-in.' });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    const isPasswordValid = passwordHash
+      ? await bcrypt.compare(password, passwordHash)
+      : legacyPassword === password;
     if (!isPasswordValid) {
       return res.status(401).json({ message: 'Invalid username/email or password.' });
+    }
+
+    if (!passwordHash && legacyPassword) {
+      await usersRef.doc(user.id).set(
+        {
+          passwordHash: await bcrypt.hash(password, 10),
+          password: '',
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
     }
 
     return res.json({
@@ -276,38 +292,65 @@ app.post('/auth/login', async (req, res) => {
 
 app.post('/auth/google', async (req, res) => {
   try {
-    if (!oauthClient || !GOOGLE_CLIENT_ID) {
-      return res.status(500).json({
-        message: 'Google OAuth is not configured. Set GOOGLE_CLIENT_ID or GOOGLE_OAUTH_JSON_PATH.',
+    const idToken = String(req.body?.idToken || '').trim();
+    const accessToken = String(req.body?.accessToken || '').trim();
+    if (!idToken && !accessToken) {
+      return res.status(400).json({ message: 'idToken or accessToken is required.' });
+    }
+
+    let email = '';
+    let name = '';
+    let picture = '';
+    let emailVerified = false;
+
+    if (idToken) {
+      if (!oauthClient || !GOOGLE_CLIENT_ID) {
+        return res.status(500).json({
+          message: 'Google OAuth is not configured. Set GOOGLE_CLIENT_ID or GOOGLE_OAUTH_JSON_PATH.',
+        });
+      }
+
+      const ticket = await oauthClient.verifyIdToken({
+        idToken,
+        audience: GOOGLE_CLIENT_ID,
       });
+      const payload = ticket.getPayload();
+      email = sanitizeEmail(payload?.email);
+      name = String(payload?.name || '').trim();
+      picture = String(payload?.picture || '').trim();
+      emailVerified = payload?.email_verified === true || payload?.email_verified === 'true';
+    } else {
+      const profileResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!profileResponse.ok) {
+        return res.status(401).json({ message: 'Invalid Google access token.' });
+      }
+
+      const profile = await profileResponse.json();
+      email = sanitizeEmail(profile?.email);
+      name = String(profile?.name || '').trim();
+      picture = String(profile?.picture || '').trim();
+      emailVerified = profile?.email_verified === true || profile?.email_verified === 'true';
     }
 
-    const idToken = String(req.body?.idToken || '');
-    if (!idToken) {
-      return res.status(400).json({ message: 'idToken is required.' });
-    }
-
-    const ticket = await oauthClient.verifyIdToken({
-      idToken,
-      audience: GOOGLE_CLIENT_ID,
-    });
-    const payload = ticket.getPayload();
-    const email = sanitizeEmail(payload?.email);
-
-    if (!email || !payload?.email_verified) {
+    if (!email || !emailVerified) {
       return res.status(401).json({ message: 'Google account email is not verified.' });
     }
 
     let user = await getUserByEmail(email);
 
     if (!user) {
-      const preferredUsername = sanitizeUsername(payload?.name || email.split('@')[0]);
+      const preferredUsername = sanitizeUsername(name || email.split('@')[0]);
       const uniqueUsername = await makeUniqueUsername(preferredUsername);
       const userId = crypto.randomUUID();
       const newUser = {
         username: uniqueUsername,
         email,
-        avatarUrl: String(payload?.picture || '').trim(),
+        avatarUrl: picture,
         provider: 'google',
         passwordHash: '',
         createdAt: new Date().toISOString(),
@@ -315,8 +358,8 @@ app.post('/auth/google', async (req, res) => {
       };
       await usersRef.doc(userId).set(newUser);
       user = { id: userId, ...newUser };
-    } else if (payload?.picture && user.avatarUrl !== payload.picture) {
-      user.avatarUrl = payload.picture;
+    } else if (picture && user.avatarUrl !== picture) {
+      user.avatarUrl = picture;
       user.updatedAt = new Date().toISOString();
       await usersRef.doc(user.id).set(
         {
