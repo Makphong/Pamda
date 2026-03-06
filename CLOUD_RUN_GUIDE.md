@@ -1,37 +1,77 @@
-# Cloud Run Deployment Guide (Frontend + Auth API)
+# Cloud Run Deployment Guide (Production)
 
-This project uses:
-1. `pm-calendar-frontend` (Vite static app)
-2. `pm-calendar-auth` (Node.js API in `server/`)
+This project must run as 2 separate Cloud Run services:
+1. `pm-calendar-auth` (backend API in `server/`)
+2. `pm-calendar-frontend` (Vite static app at repo root)
 
-## 1) Deploy Auth API first
-Follow: `server/README.md`
+Do not mount OAuth JSON secret on frontend service. Mount it on auth service only.
 
-After deploy, keep this URL:
+## 1) Deploy Auth Service (`pm-calendar-auth`)
 
-```text
-https://pm-calendar-auth-xxxxx-uc.a.run.app
-```
-
-## 2) Build and deploy Frontend
+Build image from `server/`:
 
 ```bash
-cd multi-project-calendar
+gcloud builds submit ./server --tag gcr.io/YOUR_PROJECT_ID/pm-calendar-auth
+```
 
-gcloud builds submit \
-  --tag gcr.io/YOUR_PROJECT_ID/pm-calendar-frontend \
-  --build-arg VITE_AUTH_API_BASE_URL=https://pm-calendar-auth-xxxxx-uc.a.run.app \
-  --build-arg VITE_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+Deploy:
 
+```bash
+gcloud run deploy pm-calendar-auth \
+  --image gcr.io/YOUR_PROJECT_ID/pm-calendar-auth \
+  --region asia-southeast1 \
+  --allow-unauthenticated \
+  --set-env-vars CLIENT_ORIGIN=https://YOUR_FRONTEND_URL,OTP_TTL_MINUTES=10,FIRESTORE_USERS_COLLECTION=users,FIRESTORE_OTP_COLLECTION=auth_otps,GOOGLE_OAUTH_JSON_PATH=/secrets/google/oauth.json \
+  --set-secrets GMAIL_USER=gmail-user:latest,GMAIL_APP_PASSWORD=gmail-app-password:latest,OTP_FROM_EMAIL=otp-from-email:latest,/secrets/google/oauth.json=oauth2:latest
+```
+
+Verify auth service:
+
+```bash
+curl https://YOUR_AUTH_URL/health
+```
+
+`googleClientConfigured` must be `true`.
+
+## 2) Deploy Frontend Service (`pm-calendar-frontend`)
+
+Build image from repo root:
+
+```bash
+gcloud builds submit . --tag gcr.io/YOUR_PROJECT_ID/pm-calendar-frontend
+```
+
+Deploy with runtime env:
+
+```bash
 gcloud run deploy pm-calendar-frontend \
   --image gcr.io/YOUR_PROJECT_ID/pm-calendar-frontend \
   --region asia-southeast1 \
-  --platform managed \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --set-env-vars AUTH_API_BASE_URL=https://YOUR_AUTH_URL,GOOGLE_CLIENT_ID=YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com
 ```
 
-## 3) Verify production
-1. Open frontend URL.
-2. Register (email + OTP) should hit auth service.
-3. Login with Google should work.
-4. Ensure browser console has no CORS errors.
+Notes:
+1. Frontend now supports runtime env via `runtime-config.js` generated at container startup.
+2. You can still use `VITE_AUTH_API_BASE_URL` and `VITE_GOOGLE_CLIENT_ID`, but runtime env above is recommended for Cloud Run.
+3. No Secret Manager mount is required on frontend service.
+
+## 3) Google OAuth Console Settings
+
+In Google Cloud Console -> OAuth Client (Web application):
+1. `Authorized JavaScript origins`: add frontend URL only, example `https://pm-calendar-frontend-xxxxx-uc.a.run.app`
+2. `Authorized redirect URIs`: not required for this token flow, but if you set one, use your backend callback URL consistently
+
+## 4) Required IAM
+
+For auth service account:
+1. `Cloud Datastore User`
+2. `Secret Manager Secret Accessor`
+
+## 5) Quick Debug Checklist (If Login/Google button still fails)
+
+1. Frontend service env has `AUTH_API_BASE_URL` and `GOOGLE_CLIENT_ID`.
+2. Auth `/health` returns `ok: true` and `googleClientConfigured: true`.
+3. `CLIENT_ORIGIN` on auth exactly matches frontend URL.
+4. OAuth `Authorized JavaScript origins` exactly matches frontend URL.
+5. Browser console has no CORS error and no popup-blocked error.

@@ -60,8 +60,26 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 const AUTH_USER_KEY = 'pm_calendar_auth_user';
 const AUTH_USERS_KEY = 'pm_calendar_users';
 const ACCOUNT_DB_PREFIX = 'pm_calendar_db_';
-const AUTH_API_BASE_URL = String(import.meta.env.VITE_AUTH_API_BASE_URL || '').trim().replace(/\/+$/, '');
-const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
+const getRuntimeConfig = () => {
+  if (typeof window === 'undefined') return {};
+  const runtimeConfig = window.__PM_CALENDAR_RUNTIME_CONFIG__;
+  return runtimeConfig && typeof runtimeConfig === 'object' ? runtimeConfig : {};
+};
+const RUNTIME_CONFIG = getRuntimeConfig();
+const AUTH_API_BASE_URL = String(
+  RUNTIME_CONFIG.VITE_AUTH_API_BASE_URL ||
+    RUNTIME_CONFIG.AUTH_API_BASE_URL ||
+    import.meta.env.VITE_AUTH_API_BASE_URL ||
+    ''
+)
+  .trim()
+  .replace(/\/+$/, '');
+const GOOGLE_CLIENT_ID = String(
+  RUNTIME_CONFIG.VITE_GOOGLE_CLIENT_ID ||
+    RUNTIME_CONFIG.GOOGLE_CLIENT_ID ||
+    import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+    ''
+).trim();
 
 const getLocalUsers = () => {
   try {
@@ -110,7 +128,7 @@ const getAccountDbKey = (userId) => `${ACCOUNT_DB_PREFIX}${userId}`;
 
 const postAuthApi = async (path, payload) => {
   if (!AUTH_API_BASE_URL) {
-    throw new Error('Auth API is not configured. Please set VITE_AUTH_API_BASE_URL.');
+    throw new Error('Auth API is not configured. Set VITE_AUTH_API_BASE_URL or AUTH_API_BASE_URL.');
   }
 
   const response = await fetch(`${AUTH_API_BASE_URL}${path}`, {
@@ -722,6 +740,16 @@ function AuthScreen({ onAuthSuccess }) {
         const normalizedIdentifier = identifier.trim().toLowerCase();
         if (!normalizedIdentifier || !password) {
           throw new Error('Please enter username/email and password.');
+        }
+
+        if (AUTH_API_BASE_URL) {
+          const result = await postAuthApi('/auth/login', {
+            identifier: normalizedIdentifier,
+            password,
+          });
+          syncUserToLocalCache(result.user);
+          onAuthSuccess(result.user);
+          return;
         }
 
         const users = getLocalUsers();

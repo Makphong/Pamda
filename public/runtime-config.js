@@ -1,0 +1,1 @@
+window.__PM_CALENDAR_RUNTIME_CONFIG__ = window.__PM_CALENDAR_RUNTIME_CONFIG__ || {};

@@ -20,8 +20,11 @@ WORKDIR /app
 RUN npm install -g serve
 
 COPY --from=builder /app/dist ./dist
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 ENV PORT=8080
 EXPOSE 8080
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["serve", "-s", "dist", "-l", "8080"]
