@@ -597,6 +597,24 @@ const toSheetColumnLabel = (columnIndex) => {
   }
   return label;
 };
+const fromSheetColumnLabel = (labelInput) => {
+  const label = String(labelInput || '').trim().toUpperCase();
+  if (!/^[A-Z]+$/.test(label)) return -1;
+  let value = 0;
+  for (let index = 0; index < label.length; index += 1) {
+    value = value * 26 + (label.charCodeAt(index) - 64);
+  }
+  return value - 1;
+};
+const parseSheetCellReference = (value) => {
+  const raw = String(value || '').trim().toUpperCase();
+  const matched = raw.match(/^([A-Z]+)(\d+)$/);
+  if (!matched) return null;
+  const col = fromSheetColumnLabel(matched[1]);
+  const row = Number.parseInt(matched[2], 10) - 1;
+  if (!Number.isFinite(row) || row < 0 || col < 0) return null;
+  return { row, col };
+};
 const createDefaultNoteDocPage = (html = '') => ({
   id: `doc-${generateId()}`,
   type: 'doc',
@@ -712,6 +730,28 @@ const serializeStoredNoteDocument = (documentPayload) => {
 };
 const NOTE_PRESENCE_TTL_MS = 15000;
 const NOTE_PRESENCE_TYPING_MAX = 120;
+const NOTE_PRESENCE_CURSOR_COLORS = [
+  '#2563eb',
+  '#16a34a',
+  '#d97706',
+  '#dc2626',
+  '#7c3aed',
+  '#0891b2',
+  '#db2777',
+];
+const hashStringToPositiveInt = (value) => {
+  const text = String(value || '');
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash << 5) - hash + text.charCodeAt(index);
+    hash |= 0;
+  }
+  return hash >>> 0;
+};
+const getPresenceCursorColor = (value) =>
+  NOTE_PRESENCE_CURSOR_COLORS[
+    hashStringToPositiveInt(value) % NOTE_PRESENCE_CURSOR_COLORS.length
+  ];
 const toTimestampMs = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return 0;
@@ -9371,6 +9411,7 @@ function NoteEditor({
   const [docTableHoverCols, setDocTableHoverCols] = useState(0);
   const [docTableSelectionState, setDocTableSelectionState] = useState(null);
   const [activeDocTableResizeFrame, setActiveDocTableResizeFrame] = useState(null);
+  const [docPresenceCursorFrames, setDocPresenceCursorFrames] = useState([]);
   const [noteDocument, setNoteDocument] = useState(() => parseStoredNoteDocument(initialContent));
   const [activePageId, setActivePageId] = useState(() => parseStoredNoteDocument(initialContent).activePageId);
   const [noteEditHistory, setNoteEditHistory] = useState({ past: [], future: [] });
@@ -11499,6 +11540,15 @@ function NoteEditor({
     const parsedDocument = parseStoredNoteDocument(initialContent);
     const isSwitchingNote = previousNoteIdRef.current !== noteId;
     previousNoteIdRef.current = noteId;
+    if (!isSwitchingNote) {
+      const currentSerialized = serializeStoredNoteDocument(
+        normalizeNoteDocumentPayload(noteDocumentRef.current || noteDocument)
+      );
+      const incomingSerialized = serializeStoredNoteDocument(parsedDocument);
+      if (incomingSerialized === currentSerialized) {
+        return;
+      }
+    }
     noteDocumentRef.current = parsedDocument;
     setNoteDocument(parsedDocument);
     if (isSwitchingNote) {
@@ -14528,15 +14578,138 @@ function NoteEditor({
     sheetClipboardState?.end?.row,
     sheetClipboardState?.end?.col,
   ]);
-  const visiblePresenceItems = (Array.isArray(presenceItems) ? presenceItems : [])
-    .map((entry) => normalizeNotePresenceEntry(entry))
-    .filter((entry) => {
-      if (!entry.userId) return false;
-      if (entry.pageId && activePage?.id && entry.pageId !== activePage.id) return false;
-      const ageMs = Date.now() - toTimestampMs(entry.updatedAt);
-      return ageMs <= NOTE_PRESENCE_TTL_MS;
-    })
-    .slice(0, 6);
+  const activePresenceItems = React.useMemo(
+    () =>
+      (Array.isArray(presenceItems) ? presenceItems : [])
+        .map((entry) => normalizeNotePresenceEntry(entry))
+        .filter((entry) => {
+          if (!entry.userId) return false;
+          if (entry.pageId && activePage?.id && entry.pageId !== activePage.id) return false;
+          const ageMs = Date.now() - toTimestampMs(entry.updatedAt);
+          return ageMs <= NOTE_PRESENCE_TTL_MS;
+        })
+        .sort((left, right) => toTimestampMs(right.updatedAt) - toTimestampMs(left.updatedAt))
+        .slice(0, 12),
+    [presenceItems, activePage?.id]
+  );
+  const getPresenceDisplayName = (entry) =>
+    String(entry?.displayName || entry?.username || 'User').trim() || 'User';
+  const docPresenceItems = React.useMemo(
+    () =>
+      activePresenceItems
+        .filter((entry) => entry.pageType !== 'sheet')
+        .map((entry) => {
+          const userKey = String(entry.userId || entry.username || '').trim();
+          return {
+            ...entry,
+            label: getPresenceDisplayName(entry),
+            cursorColor: getPresenceCursorColor(userKey || entry.updatedAt),
+          };
+        }),
+    [activePresenceItems]
+  );
+  const sheetPresenceByCell = React.useMemo(() => {
+    const nextMap = new Map();
+    if (!isActiveSheetPage) return nextMap;
+    activePresenceItems.forEach((entry) => {
+      if (entry.pageType !== 'sheet') return;
+      const coord = parseSheetCellReference(entry.line);
+      if (!coord) return;
+      if (coord.row < 0 || coord.col < 0 || coord.row >= sheetRows || coord.col >= sheetCols) return;
+      const userKey = String(entry.userId || entry.username || '').trim();
+      const key = `${coord.row}-${coord.col}`;
+      const currentItems = nextMap.get(key) || [];
+      currentItems.push({
+        ...entry,
+        label: getPresenceDisplayName(entry),
+        cursorColor: getPresenceCursorColor(userKey || key),
+      });
+      nextMap.set(key, currentItems);
+    });
+    nextMap.forEach((items, key) => {
+      nextMap.set(
+        key,
+        [...items].sort((left, right) => toTimestampMs(right.updatedAt) - toTimestampMs(left.updatedAt))
+      );
+    });
+    return nextMap;
+  }, [isActiveSheetPage, activePresenceItems, sheetRows, sheetCols]);
+  const refreshDocPresenceCursorFrames = React.useCallback(() => {
+    if (!isActiveDocPage) {
+      setDocPresenceCursorFrames([]);
+      return;
+    }
+    const viewportNode = docViewportRef.current || editorContainerRef.current;
+    const editorNode = editorRef.current;
+    if (!viewportNode || !editorNode || !docPresenceItems.length) {
+      setDocPresenceCursorFrames([]);
+      return;
+    }
+    const viewportRect = viewportNode.getBoundingClientRect();
+    const editorRect = editorNode.getBoundingClientRect();
+    const viewportScrollLeft = Number(viewportNode.scrollLeft || 0);
+    const viewportScrollTop = Number(viewportNode.scrollTop || 0);
+    const plainText = String(editorNode.innerText || editorNode.textContent || '').replace(/\r/g, '');
+    const totalLines = Math.max(1, plainText.split('\n').length);
+    const contentHeight = Math.max(24, Number(editorNode.scrollHeight || editorNode.offsetHeight || 0));
+    const availableTrack = Math.max(0, contentHeight - 20);
+    const baseX = editorRect.left - viewportRect.left + viewportScrollLeft + 10;
+    const baseY = editorRect.top - viewportRect.top + viewportScrollTop;
+    const nextFrames = docPresenceItems.map((entry, index) => {
+      const parsedLine = Number.parseInt(String(entry.line || '1'), 10);
+      const lineNumber = Number.isFinite(parsedLine)
+        ? Math.min(totalLines, Math.max(1, parsedLine))
+        : 1;
+      const ratio = totalLines <= 1 ? 0 : (lineNumber - 1) / (totalLines - 1);
+      return {
+        key: `${entry.userId}-${entry.pageId}-${entry.updatedAt}-${index}`,
+        label: entry.label,
+        cursorColor: entry.cursorColor,
+        x: baseX,
+        y: baseY + Math.round(ratio * availableTrack) + 6,
+      };
+    });
+    setDocPresenceCursorFrames(nextFrames);
+  }, [isActiveDocPage, docPresenceItems]);
+  React.useEffect(() => {
+    if (!isActiveDocPage || !docPresenceItems.length) {
+      setDocPresenceCursorFrames([]);
+      return undefined;
+    }
+    let rafId = 0;
+    const syncFrame = () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+      rafId = window.requestAnimationFrame(() => {
+        refreshDocPresenceCursorFrames();
+      });
+    };
+    syncFrame();
+    const viewportNode = docViewportRef.current;
+    const editorNode = editorRef.current;
+    viewportNode?.addEventListener('scroll', syncFrame, { passive: true });
+    editorNode?.addEventListener('scroll', syncFrame, { passive: true });
+    window.addEventListener('resize', syncFrame);
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined' && editorNode) {
+      resizeObserver = new ResizeObserver(() => {
+        syncFrame();
+      });
+      resizeObserver.observe(editorNode);
+    }
+    return () => {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+      }
+      viewportNode?.removeEventListener('scroll', syncFrame);
+      editorNode?.removeEventListener('scroll', syncFrame);
+      window.removeEventListener('resize', syncFrame);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+    };
+  }, [isActiveDocPage, activePageId, activePage?.content, docPresenceItems, refreshDocPresenceCursorFrames]);
   const sortPagesForPicker = (pages) =>
     [...pages].sort((left, right) => {
       const leftPinned = Boolean(left?.pinned) ? 1 : 0;
@@ -14838,24 +15011,6 @@ function NoteEditor({
             </button>
           )}
         </div>
-
-        {visiblePresenceItems.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {visiblePresenceItems.map((entry) => (
-              <span
-                key={`${entry.userId}-${entry.pageId}-${entry.updatedAt}`}
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-blue-200 bg-blue-50 text-[11px] text-blue-700"
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                <span className="font-semibold truncate max-w-[100px]">
-                  {entry.displayName || entry.username || 'User'}
-                </span>
-                <span className="text-blue-600">at {entry.line}</span>
-                {entry.typingText && <span className="truncate max-w-[140px]">"{entry.typingText}"</span>}
-              </span>
-            ))}
-          </div>
-        )}
 
         {isMobileNoteViewport && (
           <div className="md:hidden rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
@@ -16516,6 +16671,7 @@ function NoteEditor({
                       if (isClipboardBottom) clipboardBorderStyle.borderBottom = '2px dashed #2563eb';
                       if (isClipboardLeft) clipboardBorderStyle.borderLeft = '2px dashed #2563eb';
                       if (isClipboardRight) clipboardBorderStyle.borderRight = '2px dashed #2563eb';
+                      const presenceCellEntries = sheetPresenceByCell.get(`${rowIndex}-${colIndex}`) || [];
                       const selectionShadows = [];
                       if (isRangeTop) selectionShadows.push('inset 0 2px 0 #2563eb');
                       if (isRangeBottom) selectionShadows.push('inset 0 -2px 0 #2563eb');
@@ -16611,6 +16767,26 @@ function NoteEditor({
                               {cell.text || '\u00A0'}
                             </div>
                           )}
+                          {presenceCellEntries.slice(0, 2).map((presenceEntry, presenceIndex) => (
+                            <span
+                              key={`${presenceEntry.userId}-${presenceEntry.updatedAt}-${presenceIndex}`}
+                              className="pointer-events-none absolute z-[12] note-sheet-collab-cursor"
+                              style={{
+                                top: `${3 + presenceIndex * 16}px`,
+                                left: `${4 + presenceIndex * 6}px`,
+                                '--presence-cursor-color': presenceEntry.cursorColor,
+                              }}
+                              title={`${presenceEntry.label} at ${presenceEntry.line}`}
+                            >
+                              <span className="note-sheet-collab-cursor-line" />
+                              <span className="note-sheet-collab-cursor-label">{presenceEntry.label}</span>
+                            </span>
+                          ))}
+                          {presenceCellEntries.length > 2 && (
+                            <span className="pointer-events-none absolute z-[12] right-1 top-1 rounded bg-white/90 px-1 text-[10px] font-medium text-slate-500 shadow-sm">
+                              +{presenceCellEntries.length - 2}
+                            </span>
+                          )}
                           {isRangeBottomRightCorner && (
                             <span className="pointer-events-none absolute z-20 right-0.5 bottom-0.5 w-2 h-2 rounded-full bg-blue-600 border border-white" />
                           )}
@@ -16667,6 +16843,22 @@ function NoteEditor({
             style={{ minHeight: '300px', textAlign: 'left' }}
           ></div>
         )}
+        {isActiveDocPage &&
+          docPresenceCursorFrames.map((frame) => (
+            <span
+              key={frame.key}
+              className="pointer-events-none absolute z-[25] note-doc-collab-cursor"
+              style={{
+                left: `${frame.x}px`,
+                top: `${frame.y}px`,
+                '--presence-cursor-color': frame.cursorColor,
+              }}
+              title={frame.label}
+            >
+              <span className="note-doc-collab-cursor-line" />
+              <span className="note-doc-collab-cursor-label">{frame.label}</span>
+            </span>
+          ))}
         {isActiveDocPage && isDocTableResizeMenuOpen && activeDocTableResizeFrame && (
           <div
             ref={docTableResizeOverlayRef}
@@ -16968,6 +17160,47 @@ function NoteEditor({
         }
         .rich-editor table[data-note-inline-table="true"] [data-note-table-range-left="true"] {
           border-left: 2px solid #2563eb !important;
+        }
+        .note-doc-collab-cursor,
+        .note-sheet-collab-cursor {
+          position: absolute;
+          display: block;
+          --presence-cursor-color: #2563eb;
+        }
+        .note-doc-collab-cursor-line,
+        .note-sheet-collab-cursor-line {
+          display: block;
+          width: 2px;
+          height: 16px;
+          border-radius: 999px;
+          background: var(--presence-cursor-color);
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+        }
+        .note-sheet-collab-cursor-line {
+          height: 14px;
+        }
+        .note-doc-collab-cursor-label,
+        .note-sheet-collab-cursor-label {
+          position: absolute;
+          left: 6px;
+          top: -12px;
+          max-width: 108px;
+          padding: 1px 5px;
+          border-radius: 999px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          font-size: 10px;
+          line-height: 1.3;
+          font-weight: 500;
+          color: rgba(30, 41, 59, 0.7);
+          background: rgba(255, 255, 255, 0.92);
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
+        }
+        .note-sheet-collab-cursor-label {
+          top: -11px;
+          max-width: 84px;
         }
         @media (max-width: 767px) {
           .rich-editor {
