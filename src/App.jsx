@@ -324,6 +324,15 @@ const isProjectAccessibleByUser = (project, user) => {
   });
 };
 
+const stripLocalOnlyProjectFields = (project) => {
+  if (!project || typeof project !== 'object') return {};
+  const nextProject = { ...project };
+  delete nextProject.isVisible;
+  // Keep note target selection local per user, but keep shared note content.
+  delete nextProject.notesPreferences;
+  return nextProject;
+};
+
 const normalizeLastVisitedView = (value) => {
   if (!value || typeof value !== 'object') {
     return { ...DEFAULT_LAST_VISITED_VIEW };
@@ -2860,6 +2869,75 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     }
   };
 
+  const syncSharedProjectDetailsToOwner = async (projectId, nextProjectsSnapshot = projects) => {
+    if (!AUTH_API_BASE_URL) return;
+
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) return;
+
+    const targetProject = (Array.isArray(nextProjectsSnapshot) ? nextProjectsSnapshot : []).find(
+      (project) => project.id === normalizedProjectId
+    );
+    if (!targetProject) return;
+
+    const ownerId = String(targetProject.ownerId || '').trim();
+    if (!ownerId || ownerId === currentUser.id) return;
+
+    try {
+      const ownerPayload = await loadAccountDbPayload(ownerId);
+      const ownerProjects = Array.isArray(ownerPayload.projects) ? ownerPayload.projects : [];
+      const ownerProjectIndex = ownerProjects.findIndex(
+        (project) => String(project?.id || '').trim() === normalizedProjectId
+      );
+      if (ownerProjectIndex < 0) return;
+
+      const ownerProject = ownerProjects[ownerProjectIndex];
+      const ownerReference = {
+        id: ownerId,
+        username:
+          String(ownerProject?.ownerUsername || '').trim().toLowerCase() ||
+          String(targetProject.ownerUsername || '').trim().toLowerCase() ||
+          currentUser.username,
+      };
+      const mergedOwnerProject = ensureProjectOwnership(
+        {
+          ...ownerProject,
+          ...stripLocalOnlyProjectFields(targetProject),
+          isVisible: Boolean(ownerProject?.isVisible),
+          notesPreferences: ownerProject?.notesPreferences || {},
+        },
+        ownerReference
+      );
+      if (isJsonEqual(ownerProject, mergedOwnerProject)) {
+        return;
+      }
+
+      const nextOwnerProjects = [...ownerProjects];
+      nextOwnerProjects[ownerProjectIndex] = mergedOwnerProject;
+
+      await saveAccountDbPayload(ownerId, {
+        ...ownerPayload,
+        projects: nextOwnerProjects,
+      });
+    } catch (error) {
+      console.warn('Failed to sync shared project details to owner payload:', error.message);
+    }
+  };
+
+  const syncSharedProjectDetailsForProjects = (projectIds, nextProjectsSnapshot = projects) => {
+    const uniqueProjectIds = Array.from(
+      new Set(
+        (Array.isArray(projectIds) ? projectIds : [])
+          .map((projectId) => String(projectId || '').trim())
+          .filter(Boolean)
+      )
+    );
+
+    uniqueProjectIds.forEach((projectId) => {
+      void syncSharedProjectDetailsToOwner(projectId, nextProjectsSnapshot);
+    });
+  };
+
   const syncSharedEventsForProjects = (projectIds, nextEventsSnapshot, projectsSnapshot = projects) => {
     const uniqueProjectIds = Array.from(
       new Set(
@@ -3041,12 +3119,34 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   };
 
   const updateProjectDetails = (projectId, updates) => {
-    setProjects(
-      projects.map((project) => {
-        if (project.id !== projectId) return project;
-        return ensureProjectOwnership({ ...project, ...updates }, currentUser);
-      })
-    );
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) return;
+    const safeUpdatesInput =
+      updates && typeof updates === 'object' && !Array.isArray(updates) ? updates : {};
+
+    setProjects((prevProjects) => {
+      let didUpdate = false;
+      const nextProjects = prevProjects.map((project) => {
+        if (project.id !== normalizedProjectId) return project;
+        didUpdate = true;
+
+        const isOwner = String(project.ownerId || '').trim() === currentUser.id;
+        const safeUpdates = { ...safeUpdatesInput };
+        if (!isOwner) {
+          delete safeUpdates.name;
+          delete safeUpdates.ownerId;
+          delete safeUpdates.ownerUsername;
+        }
+
+        return ensureProjectOwnership({ ...project, ...safeUpdates }, currentUser);
+      });
+
+      if (didUpdate) {
+        syncSharedProjectDetailsForProjects([normalizedProjectId], nextProjects);
+      }
+
+      return nextProjects;
+    });
   };
 
   const deleteProject = (projectId) => {
@@ -3094,12 +3194,16 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return { ok: false, message: 'Project not found.' };
     }
 
-    if (targetProject.ownerId !== currentUser.id) {
-      return { ok: false, message: 'Only the project creator can invite members.' };
+    if (!isProjectAccessibleByUser(targetProject, currentUser)) {
+      return { ok: false, message: 'Only project members can invite new members.' };
     }
 
-    const normalizedProject = ensureProjectOwnership(targetProject, currentUser);
-    if (normalizedProject.members.includes(invitedUser.username)) {
+    const ownerReference = {
+      id: String(targetProject.ownerId || '').trim() || currentUser.id,
+      username: String(targetProject.ownerUsername || '').trim().toLowerCase() || currentUser.username,
+    };
+    const normalizedProject = ensureProjectOwnership(targetProject, ownerReference);
+    if (isProjectAccessibleByUser(normalizedProject, invitedUser)) {
       return { ok: false, message: 'This user is already in the project.' };
     }
 
@@ -3108,7 +3212,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       (invite) =>
         invite.status === PROJECT_INVITE_STATUSES.PENDING &&
         invite.projectId === projectId &&
-        invite.ownerId === currentUser.id &&
+        invite.ownerId === normalizedProject.ownerId &&
         ((invite.invitedUserId && invite.invitedUserId === invitedUser.id) ||
           invite.invitedUsername === invitedUser.username ||
           invite.invitedEmail === invitedUser.email)
@@ -3123,8 +3227,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         id: generateId(),
         projectId,
         projectName: normalizedProject.name,
-        ownerId: currentUser.id,
-        ownerUsername: currentUser.username,
+        ownerId: normalizedProject.ownerId,
+        ownerUsername: normalizedProject.ownerUsername,
         invitedUserId: invitedUser.id,
         invitedUsername: invitedUser.username,
         invitedEmail: invitedUser.email,
@@ -3647,7 +3751,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                             month={month}
                             projects={mobileCalendarProjects}
                             events={mobileCalendarEvents}
-                            showEventTime={!selectedMobileProject}
+                            showEventTime={false}
                             onDayClick={(dateStr) => handleDayClick(dateStr, selectedMobileProject?.id || null)}
                             onEventClick={handleEventClick}
                             hidePastWeeks={hidePastWeeks}
@@ -4023,7 +4127,7 @@ function ProjectDashboard({
     { id: 'team', icon: Users, label: 'Team Management' },
     { id: 'notes', icon: FileText, label: 'Team Notes' }
   ];
-  const canManageMembers = currentUser?.username === project.ownerUsername;
+  const canManageMembers = isProjectAccessibleByUser(project, currentUser);
 
   const persistTeamManagement = (
     membersInput,
@@ -4074,7 +4178,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can manage positions.',
+        message: 'Only project members can manage positions.',
       });
       return null;
     }
@@ -4124,7 +4228,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can manage departments.',
+        message: 'Only project members can manage departments.',
       });
       return null;
     }
@@ -4167,7 +4271,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can manage positions.',
+        message: 'Only project members can manage positions.',
       });
       return;
     }
@@ -4196,7 +4300,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can manage departments.',
+        message: 'Only project members can manage departments.',
       });
       return;
     }
@@ -4217,7 +4321,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can manage positions.',
+        message: 'Only project members can manage positions.',
       });
       return;
     }
@@ -4255,7 +4359,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can manage departments.',
+        message: 'Only project members can manage departments.',
       });
       return;
     }
@@ -4287,7 +4391,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can manage positions.',
+        message: 'Only project members can manage positions.',
       });
       return false;
     }
@@ -4332,7 +4436,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can manage departments.',
+        message: 'Only project members can manage departments.',
       });
       return false;
     }
@@ -4388,7 +4492,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can invite members.',
+        message: 'Only project members can invite new members.',
       });
       return;
     }
@@ -4422,7 +4526,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can remove members.',
+        message: 'Only project members can remove members.',
       });
       return;
     }
@@ -4586,7 +4690,7 @@ function ProjectDashboard({
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
-        message: 'Only project owner can edit organization structure.',
+        message: 'Only project members can edit organization structure.',
       });
       return;
     }
@@ -5211,7 +5315,7 @@ function ProjectDashboard({
                     <button
                       onClick={handleAddMember}
                       disabled={!canManageMembers}
-                      title={canManageMembers ? 'Invite member' : 'Only owner can invite members'}
+                      title={canManageMembers ? 'Invite member' : 'Only project member can invite'}
                       className={`w-full md:w-auto flex items-center justify-center gap-2 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm ${canManageMembers ? 'bg-blue-600 hover:bg-blue-700' : 'bg-blue-300 cursor-not-allowed'}`}
                     >
                       <Plus className="w-4 h-4" /> Add member
@@ -5235,7 +5339,7 @@ function ProjectDashboard({
                                     ? 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
                                     : 'text-gray-300 cursor-not-allowed'
                                 }`}
-                                title={canManageMembers ? 'Manage position options' : 'Only owner can manage'}
+                                title={canManageMembers ? 'Manage position options' : 'Only project members can manage'}
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
@@ -5253,7 +5357,7 @@ function ProjectDashboard({
                                     ? 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
                                     : 'text-gray-300 cursor-not-allowed'
                                 }`}
-                                title={canManageMembers ? 'Manage department options' : 'Only owner can manage'}
+                                title={canManageMembers ? 'Manage department options' : 'Only project members can manage'}
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
@@ -6037,6 +6141,7 @@ function NoteEditor({ noteId, noteTitle, initialContent, onSave }) {
   const editorRef = React.useRef(null);
   const uploadInputRef = React.useRef(null);
   const dragImageIdRef = React.useRef('');
+  const lastLoadedNoteIdRef = React.useRef('');
   const longPressTimerRef = React.useRef(null);
   const touchDragStateRef = React.useRef({
     imageId: '',
@@ -6408,11 +6513,13 @@ function NoteEditor({ noteId, noteTitle, initialContent, onSave }) {
   };
 
   React.useEffect(() => {
-    if (editorRef.current) {
-      editorRef.current.innerHTML = initialContent || '';
-      normalizeEditorImages();
-      setImageMenuState(null);
-    }
+    if (!editorRef.current) return;
+    if (lastLoadedNoteIdRef.current === noteId) return;
+
+    editorRef.current.innerHTML = initialContent || '';
+    normalizeEditorImages();
+    setImageMenuState(null);
+    lastLoadedNoteIdRef.current = noteId;
   }, [noteId, initialContent]);
 
   React.useEffect(() => {
@@ -6473,6 +6580,7 @@ function NoteEditor({ noteId, noteTitle, initialContent, onSave }) {
       <div
         ref={editorRef}
         contentEditable
+        dir="ltr"
         onInput={handleInput}
         onClick={handleEditorClick}
         onDragStart={handleEditorDragStart}
@@ -6491,7 +6599,7 @@ function NoteEditor({ noteId, noteTitle, initialContent, onSave }) {
         onTouchCancel={handleEditorTouchEnd}
         data-placeholder="Type your note... and upload images with the image button"
         className="rich-editor flex-1 p-6 outline-none overflow-y-auto text-gray-800 text-sm md:text-base leading-relaxed bg-white prose max-w-none"
-        style={{ minHeight: '300px' }}
+        style={{ minHeight: '300px', textAlign: 'left' }}
       ></div>
 
       {imageMenuState && (
@@ -6996,30 +7104,30 @@ function ProjectManagerModal({
                         Members: <span className="font-semibold text-gray-700">{members.length}</span>
                       </div>
 
-                      {isOwner ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={inviteInputs[project.id] || ''}
-                            onChange={(e) =>
-                              setInviteInputs((prev) => ({
-                                ...prev,
-                                [project.id]: e.target.value,
-                              }))
-                            }
-                            placeholder="Invite by username or email"
-                            className="flex-1 border rounded px-2 py-1.5 text-sm focus:outline-blue-500"
-                          />
-                          <button
-                            onClick={() => handleInvite(project.id)}
-                            className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded"
-                          >
-                            Invite
-                          </button>
-                        </div>
-                      ) : (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={inviteInputs[project.id] || ''}
+                          onChange={(e) =>
+                            setInviteInputs((prev) => ({
+                              ...prev,
+                              [project.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="Invite by username or email"
+                          className="flex-1 border rounded px-2 py-1.5 text-sm focus:outline-blue-500"
+                        />
+                        <button
+                          onClick={() => handleInvite(project.id)}
+                          className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded"
+                        >
+                          Invite
+                        </button>
+                      </div>
+
+                      {!isOwner && (
                         <div className="flex items-center justify-between gap-3">
-                          <p className="text-xs text-gray-400">Only creator can manage members and invitations.</p>
+                          <p className="text-xs text-gray-400">Project members can edit shared project settings.</p>
                           <button
                             type="button"
                             onClick={() => {
