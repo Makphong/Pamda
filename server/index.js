@@ -168,9 +168,14 @@ const shiftIsoDateByDays = (dateString, diffDays) => {
   return date.toISOString().slice(0, 10);
 };
 
-const normalizeGoogleCalendarEvent = (googleEvent) => {
+const normalizeGoogleCalendarEvent = (googleEvent, calendarContext = null) => {
   const googleEventId = String(googleEvent?.id || '').trim();
   if (!googleEventId) return null;
+  const calendarId = String(calendarContext?.id || 'primary').trim() || 'primary';
+  const calendarName =
+    String(calendarContext?.summary || calendarContext?.id || 'Google Calendar').trim() ||
+    'Google Calendar';
+  const calendarIdKey = calendarId.replace(/[^a-z0-9_-]/gi, '_');
 
   const startData = googleEvent?.start || {};
   const endData = googleEvent?.end || {};
@@ -207,8 +212,11 @@ const normalizeGoogleCalendarEvent = (googleEvent) => {
   if (!endDate || endDate < startDate) endDate = startDate;
 
   return {
-    id: `google-${googleEventId}`,
+    id: `google-${calendarIdKey}-${googleEventId}`,
     googleEventId,
+    iCalUID: String(googleEvent?.iCalUID || '').trim(),
+    calendarId,
+    calendarName,
     projectId: GOOGLE_CALENDAR_PROJECT_ID,
     source: 'google',
     readOnly: true,
@@ -239,22 +247,21 @@ const fetchGoogleProfileFromAccessToken = async (accessToken) => {
   };
 };
 
-const fetchGoogleCalendarEvents = async (accessToken, timeMin, timeMax) => {
-  const collected = [];
+const fetchGoogleCalendarList = async (accessToken) => {
+  const calendars = [];
   let pageToken = '';
 
   for (let page = 0; page < 10; page += 1) {
     const params = new URLSearchParams({
-      singleEvents: 'true',
-      orderBy: 'startTime',
-      timeMin,
-      timeMax,
-      maxResults: '2500',
+      minAccessRole: 'reader',
+      showDeleted: 'false',
+      showHidden: 'true',
+      maxResults: '250',
     });
     if (pageToken) params.set('pageToken', pageToken);
 
     const response = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
+      `https://www.googleapis.com/calendar/v3/users/me/calendarList?${params.toString()}`,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -263,21 +270,98 @@ const fetchGoogleCalendarEvents = async (accessToken, timeMin, timeMax) => {
     );
 
     if (!response.ok) {
-      throw new Error(`Google Calendar API request failed (${response.status}).`);
+      throw new Error(`Google Calendar list API request failed (${response.status}).`);
     }
 
     const payload = await response.json();
     const items = Array.isArray(payload?.items) ? payload.items : [];
     items.forEach((item) => {
-      const normalized = normalizeGoogleCalendarEvent(item);
-      if (normalized) collected.push(normalized);
+      const calendarId = String(item?.id || '').trim();
+      if (!calendarId) return;
+      calendars.push({
+        id: calendarId,
+        summary: String(item?.summary || calendarId).trim() || calendarId,
+        primary: item?.primary === true,
+      });
     });
 
     pageToken = String(payload?.nextPageToken || '').trim();
     if (!pageToken) break;
   }
 
-  return collected;
+  return calendars;
+};
+
+const fetchGoogleCalendarEvents = async (accessToken, timeMin, timeMax) => {
+  const calendars = await fetchGoogleCalendarList(accessToken);
+  const calendarsToFetch = calendars.length > 0 ? calendars.slice(0, 60) : [{ id: 'primary', summary: 'Primary' }];
+  const dedupeMap = new Map();
+
+  for (const calendar of calendarsToFetch) {
+    let pageToken = '';
+
+    for (let page = 0; page < 10; page += 1) {
+      const params = new URLSearchParams({
+        singleEvents: 'true',
+        orderBy: 'startTime',
+        timeMin,
+        timeMax,
+        maxResults: '2500',
+      });
+      if (pageToken) params.set('pageToken', pageToken);
+
+      const response = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
+          calendar.id
+        )}/events?${params.toString()}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        // Skip inaccessible calendars instead of failing whole merge view.
+        if (response.status === 403 || response.status === 404) {
+          console.warn(
+            `Skipping Google calendar "${calendar.id}" due to access error (${response.status}).`
+          );
+          break;
+        }
+        throw new Error(`Google Calendar API request failed (${response.status}).`);
+      }
+
+      const payload = await response.json();
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      items.forEach((item) => {
+        const normalized = normalizeGoogleCalendarEvent(item, calendar);
+        if (!normalized) return;
+
+        const dedupeKey = [
+          normalized.iCalUID || normalized.googleEventId,
+          normalized.startDate,
+          normalized.endDate,
+          normalized.startTime,
+          normalized.endTime,
+          normalized.title,
+        ].join('|');
+
+        if (!dedupeMap.has(dedupeKey)) {
+          dedupeMap.set(dedupeKey, normalized);
+        }
+      });
+
+      pageToken = String(payload?.nextPageToken || '').trim();
+      if (!pageToken) break;
+    }
+  }
+
+  return Array.from(dedupeMap.values()).sort((a, b) => {
+    const aKey = `${a.startDate}T${a.startTime}`;
+    const bKey = `${b.startDate}T${b.startTime}`;
+    return aKey.localeCompare(bKey);
+  });
 };
 
 const sendGoogleCalendarPopupResponse = (res, payload) => {
