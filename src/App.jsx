@@ -291,6 +291,39 @@ const isInviteForUser = (invite, user) => {
   return false;
 };
 
+const isProjectAccessibleByUser = (project, user) => {
+  if (!project || !user) return false;
+
+  const userId = String(user?.id || '').trim();
+  const username = String(user?.username || '').trim().toLowerCase();
+  const email = String(user?.email || '').trim().toLowerCase();
+
+  const ownerId = String(project?.ownerId || '').trim();
+  const ownerUsername = String(project?.ownerUsername || '').trim().toLowerCase();
+  if ((userId && ownerId === userId) || (username && ownerUsername === username)) {
+    return true;
+  }
+
+  const projectMembers = Array.isArray(project?.members)
+    ? project.members.map((member) => String(member || '').trim().toLowerCase())
+    : [];
+  if ((username && projectMembers.includes(username)) || (email && projectMembers.includes(email))) {
+    return true;
+  }
+
+  const teamMembers = Array.isArray(project?.teamMembers) ? project.teamMembers : [];
+  return teamMembers.some((member) => {
+    const memberId = String(member?.id || member?.userId || '').trim();
+    const memberUsername = String(member?.username || member?.name || '').trim().toLowerCase();
+    const memberEmail = String(member?.email || '').trim().toLowerCase();
+    return (
+      (userId && memberId === userId) ||
+      (username && memberUsername === username) ||
+      (email && memberEmail === email)
+    );
+  });
+};
+
 const normalizeLastVisitedView = (value) => {
   if (!value || typeof value !== 'object') {
     return { ...DEFAULT_LAST_VISITED_VIEW };
@@ -1907,6 +1940,16 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [isGoogleCalendarCalendarsLoading, setIsGoogleCalendarCalendarsLoading] = useState(false);
   const [isGoogleCalendarSelectionSaving, setIsGoogleCalendarSelectionSaving] = useState(false);
   const [isGoogleCalendarEventsLoading, setIsGoogleCalendarEventsLoading] = useState(false);
+  const projectsRef = useRef(projects);
+  const eventsRef = useRef(events);
+
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -2416,18 +2459,43 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     const refreshCollaborativeSnapshot = async () => {
       try {
-        const latestPayload = await loadAccountDbPayload(currentUser.id);
+        const [latestPayload, latestInvites] = await Promise.all([
+          loadAccountDbPayload(currentUser.id),
+          loadProjectInvitesStore(),
+        ]);
         if (isCancelled) return;
 
+        const normalizedInvites = Array.isArray(latestInvites)
+          ? latestInvites.map(normalizeProjectInvite)
+          : [];
+        setProjectInvitations((prevInvites) =>
+          isJsonEqual(prevInvites, normalizedInvites) ? prevInvites : normalizedInvites
+        );
+
+        const localProjectsSnapshot = Array.isArray(projectsRef.current)
+          ? projectsRef.current.map((project) => ensureProjectOwnership(project, currentUser))
+          : [];
+        const localEventsSnapshot = Array.isArray(eventsRef.current) ? eventsRef.current : [];
         const baseProjects = Array.isArray(latestPayload.projects)
           ? latestPayload.projects.map((project) => ensureProjectOwnership(project, currentUser))
           : [];
         const baseEvents = Array.isArray(latestPayload.events) ? latestPayload.events : [];
+        const invitedOwnerIds = normalizedInvites
+          .filter(
+            (invite) =>
+              invite.status !== PROJECT_INVITE_STATUSES.DECLINED &&
+              isInviteForUser(invite, currentUser)
+          )
+          .map((invite) => String(invite.ownerId || '').trim())
+          .filter(Boolean);
         const ownerIds = Array.from(
           new Set(
-            baseProjects
-              .map((project) => String(project.ownerId || '').trim())
-              .filter((ownerId) => ownerId && ownerId !== currentUser.id)
+            [
+              ...baseProjects
+                .map((project) => String(project.ownerId || '').trim())
+                .filter((ownerId) => ownerId && ownerId !== currentUser.id),
+              ...invitedOwnerIds,
+            ].filter(Boolean)
           )
         );
 
@@ -2462,28 +2530,83 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           });
         });
 
+        const baseEventsByProjectId = new Map();
+        baseEvents.forEach((event) => {
+          const projectId = String(event?.projectId || '').trim();
+          if (!projectId) return;
+          if (!baseEventsByProjectId.has(projectId)) {
+            baseEventsByProjectId.set(projectId, []);
+          }
+          baseEventsByProjectId.get(projectId).push(event);
+        });
+
         const localVisibilityByProjectId = new Map(
-          projects.map((project) => [project.id, Boolean(project.isVisible)])
+          localProjectsSnapshot.map((project) => [project.id, Boolean(project.isVisible)])
         );
+        const nextProjectsById = new Map();
 
-        const nextProjects = baseProjects.map((project) => {
-          if (project.ownerId === currentUser.id) return project;
+        baseProjects.forEach((project) => {
+          const projectId = String(project?.id || '').trim();
+          if (!projectId) return;
 
-          const ownerProject = ownerProjectById.get(project.id);
-          if (!ownerProject) return project;
+          if (project.ownerId === currentUser.id) {
+            nextProjectsById.set(projectId, project);
+            return;
+          }
 
-          const preservedVisibility = localVisibilityByProjectId.get(project.id);
-          return ensureProjectOwnership(
-            {
-              ...ownerProject,
-              isVisible:
-                typeof preservedVisibility === 'boolean'
-                  ? preservedVisibility
-                  : Boolean(ownerProject.isVisible),
-            },
-            currentUser
+          const ownerProject = ownerProjectById.get(projectId);
+          if (!ownerProject) {
+            nextProjectsById.set(projectId, project);
+            return;
+          }
+
+          const preservedVisibility = localVisibilityByProjectId.get(projectId);
+          nextProjectsById.set(
+            projectId,
+            ensureProjectOwnership(
+              {
+                ...ownerProject,
+                isVisible:
+                  typeof preservedVisibility === 'boolean'
+                    ? preservedVisibility
+                    : Boolean(ownerProject.isVisible),
+              },
+              currentUser
+            )
           );
         });
+
+        localProjectsSnapshot.forEach((project) => {
+          const projectId = String(project?.id || '').trim();
+          if (!projectId || project.ownerId !== currentUser.id) return;
+          if (!nextProjectsById.has(projectId)) {
+            nextProjectsById.set(projectId, project);
+          }
+        });
+
+        ownerProjectById.forEach((ownerProject, projectId) => {
+          if (!projectId || nextProjectsById.has(projectId)) return;
+          const normalizedOwnerProject = ensureProjectOwnership(ownerProject, currentUser);
+          if (normalizedOwnerProject.ownerId === currentUser.id) return;
+          if (!isProjectAccessibleByUser(normalizedOwnerProject, currentUser)) return;
+
+          const preservedVisibility = localVisibilityByProjectId.get(projectId);
+          nextProjectsById.set(
+            projectId,
+            ensureProjectOwnership(
+              {
+                ...normalizedOwnerProject,
+                isVisible:
+                  typeof preservedVisibility === 'boolean'
+                    ? preservedVisibility
+                    : Boolean(normalizedOwnerProject.isVisible),
+              },
+              currentUser
+            )
+          );
+        });
+
+        const nextProjects = Array.from(nextProjectsById.values());
 
         const ownedProjectIds = new Set(
           nextProjects
@@ -2493,13 +2616,24 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
         const mergedEvents = [
           ...baseEvents.filter((event) => ownedProjectIds.has(event.projectId)),
+          ...localEventsSnapshot.filter((event) => ownedProjectIds.has(event.projectId)),
         ];
 
         nextProjects.forEach((project) => {
           if (project.ownerId === currentUser.id) return;
-          const sharedEvents = ownerEventsByProjectId.get(project.id);
-          if (!Array.isArray(sharedEvents) || sharedEvents.length === 0) return;
-          mergedEvents.push(...sharedEvents);
+          const projectId = String(project?.id || '').trim();
+          if (!projectId) return;
+
+          const sharedEvents = ownerEventsByProjectId.get(projectId);
+          if (Array.isArray(sharedEvents) && sharedEvents.length > 0) {
+            mergedEvents.push(...sharedEvents);
+            return;
+          }
+
+          const cachedSharedEvents = baseEventsByProjectId.get(projectId);
+          if (Array.isArray(cachedSharedEvents) && cachedSharedEvents.length > 0) {
+            mergedEvents.push(...cachedSharedEvents);
+          }
         });
 
         const dedupedEventsMap = new Map();
@@ -2552,7 +2686,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isAccountDataHydrated, currentUser, projects]);
+  }, [isAccountDataHydrated, currentUser]);
 
   useEffect(() => {
     if (!isCompactViewport) return;
