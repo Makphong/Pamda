@@ -6508,7 +6508,9 @@ function MonthGrid({
           });
 
           const laneHeight = 22;
-          const rowMinHeight = 96 + laneEnds.length * laneHeight;
+          const rowMinHeight = 96;
+          const maxVisibleLanes = Math.max(1, Math.floor((rowMinHeight - 8) / laneHeight));
+          const visibleWeekSegments = weekSegments.filter((segment) => segment.lane < maxVisibleLanes);
 
           return (
             <div key={`week-${weekIdx}`} className="relative">
@@ -6549,9 +6551,9 @@ function MonthGrid({
                 })}
               </div>
 
-              {weekSegments.length > 0 && (
+              {visibleWeekSegments.length > 0 && (
                 <div className="pointer-events-none absolute left-0 right-0 top-6 px-[2px]">
-                  {weekSegments.map((segment, segmentIndex) => {
+                  {visibleWeekSegments.map((segment, segmentIndex) => {
                     const leftPercent = (segment.startIdx / 7) * 100;
                     const widthPercent = ((segment.endIdx - segment.startIdx + 1) / 7) * 100;
                     const showTimePrefix = showEventTime && segment.event.startDate === segment.startDate;
