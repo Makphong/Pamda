@@ -304,6 +304,14 @@ const normalizeLastVisitedView = (value) => {
   return { type, projectId };
 };
 
+const isJsonEqual = (left, right) => {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+};
+
 const postAuthApi = async (path, payload) => {
   if (!AUTH_API_BASE_URL) {
     throw new Error('Auth API is not configured. Set VITE_AUTH_API_BASE_URL or AUTH_API_BASE_URL.');
@@ -2226,6 +2234,151 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   ]);
 
   useEffect(() => {
+    if (!AUTH_API_BASE_URL || !isAccountDataHydrated) return undefined;
+
+    let isCancelled = false;
+
+    const refreshCollaborativeSnapshot = async () => {
+      try {
+        const latestPayload = await loadAccountDbPayload(currentUser.id);
+        if (isCancelled) return;
+
+        const baseProjects = Array.isArray(latestPayload.projects)
+          ? latestPayload.projects.map((project) => ensureProjectOwnership(project, currentUser))
+          : [];
+        const baseEvents = Array.isArray(latestPayload.events) ? latestPayload.events : [];
+        const ownerIds = Array.from(
+          new Set(
+            baseProjects
+              .map((project) => String(project.ownerId || '').trim())
+              .filter((ownerId) => ownerId && ownerId !== currentUser.id)
+          )
+        );
+
+        const ownerPayloads = await Promise.all(
+          ownerIds.map(async (ownerId) => {
+            try {
+              const payload = await loadAccountDbPayload(ownerId);
+              return [ownerId, payload];
+            } catch (error) {
+              console.warn(`Failed to load shared owner payload (${ownerId}):`, error.message);
+              return [ownerId, null];
+            }
+          })
+        );
+        if (isCancelled) return;
+
+        const ownerProjectById = new Map();
+        const ownerEventsByProjectId = new Map();
+
+        ownerPayloads.forEach(([, payload]) => {
+          const ownerProjects = Array.isArray(payload?.projects) ? payload.projects : [];
+          const ownerEvents = Array.isArray(payload?.events) ? payload.events : [];
+
+          ownerProjects.forEach((project) => {
+            const projectId = String(project?.id || '').trim();
+            if (!projectId) return;
+            ownerProjectById.set(projectId, project);
+            ownerEventsByProjectId.set(
+              projectId,
+              ownerEvents.filter((event) => event.projectId === projectId)
+            );
+          });
+        });
+
+        const localVisibilityByProjectId = new Map(
+          projects.map((project) => [project.id, Boolean(project.isVisible)])
+        );
+
+        const nextProjects = baseProjects.map((project) => {
+          if (project.ownerId === currentUser.id) return project;
+
+          const ownerProject = ownerProjectById.get(project.id);
+          if (!ownerProject) return project;
+
+          const preservedVisibility = localVisibilityByProjectId.get(project.id);
+          return ensureProjectOwnership(
+            {
+              ...ownerProject,
+              isVisible:
+                typeof preservedVisibility === 'boolean'
+                  ? preservedVisibility
+                  : Boolean(ownerProject.isVisible),
+            },
+            currentUser
+          );
+        });
+
+        const ownedProjectIds = new Set(
+          nextProjects
+            .filter((project) => project.ownerId === currentUser.id)
+            .map((project) => project.id)
+        );
+
+        const mergedEvents = [
+          ...baseEvents.filter((event) => ownedProjectIds.has(event.projectId)),
+        ];
+
+        nextProjects.forEach((project) => {
+          if (project.ownerId === currentUser.id) return;
+          const sharedEvents = ownerEventsByProjectId.get(project.id);
+          if (!Array.isArray(sharedEvents) || sharedEvents.length === 0) return;
+          mergedEvents.push(...sharedEvents);
+        });
+
+        const dedupedEventsMap = new Map();
+        mergedEvents.forEach((event) => {
+          const dedupeKey = event?.id
+            ? `id:${event.id}`
+            : `f:${event?.projectId || ''}|${event?.title || ''}|${event?.startDate || ''}|${event?.endDate || ''}|${event?.startTime || ''}|${event?.endTime || ''}`;
+          dedupedEventsMap.set(dedupeKey, event);
+        });
+        const nextEvents = Array.from(dedupedEventsMap.values());
+
+        setProjects((prevProjects) => (isJsonEqual(prevProjects, nextProjects) ? prevProjects : nextProjects));
+        setEvents((prevEvents) => (isJsonEqual(prevEvents, nextEvents) ? prevEvents : nextEvents));
+      } catch (error) {
+        if (!isCancelled) {
+          console.warn('Failed to refresh collaborative snapshot from cloud:', error.message);
+        }
+      }
+    };
+
+    const runRefresh = () => {
+      void refreshCollaborativeSnapshot();
+    };
+
+    const refreshInterval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        runRefresh();
+      }
+    }, 15000);
+
+    const handleFocus = () => {
+      if (document.visibilityState === 'visible') {
+        runRefresh();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        runRefresh();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    runRefresh();
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(refreshInterval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isAccountDataHydrated, currentUser, projects]);
+
+  useEffect(() => {
     if (!isCompactViewport) return;
     if (selectedMobileProject) return;
     if (mobileCalendarProjectId === null) return;
@@ -2352,6 +2505,56 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     }
   };
 
+  const syncSharedProjectEventsToOwner = async (
+    projectId,
+    nextEventsSnapshot,
+    projectsSnapshot = projects
+  ) => {
+    if (!AUTH_API_BASE_URL) return;
+
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) return;
+
+    const targetProject = projectsSnapshot.find((project) => project.id === normalizedProjectId);
+    if (!targetProject) return;
+
+    const ownerId = String(targetProject.ownerId || '').trim();
+    if (!ownerId || ownerId === currentUser.id) return;
+
+    try {
+      const ownerPayload = await loadAccountDbPayload(ownerId);
+      const ownerEvents = Array.isArray(ownerPayload.events) ? ownerPayload.events : [];
+      const sharedProjectEvents = (Array.isArray(nextEventsSnapshot) ? nextEventsSnapshot : []).filter(
+        (event) => event.projectId === normalizedProjectId
+      );
+      const nextOwnerEvents = [
+        ...ownerEvents.filter((event) => event.projectId !== normalizedProjectId),
+        ...sharedProjectEvents,
+      ];
+
+      await saveAccountDbPayload(ownerId, {
+        ...ownerPayload,
+        events: nextOwnerEvents,
+      });
+    } catch (error) {
+      console.warn('Failed to sync shared project events to owner payload:', error.message);
+    }
+  };
+
+  const syncSharedEventsForProjects = (projectIds, nextEventsSnapshot, projectsSnapshot = projects) => {
+    const uniqueProjectIds = Array.from(
+      new Set(
+        (Array.isArray(projectIds) ? projectIds : [])
+          .map((projectId) => String(projectId || '').trim())
+          .filter(Boolean)
+      )
+    );
+
+    uniqueProjectIds.forEach((projectId) => {
+      void syncSharedProjectEventsToOwner(projectId, nextEventsSnapshot, projectsSnapshot);
+    });
+  };
+
   const handleDayClick = (dateStr, projectId) => {
     setEditingEvent(null);
     setSelectedDateForNewEvent(dateStr);
@@ -2432,25 +2635,39 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
   const saveEvent = (eventData) => {
     if (editingEvent) {
-      setEvents(events.map(ev => ev.id === editingEvent.id ? { ...ev, ...eventData } : ev));
+      const nextEvents = events.map((event) =>
+        event.id === editingEvent.id ? { ...event, ...eventData } : event
+      );
+      setEvents(nextEvents);
+      syncSharedEventsForProjects([editingEvent.projectId, eventData.projectId], nextEvents);
     } else {
-      setEvents([...events, { 
-        ...eventData, 
+      const createdEvent = {
+        ...eventData,
         id: generateId(),
         status: 'To Do',
         department: 'Unassigned',
-        assigneeId: 'u' + (Math.floor(Math.random() * 5) + 1) // สุ่ม Assign คนรับผิดชอบ (Mock)
-      }]);
+        assigneeId: 'u' + (Math.floor(Math.random() * 5) + 1),
+      };
+      const nextEvents = [...events, createdEvent];
+      setEvents(nextEvents);
+      syncSharedEventsForProjects([createdEvent.projectId], nextEvents);
     }
     setShowEventModal(false);
   };
 
   const updateEvent = (eventId, updates) => {
-    setEvents(events.map(ev => ev.id === eventId ? { ...ev, ...updates } : ev));
+    const existingEvent = events.find((event) => event.id === eventId) || null;
+    const nextEvents = events.map((event) => (event.id === eventId ? { ...event, ...updates } : event));
+    setEvents(nextEvents);
+    const updatedEvent = nextEvents.find((event) => event.id === eventId) || null;
+    syncSharedEventsForProjects([existingEvent?.projectId, updatedEvent?.projectId], nextEvents);
   };
 
   const deleteEvent = (eventId) => {
-    setEvents(events.filter(ev => ev.id !== eventId));
+    const targetEvent = events.find((event) => event.id === eventId) || null;
+    const nextEvents = events.filter((event) => event.id !== eventId);
+    setEvents(nextEvents);
+    syncSharedEventsForProjects([targetEvent?.projectId], nextEvents);
     setShowEventModal(false);
   };
 
@@ -6797,6 +7014,7 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
     </div>
   );
 }
+
 
 
 
