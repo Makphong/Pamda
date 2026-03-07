@@ -30,6 +30,7 @@ import {
   Activity,
   ChevronDown,
   MoreHorizontal,
+  RefreshCw,
   Image as ImageIcon,
   Bold,
   Italic,
@@ -73,9 +74,64 @@ const STARTUP_VIEW_MODES = {
   LAST: 'last',
 };
 const VALID_STARTUP_VIEWS = new Set(Object.values(STARTUP_VIEW_MODES));
+const PROJECT_DASHBOARD_TABS = ['organization', 'tasks', 'team', 'notes'];
+const DEFAULT_PROJECT_DASHBOARD_TAB = PROJECT_DASHBOARD_TABS[0];
+const PROJECT_DASHBOARD_TAB_SET = new Set(PROJECT_DASHBOARD_TABS);
 const DEFAULT_LAST_VISITED_VIEW = {
   type: STARTUP_VIEW_MODES.CALENDAR,
   projectId: null,
+  projectTab: DEFAULT_PROJECT_DASHBOARD_TAB,
+};
+const normalizeProjectDashboardTab = (value) =>
+  PROJECT_DASHBOARD_TAB_SET.has(value) ? value : DEFAULT_PROJECT_DASHBOARD_TAB;
+const normalizeProjectJoinCodeSecret = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+const hashToBase36 = (value) => {
+  const source = String(value || '');
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36).toUpperCase();
+};
+const deriveProjectJoinCodeSecret = (project) => {
+  const ownerId = String(project?.ownerId || '').trim();
+  const projectId = String(project?.id || '').trim();
+  const base = hashToBase36(`${ownerId}|${projectId}`).replace(/[^A-Z0-9]/g, '');
+  return base.padEnd(8, '0').slice(0, 8);
+};
+const ensureProjectJoinCodeSecret = (project) => {
+  const explicitSecret = normalizeProjectJoinCodeSecret(project?.joinCodeSecret);
+  if (explicitSecret) return explicitSecret.slice(0, 16);
+  return deriveProjectJoinCodeSecret(project);
+};
+const generateProjectJoinCodeSecret = () => {
+  const randomLeft = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const randomRight = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `${randomLeft}${randomRight}`.slice(0, 12);
+};
+const buildProjectJoinCode = (project) => {
+  const ownerId = String(project?.ownerId || '').trim();
+  const projectId = String(project?.id || '').trim();
+  const secret = ensureProjectJoinCodeSecret(project);
+  if (!ownerId || !projectId || !secret) return '';
+  return `PJC.${ownerId}.${projectId}.${secret}`;
+};
+const parseProjectJoinCode = (value) => {
+  const normalized = String(value || '').trim().replace(/\s+/g, '');
+  if (!normalized) return null;
+  const segments = normalized.split('.');
+  if (segments.length !== 4) return null;
+  const [prefixRaw, ownerIdRaw, projectIdRaw, secretRaw] = segments;
+  const prefix = String(prefixRaw || '').trim().toUpperCase();
+  const ownerId = String(ownerIdRaw || '').trim();
+  const projectId = String(projectIdRaw || '').trim();
+  const secret = normalizeProjectJoinCodeSecret(secretRaw);
+  if (prefix !== 'PJC' || !ownerId || !projectId || !secret) return null;
+  return { ownerId, projectId, secret };
 };
 const getRuntimeConfig = () => {
   if (typeof window === 'undefined') return {};
@@ -343,8 +399,12 @@ const normalizeLastVisitedView = (value) => {
       ? STARTUP_VIEW_MODES.PROJECT
       : STARTUP_VIEW_MODES.CALENDAR;
   const projectId = type === STARTUP_VIEW_MODES.PROJECT ? String(value.projectId || '').trim() || null : null;
+  const projectTab =
+    type === STARTUP_VIEW_MODES.PROJECT
+      ? normalizeProjectDashboardTab(value.projectTab)
+      : DEFAULT_PROJECT_DASHBOARD_TAB;
 
-  return { type, projectId };
+  return { type, projectId, projectTab };
 };
 
 const isJsonEqual = (left, right) => {
@@ -765,12 +825,14 @@ const ensureProjectOwnership = (project, owner) => {
   const members = Array.isArray(project.members) ? project.members.filter(Boolean) : [];
   const ownerUsername = project.ownerUsername || owner.username;
   const mergedMembers = members.includes(ownerUsername) ? members : [ownerUsername, ...members];
+  const joinCodeSecret = ensureProjectJoinCodeSecret(project);
 
   return {
     ...project,
     ownerId: project.ownerId || owner.id,
     ownerUsername,
     members: Array.from(new Set(mergedMembers)),
+    joinCodeSecret,
   };
 };
 
@@ -1917,6 +1979,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   
   // Project Dashboard Navigation
   const [activeDashboardProjectId, setActiveDashboardProjectId] = useState(null);
+  const [activeDashboardTab, setActiveDashboardTab] = useState(DEFAULT_PROJECT_DASHBOARD_TAB);
   const [isProfileViewOpen, setIsProfileViewOpen] = useState(false);
 
   // Data for Event Modal
@@ -1933,7 +1996,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     return { start, end };
   });
   const [hidePastWeeks, setHidePastWeeks] = useState(true);
-  const [startupView, setStartupView] = useState(STARTUP_VIEW_MODES.CALENDAR);
+  const [startupView, setStartupView] = useState(STARTUP_VIEW_MODES.LAST);
   const [lastVisitedView, setLastVisitedView] = useState(() => ({ ...DEFAULT_LAST_VISITED_VIEW }));
   const [hasAppliedStartupView, setHasAppliedStartupView] = useState(false);
   const [projectInvitations, setProjectInvitations] = useState(() =>
@@ -2016,7 +2079,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         if (VALID_STARTUP_VIEWS.has(accountPayload.startupView)) {
           setStartupView(accountPayload.startupView);
         } else {
-          setStartupView(STARTUP_VIEW_MODES.CALENDAR);
+          setStartupView(STARTUP_VIEW_MODES.LAST);
         }
 
         setLastVisitedView(normalizeLastVisitedView(accountPayload.lastVisitedView));
@@ -2024,7 +2087,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         if (isCancelled) return;
         setProjects([]);
         setEvents([]);
-        setStartupView(STARTUP_VIEW_MODES.CALENDAR);
+        setStartupView(STARTUP_VIEW_MODES.LAST);
         setLastVisitedView({ ...DEFAULT_LAST_VISITED_VIEW });
       } finally {
         if (!isCancelled) {
@@ -2295,6 +2358,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     };
 
     let nextProjectId = null;
+    let nextProjectTab = DEFAULT_PROJECT_DASHBOARD_TAB;
 
     if (startupView === STARTUP_VIEW_MODES.PROJECT) {
       nextProjectId = getProjectForProjectStartup();
@@ -2304,9 +2368,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     ) {
       const savedProjectId = String(lastVisitedView.projectId || '').trim();
       nextProjectId = projects.some((project) => project.id === savedProjectId) ? savedProjectId : null;
+      nextProjectTab = normalizeProjectDashboardTab(lastVisitedView.projectTab);
     }
 
     setActiveDashboardProjectId(nextProjectId);
+    setActiveDashboardTab(nextProjectTab);
     setHasAppliedStartupView(true);
   }, [isAccountDataHydrated, hasAppliedStartupView, startupView, lastVisitedView, projects]);
 
@@ -2315,18 +2381,35 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     setLastVisitedView((prev) => {
       if (activeDashboardProjectId) {
-        if (prev.type === STARTUP_VIEW_MODES.PROJECT && prev.projectId === activeDashboardProjectId) {
+        const normalizedProjectTab = normalizeProjectDashboardTab(activeDashboardTab);
+        if (
+          prev.type === STARTUP_VIEW_MODES.PROJECT &&
+          prev.projectId === activeDashboardProjectId &&
+          normalizeProjectDashboardTab(prev.projectTab) === normalizedProjectTab
+        ) {
           return prev;
         }
-        return { type: STARTUP_VIEW_MODES.PROJECT, projectId: activeDashboardProjectId };
+        return {
+          type: STARTUP_VIEW_MODES.PROJECT,
+          projectId: activeDashboardProjectId,
+          projectTab: normalizedProjectTab,
+        };
       }
 
-      if (prev.type === STARTUP_VIEW_MODES.CALENDAR && prev.projectId === null) {
+      if (
+        prev.type === STARTUP_VIEW_MODES.CALENDAR &&
+        prev.projectId === null &&
+        normalizeProjectDashboardTab(prev.projectTab) === DEFAULT_PROJECT_DASHBOARD_TAB
+      ) {
         return prev;
       }
-      return { type: STARTUP_VIEW_MODES.CALENDAR, projectId: null };
+      return {
+        type: STARTUP_VIEW_MODES.CALENDAR,
+        projectId: null,
+        projectTab: DEFAULT_PROJECT_DASHBOARD_TAB,
+      };
     });
-  }, [isAccountDataHydrated, hasAppliedStartupView, activeDashboardProjectId]);
+  }, [isAccountDataHydrated, hasAppliedStartupView, activeDashboardProjectId, activeDashboardTab]);
 
   // Current week calculation
   const currentWeekStart = useMemo(() => {
@@ -2980,6 +3063,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     }
 
     if (mobileCalendarProjectId === projectId) {
+      setActiveDashboardTab(DEFAULT_PROJECT_DASHBOARD_TAB);
       setActiveDashboardProjectId(projectId);
       return;
     }
@@ -3112,10 +3196,119 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         milestones: [],
         ownerId: currentUser.id,
         ownerUsername: currentUser.username,
-        members: [currentUser.username]
+        members: [currentUser.username],
+        joinCodeSecret: generateProjectJoinCodeSecret(),
       };
       setProjects([...projects, newProject]);
     }
+  };
+
+  const regenerateProjectJoinCode = (projectId) => {
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) {
+      return { ok: false, message: 'Project not found.' };
+    }
+
+    let result = { ok: false, message: 'Project not found.' };
+    setProjects((prevProjects) => {
+      let didUpdate = false;
+      const nextProjects = prevProjects.map((project) => {
+        if (String(project?.id || '').trim() !== normalizedProjectId) return project;
+        if (String(project?.ownerId || '').trim() !== currentUser.id) {
+          result = { ok: false, message: 'Only the project creator can refresh project code.' };
+          return project;
+        }
+        didUpdate = true;
+        const nextProject = {
+          ...project,
+          joinCodeSecret: generateProjectJoinCodeSecret(),
+        };
+        result = {
+          ok: true,
+          message: 'Project code has been refreshed. Older code can no longer be used.',
+          code: buildProjectJoinCode(nextProject),
+        };
+        return nextProject;
+      });
+
+      if (didUpdate) {
+        syncSharedProjectDetailsForProjects([normalizedProjectId], nextProjects);
+      }
+
+      return nextProjects;
+    });
+
+    return result;
+  };
+
+  const joinProjectByCode = async (codeInput) => {
+    const parsedCode = parseProjectJoinCode(codeInput);
+    if (!parsedCode) {
+      return { ok: false, message: 'Invalid project code format.' };
+    }
+
+    const { ownerId, projectId, secret } = parsedCode;
+    const ownerPayload = await loadAccountDbPayload(ownerId);
+    const ownerProjects = Array.isArray(ownerPayload.projects) ? ownerPayload.projects : [];
+    const ownerProjectIndex = ownerProjects.findIndex(
+      (project) => String(project?.id || '').trim() === projectId
+    );
+    if (ownerProjectIndex < 0) {
+      return { ok: false, message: 'Project code is invalid or project no longer exists.' };
+    }
+
+    const ownerProject = ownerProjects[ownerProjectIndex];
+    const ownerReference = {
+      id: ownerId,
+      username:
+        String(ownerProject?.ownerUsername || '').trim().toLowerCase() ||
+        String(currentUser.username || '').trim().toLowerCase(),
+    };
+    const normalizedOwnerProject = ensureProjectOwnership(ownerProject, ownerReference);
+    const expectedSecret = ensureProjectJoinCodeSecret(normalizedOwnerProject);
+    if (expectedSecret !== secret) {
+      return { ok: false, message: 'This project code has expired. Ask owner for a new code.' };
+    }
+
+    if (isProjectAccessibleByUser(normalizedOwnerProject, currentUser)) {
+      return { ok: false, message: `You are already a member of "${normalizedOwnerProject.name}".` };
+    }
+
+    const nextOwnerProject = addProjectMemberRecord(normalizedOwnerProject, currentUser);
+    const nextOwnerProjects = [...ownerProjects];
+    nextOwnerProjects[ownerProjectIndex] = nextOwnerProject;
+    await saveAccountDbPayload(ownerId, {
+      ...ownerPayload,
+      projects: nextOwnerProjects,
+    });
+
+    const ownerEvents = Array.isArray(ownerPayload.events) ? ownerPayload.events : [];
+    const acceptedProjectEvents = ownerEvents.filter(
+      (event) => String(event?.projectId || '').trim() === projectId
+    );
+
+    setProjects((prevProjects) => {
+      const existing = prevProjects.find((project) => project.id === nextOwnerProject.id);
+      if (existing) {
+        return prevProjects.map((project) =>
+          project.id === nextOwnerProject.id
+            ? { ...nextOwnerProject, isVisible: Boolean(existing.isVisible) }
+            : project
+        );
+      }
+
+      const visibleCount = prevProjects.filter((project) => project.isVisible).length;
+      return [...prevProjects, { ...nextOwnerProject, isVisible: visibleCount < 4 }];
+    });
+    setEvents((prevEvents) => {
+      const remaining = prevEvents.filter((event) => event.projectId !== nextOwnerProject.id);
+      return [...remaining, ...acceptedProjectEvents];
+    });
+
+    return {
+      ok: true,
+      message: `Joined project "${nextOwnerProject.name}" successfully.`,
+    };
   };
 
   const updateProjectDetails = (projectId, updates) => {
@@ -3136,6 +3329,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           delete safeUpdates.name;
           delete safeUpdates.ownerId;
           delete safeUpdates.ownerUsername;
+          delete safeUpdates.joinCodeSecret;
         }
 
         return ensureProjectOwnership({ ...project, ...safeUpdates }, currentUser);
@@ -3551,6 +3745,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           onDeleteTask={deleteEvent}
           onUpdateProject={updateProjectDetails}
           onInviteMember={inviteMemberToProject}
+          activeTab={activeDashboardTab}
+          onActiveTabChange={setActiveDashboardTab}
         />
       );
     }
@@ -3699,7 +3895,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                     {visibleProjects.map((project) => (
                       <div
                         key={project.id}
-                        onClick={() => setActiveDashboardProjectId(project.id)}
+                        onClick={() => {
+                          setActiveDashboardTab(DEFAULT_PROJECT_DASHBOARD_TAB);
+                          setActiveDashboardProjectId(project.id);
+                        }}
                         className="flex-1 text-center border-r last:border-r-0 relative overflow-hidden cursor-pointer hover:bg-blue-50 transition-colors group flex flex-col items-center justify-center h-14"
                       >
                         <div className={`absolute top-0 left-0 w-full h-1 ${PROJECT_COLORS[project.colorIndex].bg}`}></div>
@@ -3822,6 +4021,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           onDeleteProject={deleteProject}
           onLeaveProject={leaveProject}
           onInviteMember={inviteMemberToProject}
+          onJoinProjectByCode={joinProjectByCode}
+          onRegenerateProjectCode={regenerateProjectJoinCode}
           displayRange={displayRange}
           setDisplayRange={setDisplayRange}
           hidePastWeeks={hidePastWeeks}
@@ -4067,10 +4268,21 @@ function ProjectDashboard({
   onDeleteTask,
   onUpdateProject,
   onInviteMember,
+  activeTab: activeTabProp,
+  onActiveTabChange,
 }) {
   const popup = usePopup();
   // เปลี่ยนค่าเริ่มต้นให้เปิดหน้า Project Organization เป็นอันดับแรก
-  const [activeTab, setActiveTab] = useState('organization'); 
+  const [activeTabLocal, setActiveTabLocal] = useState(DEFAULT_PROJECT_DASHBOARD_TAB);
+  const activeTab = normalizeProjectDashboardTab(activeTabProp ?? activeTabLocal);
+  const setActiveTab = (nextTab) => {
+    const normalizedTab = normalizeProjectDashboardTab(nextTab);
+    if (typeof onActiveTabChange === 'function') {
+      onActiveTabChange(normalizedTab);
+      return;
+    }
+    setActiveTabLocal(normalizedTab);
+  };
   const projectColor = PROJECT_COLORS[project.colorIndex] || PROJECT_COLORS[0];
 
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
@@ -4127,6 +4339,18 @@ function ProjectDashboard({
     { id: 'team', icon: Users, label: 'Team Management' },
     { id: 'notes', icon: FileText, label: 'Team Notes' }
   ];
+
+  useEffect(() => {
+    if (typeof onActiveTabChange === 'function') {
+      const normalizedTab = normalizeProjectDashboardTab(activeTabProp);
+      if (activeTabProp !== normalizedTab) {
+        onActiveTabChange(normalizedTab);
+      }
+      return;
+    }
+    setActiveTabLocal(DEFAULT_PROJECT_DASHBOARD_TAB);
+  }, [project.id, onActiveTabChange, activeTabProp]);
+
   const canManageMembers = isProjectAccessibleByUser(project, currentUser);
 
   const persistTeamManagement = (
@@ -6843,6 +7067,8 @@ function ProjectManagerModal({
   onDeleteProject,
   onLeaveProject,
   onInviteMember,
+  onJoinProjectByCode,
+  onRegenerateProjectCode,
   displayRange,
   setDisplayRange,
   hidePastWeeks,
@@ -6864,6 +7090,13 @@ function ProjectManagerModal({
   const [editName, setEditName] = useState('');
   const [editColorIndex, setEditColorIndex] = useState(0);
   const [inviteInputs, setInviteInputs] = useState({});
+  const [openInvitePanels, setOpenInvitePanels] = useState({});
+  const [copiedCodeProjectId, setCopiedCodeProjectId] = useState('');
+  const [isAddProjectPopupOpen, setIsAddProjectPopupOpen] = useState(false);
+  const [addProjectPopupMode, setAddProjectPopupMode] = useState('select');
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectColorIndex, setNewProjectColorIndex] = useState(0);
+  const [joinCodeInput, setJoinCodeInput] = useState('');
   const [googleCalendarDraftSelection, setGoogleCalendarDraftSelection] = useState([]);
   const [isGoogleCalendarPickerOpen, setIsGoogleCalendarPickerOpen] = useState(false);
 
@@ -6974,6 +7207,102 @@ function ProjectManagerModal({
     }
   };
 
+  const toggleInvitePanel = (projectId) => {
+    setOpenInvitePanels((prev) => ({
+      ...prev,
+      [projectId]: !prev[projectId],
+    }));
+  };
+
+  const handleCopyProjectCode = async (project) => {
+    const code = buildProjectJoinCode(project);
+    if (!code) {
+      await popup.alert({
+        title: 'Project code unavailable',
+        message: 'Unable to generate project code for this project.',
+      });
+      return;
+    }
+
+    try {
+      if (!navigator?.clipboard?.writeText) {
+        throw new Error('Clipboard API is unavailable.');
+      }
+      await navigator.clipboard.writeText(code);
+      setCopiedCodeProjectId(project.id);
+      window.setTimeout(() => {
+        setCopiedCodeProjectId((prev) => (prev === project.id ? '' : prev));
+      }, 1400);
+    } catch {
+      await popup.alert({
+        title: 'Copy failed',
+        message: `Please copy manually:\n${code}`,
+      });
+    }
+  };
+
+  const handleRegenerateProjectCode = async (project) => {
+    const result = await Promise.resolve(onRegenerateProjectCode?.(project.id));
+    if (result?.message) {
+      await popup.alert({
+        title: result.ok ? 'Project code updated' : 'Unable to refresh code',
+        message: result.message,
+      });
+    }
+  };
+
+  const openAddProjectPopup = () => {
+    setIsAddProjectPopupOpen(true);
+    setAddProjectPopupMode('select');
+    setNewProjectName('');
+    setNewProjectColorIndex(Math.floor(Math.random() * PROJECT_COLORS.length));
+    setJoinCodeInput('');
+  };
+
+  const closeAddProjectPopup = () => {
+    setIsAddProjectPopupOpen(false);
+    setAddProjectPopupMode('select');
+    setNewProjectName('');
+    setJoinCodeInput('');
+  };
+
+  const handleCreateProjectFromPopup = () => {
+    const projectName = String(newProjectName || '').trim();
+    if (!projectName) {
+      void popup.alert({
+        title: 'Project name required',
+        message: 'Please enter project name before creating.',
+      });
+      return;
+    }
+    onSaveProject({
+      name: projectName,
+      colorIndex: newProjectColorIndex,
+    });
+    closeAddProjectPopup();
+  };
+
+  const handleJoinProjectByCode = async () => {
+    const code = String(joinCodeInput || '').trim();
+    if (!code) {
+      await popup.alert({
+        title: 'Project code required',
+        message: 'Please enter project invitation code.',
+      });
+      return;
+    }
+    const result = await Promise.resolve(onJoinProjectByCode?.(code));
+    if (result?.message) {
+      await popup.alert({
+        title: result.ok ? 'Join project result' : 'Unable to join project',
+        message: result.message,
+      });
+    }
+    if (result?.ok) {
+      closeAddProjectPopup();
+    }
+  };
+
   const visibleCount = projects.filter((project) => project.isVisible).length;
   const googleLinked = Boolean(googleCalendarStatus?.linked);
   const googleConfigured = Boolean(googleCalendarStatus?.configured);
@@ -7003,7 +7332,7 @@ function ProjectManagerModal({
   ];
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
         <div className="flex justify-between items-center p-4 border-b bg-gray-50">
           <h2 className="text-lg font-bold flex items-center gap-2">
             <Settings className="w-5 h-5" /> Manage Projects
@@ -7023,6 +7352,9 @@ function ProjectManagerModal({
             {projects.map((project) => {
               const isOwner = project.ownerId === currentUser.id;
               const members = Array.isArray(project.members) ? project.members : [];
+              const canInviteMembers = isProjectAccessibleByUser(project, currentUser);
+              const isInvitePanelOpen = Boolean(openInvitePanels[project.id]);
+              const projectJoinCode = buildProjectJoinCode(project);
 
               return (
                 <div key={project.id} className="p-3 border rounded-lg hover:border-blue-300 transition-colors space-y-2">
@@ -7070,6 +7402,20 @@ function ProjectManagerModal({
                         </div>
 
                         <div className="flex items-center gap-1">
+                          {canInviteMembers && (
+                            <button
+                              type="button"
+                              onClick={() => toggleInvitePanel(project.id)}
+                              className={`p-1.5 rounded-md transition-colors ${
+                                isInvitePanelOpen
+                                  ? 'text-blue-600 bg-blue-50'
+                                  : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'
+                              }`}
+                              title="Invite member / Project code"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          )}
                           {isOwner && (
                             <button
                               onClick={() => startEdit(project)}
@@ -7104,26 +7450,78 @@ function ProjectManagerModal({
                         Members: <span className="font-semibold text-gray-700">{members.length}</span>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={inviteInputs[project.id] || ''}
-                          onChange={(e) =>
-                            setInviteInputs((prev) => ({
-                              ...prev,
-                              [project.id]: e.target.value,
-                            }))
-                          }
-                          placeholder="Invite by username or email"
-                          className="flex-1 border rounded px-2 py-1.5 text-sm focus:outline-blue-500"
-                        />
-                        <button
-                          onClick={() => handleInvite(project.id)}
-                          className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded"
-                        >
-                          Invite
-                        </button>
-                      </div>
+                      {isInvitePanelOpen && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-2.5 space-y-2.5">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={inviteInputs[project.id] || ''}
+                              onChange={(e) =>
+                                setInviteInputs((prev) => ({
+                                  ...prev,
+                                  [project.id]: e.target.value,
+                                }))
+                              }
+                              placeholder="Invite by username or email"
+                              className="flex-1 border rounded px-2 py-1.5 text-sm focus:outline-blue-500 bg-white"
+                            />
+                            <button
+                              onClick={() => handleInvite(project.id)}
+                              className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded"
+                            >
+                              Invite
+                            </button>
+                          </div>
+
+                          <div className="rounded-md border border-gray-200 bg-white p-2">
+                            <p className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold mb-1.5">
+                              Project Code
+                            </p>
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                readOnly
+                                value={projectJoinCode}
+                                className="flex-1 border border-gray-200 rounded px-2 py-1 text-[11px] font-mono text-gray-700 bg-gray-50"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleCopyProjectCode(project);
+                                }}
+                                className="h-7 w-7 inline-flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50 transition-colors"
+                                title="Copy project code"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleRegenerateProjectCode(project);
+                                }}
+                                disabled={!isOwner}
+                                className={`h-7 w-7 inline-flex items-center justify-center rounded border transition-colors ${
+                                  isOwner
+                                    ? 'border-gray-200 text-gray-500 hover:text-amber-600 hover:border-amber-200 hover:bg-amber-50'
+                                    : 'border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50'
+                                }`}
+                                title={
+                                  isOwner
+                                    ? 'Refresh project code (old code will stop working)'
+                                    : 'Only creator can refresh project code'
+                                }
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <p className="mt-1 text-[11px] text-gray-400">
+                              {copiedCodeProjectId === project.id
+                                ? 'Code copied.'
+                                : 'Rotate code to invalidate old shared code.'}
+                            </p>
+                          </div>
+                        </div>
+                      )}
 
                       {!isOwner && (
                         <div className="flex items-center justify-between gap-3">
@@ -7146,51 +7544,13 @@ function ProjectManagerModal({
             })}
           </div>
 
-          {editingId !== 'new' && (
-            <button
-              onClick={() => {
-                setEditingId('new');
-                setEditName('');
-                setEditColorIndex(Math.floor(Math.random() * PROJECT_COLORS.length));
-              }}
-              className="mt-4 w-full py-2 border-2 border-dashed border-gray-300 text-gray-500 rounded-lg hover:border-blue-400 hover:text-blue-500 flex items-center justify-center gap-2 font-medium transition-colors"
-            >
-              <Plus className="w-4 h-4" /> New Project
-            </button>
-          )}
-
-          {editingId === 'new' && (
-            <div className="mt-4 p-3 border rounded-lg bg-blue-50/50 flex flex-col gap-3">
-              <h3 className="font-semibold text-sm">Create New Project</h3>
-              <input
-                type="text"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                placeholder="Project name..."
-                className="border rounded px-3 py-2 w-full text-sm focus:outline-blue-500"
-                autoFocus
-              />
-              <div className="flex gap-1.5">
-                {PROJECT_COLORS.map((color, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setEditColorIndex(index)}
-                    className={`w-7 h-7 rounded-full ${color.bg} flex items-center justify-center ${editColorIndex === index ? 'ring-2 ring-offset-2 ring-blue-500' : ''}`}
-                  >
-                    {editColorIndex === index && <Check className="w-4 h-4 text-white" />}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-2 mt-2">
-                <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded font-medium">
-                  Add Project
-                </button>
-                <button onClick={() => setEditingId(null)} className="flex-1 bg-white border border-gray-300 text-gray-700 py-2 rounded font-medium">
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={openAddProjectPopup}
+            className="mt-4 w-full py-2 border-2 border-dashed border-gray-300 text-gray-500 rounded-lg hover:border-blue-400 hover:text-blue-500 flex items-center justify-center gap-2 font-medium transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Add Project
+          </button>
 
           <div className="mt-6 pt-5 border-t border-gray-200 space-y-3">
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
@@ -7460,6 +7820,124 @@ function ProjectManagerModal({
             </label>
           </div>
         </div>
+
+        {isAddProjectPopupOpen && (
+          <div className="absolute inset-0 z-20 bg-black/45 backdrop-blur-[1px] flex items-center justify-center p-4">
+            <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-800">Add Project</h3>
+                <button
+                  type="button"
+                  onClick={closeAddProjectPopup}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {addProjectPopupMode === 'select' && (
+                <div className="p-4 space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => setAddProjectPopupMode('join')}
+                    className="w-full text-left rounded-lg border border-gray-200 p-3 hover:border-blue-300 hover:bg-blue-50/40 transition-colors"
+                  >
+                    <p className="text-sm font-semibold text-gray-800">Join with Project Code</p>
+                    <p className="text-xs text-gray-500 mt-1">Use invite code from project owner/member.</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddProjectPopupMode('create')}
+                    className="w-full text-left rounded-lg border border-gray-200 p-3 hover:border-blue-300 hover:bg-blue-50/40 transition-colors"
+                  >
+                    <p className="text-sm font-semibold text-gray-800">Create Your Own Project</p>
+                    <p className="text-xs text-gray-500 mt-1">Start a new project and invite your team later.</p>
+                  </button>
+                </div>
+              )}
+
+              {addProjectPopupMode === 'join' && (
+                <div className="p-4 space-y-3">
+                  <label className="block">
+                    <span className="text-xs font-semibold text-gray-600">Project code</span>
+                    <input
+                      type="text"
+                      value={joinCodeInput}
+                      onChange={(event) => setJoinCodeInput(event.target.value)}
+                      placeholder="PJC.ownerId.projectId.secret"
+                      className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-blue-500"
+                      autoFocus
+                    />
+                  </label>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAddProjectPopupMode('select')}
+                      className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleJoinProjectByCode();
+                      }}
+                      className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+                    >
+                      Join Project
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {addProjectPopupMode === 'create' && (
+                <div className="p-4 space-y-3">
+                  <label className="block">
+                    <span className="text-xs font-semibold text-gray-600">Project name</span>
+                    <input
+                      type="text"
+                      value={newProjectName}
+                      onChange={(event) => setNewProjectName(event.target.value)}
+                      placeholder="Project name..."
+                      className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-blue-500"
+                      autoFocus
+                    />
+                  </label>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {PROJECT_COLORS.map((color, index) => (
+                      <button
+                        key={`new-project-color-${index}`}
+                        type="button"
+                        onClick={() => setNewProjectColorIndex(index)}
+                        className={`w-7 h-7 rounded-full ${color.bg} flex items-center justify-center ${
+                          newProjectColorIndex === index ? 'ring-2 ring-offset-2 ring-blue-500' : ''
+                        }`}
+                      >
+                        {newProjectColorIndex === index && <Check className="w-4 h-4 text-white" />}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAddProjectPopupMode('select')}
+                      className="px-3 py-1.5 rounded-md border border-gray-300 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCreateProjectFromPopup}
+                      className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+                    >
+                      Create Project
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
