@@ -112,6 +112,7 @@ const DEFAULT_GOOGLE_CALENDAR_STATUS = {
   linkedEmail: '',
   linkedAt: null,
   updatedAt: null,
+  selectedCalendarIds: [],
   configured: false,
   redirectUri: '',
 };
@@ -365,11 +366,36 @@ const requestCloudDataApi = async (path, options = {}) => {
   return result;
 };
 
+const normalizeGoogleCalendarSelection = (selectedCalendarIds) =>
+  Array.from(
+    new Set(
+      (Array.isArray(selectedCalendarIds) ? selectedCalendarIds : [])
+        .map((calendarId) => String(calendarId || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+const normalizeGoogleCalendarCalendars = (calendarsInput) =>
+  (Array.isArray(calendarsInput) ? calendarsInput : [])
+    .map((calendar) => {
+      const id = String(calendar?.id || '').trim();
+      if (!id) return null;
+      return {
+        id,
+        summary: String(calendar?.summary || id).trim() || id,
+        primary: calendar?.primary === true,
+        accessRole: String(calendar?.accessRole || '').trim(),
+        backgroundColor: String(calendar?.backgroundColor || '').trim(),
+      };
+    })
+    .filter(Boolean);
+
 const normalizeGoogleCalendarStatus = (status) => ({
   ...DEFAULT_GOOGLE_CALENDAR_STATUS,
   ...(status && typeof status === 'object' ? status : {}),
   linked: Boolean(status?.linked),
   linkedEmail: String(status?.linkedEmail || '').trim().toLowerCase(),
+  selectedCalendarIds: normalizeGoogleCalendarSelection(status?.selectedCalendarIds),
   configured: Boolean(status?.configured),
   redirectUri: String(status?.redirectUri || '').trim(),
 });
@@ -1874,8 +1900,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [googleCalendarStatus, setGoogleCalendarStatus] = useState(() => ({
     ...DEFAULT_GOOGLE_CALENDAR_STATUS,
   }));
+  const [googleCalendarCalendars, setGoogleCalendarCalendars] = useState([]);
+  const [googleCalendarSelectedCalendarIds, setGoogleCalendarSelectedCalendarIds] = useState([]);
   const [googleCalendarEvents, setGoogleCalendarEvents] = useState([]);
   const [isGoogleCalendarBusy, setIsGoogleCalendarBusy] = useState(false);
+  const [isGoogleCalendarCalendarsLoading, setIsGoogleCalendarCalendarsLoading] = useState(false);
+  const [isGoogleCalendarSelectionSaving, setIsGoogleCalendarSelectionSaving] = useState(false);
   const [isGoogleCalendarEventsLoading, setIsGoogleCalendarEventsLoading] = useState(false);
 
   useEffect(() => {
@@ -1979,6 +2009,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         configured: false,
       });
       setGoogleCalendarStatus(fallbackStatus);
+      setGoogleCalendarCalendars([]);
+      setGoogleCalendarSelectedCalendarIds([]);
       return fallbackStatus;
     }
 
@@ -1988,6 +2020,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       );
       const normalizedStatus = normalizeGoogleCalendarStatus(result);
       setGoogleCalendarStatus(normalizedStatus);
+      if (normalizedStatus.linked) {
+        setGoogleCalendarSelectedCalendarIds(normalizedStatus.selectedCalendarIds);
+      } else {
+        setGoogleCalendarCalendars([]);
+        setGoogleCalendarSelectedCalendarIds([]);
+      }
       return normalizedStatus;
     } catch (error) {
       const fallbackStatus = normalizeGoogleCalendarStatus({
@@ -1995,7 +2033,112 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         configured: false,
       });
       setGoogleCalendarStatus(fallbackStatus);
+      setGoogleCalendarCalendars([]);
+      setGoogleCalendarSelectedCalendarIds([]);
       throw error;
+    }
+  };
+
+  const refreshGoogleCalendarCalendars = async () => {
+    if (!AUTH_API_BASE_URL) {
+      setGoogleCalendarCalendars([]);
+      setGoogleCalendarSelectedCalendarIds([]);
+      return { calendars: [], selectedCalendarIds: [] };
+    }
+
+    setIsGoogleCalendarCalendarsLoading(true);
+    try {
+      const result = await requestCloudDataApi(
+        `/google/calendar/calendars?userId=${encodeURIComponent(currentUser.id)}`
+      );
+      const calendars = normalizeGoogleCalendarCalendars(result?.calendars);
+      const availableCalendarIds = new Set(calendars.map((calendar) => calendar.id));
+      const selectedCalendarIds = normalizeGoogleCalendarSelection(result?.selectedCalendarIds).filter((id) =>
+        availableCalendarIds.has(id)
+      );
+      const effectiveSelectedCalendarIds =
+        selectedCalendarIds.length > 0 ? selectedCalendarIds : calendars.map((calendar) => calendar.id);
+
+      setGoogleCalendarCalendars(calendars);
+      setGoogleCalendarSelectedCalendarIds(effectiveSelectedCalendarIds);
+      setGoogleCalendarStatus((prev) =>
+        normalizeGoogleCalendarStatus({
+          ...prev,
+          selectedCalendarIds,
+          updatedAt: result?.updatedAt || prev?.updatedAt || null,
+        })
+      );
+
+      return {
+        calendars,
+        selectedCalendarIds: effectiveSelectedCalendarIds,
+      };
+    } catch (error) {
+      setGoogleCalendarCalendars([]);
+      setGoogleCalendarSelectedCalendarIds([]);
+      throw error;
+    } finally {
+      setIsGoogleCalendarCalendarsLoading(false);
+    }
+  };
+
+  const handleSaveGoogleCalendarSelection = async (selectedCalendarIdsInput) => {
+    if (!AUTH_API_BASE_URL) {
+      return {
+        ok: false,
+        message: 'Cloud Auth API is not configured.',
+      };
+    }
+
+    const selectedCalendarIds = normalizeGoogleCalendarSelection(selectedCalendarIdsInput);
+    if (selectedCalendarIds.length === 0) {
+      return {
+        ok: false,
+        message: 'Please select at least 1 calendar.',
+      };
+    }
+
+    setIsGoogleCalendarSelectionSaving(true);
+    try {
+      const result = await requestCloudDataApi(
+        `/google/calendar/calendars?userId=${encodeURIComponent(currentUser.id)}`,
+        {
+          method: 'PUT',
+          body: { selectedCalendarIds },
+        }
+      );
+
+      const calendars = normalizeGoogleCalendarCalendars(result?.calendars);
+      const availableCalendarIds = new Set(calendars.map((calendar) => calendar.id));
+      const savedSelectedCalendarIds = normalizeGoogleCalendarSelection(result?.selectedCalendarIds).filter((id) =>
+        availableCalendarIds.has(id)
+      );
+      const effectiveSelectedCalendarIds =
+        savedSelectedCalendarIds.length > 0
+          ? savedSelectedCalendarIds
+          : calendars.map((calendar) => calendar.id);
+
+      setGoogleCalendarCalendars(calendars);
+      setGoogleCalendarSelectedCalendarIds(effectiveSelectedCalendarIds);
+      setGoogleCalendarStatus((prev) =>
+        normalizeGoogleCalendarStatus({
+          ...prev,
+          selectedCalendarIds: savedSelectedCalendarIds,
+          updatedAt: result?.updatedAt || prev?.updatedAt || null,
+        })
+      );
+
+      return {
+        ok: true,
+        message: 'Google Calendar selection updated.',
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to save Google Calendar selection.',
+      };
+    } finally {
+      setIsGoogleCalendarSelectionSaving(false);
     }
   };
 
@@ -2003,6 +2146,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     let isCancelled = false;
     setGoogleCalendarEvents([]);
     setGoogleCalendarStatus({ ...DEFAULT_GOOGLE_CALENDAR_STATUS });
+    setGoogleCalendarCalendars([]);
+    setGoogleCalendarSelectedCalendarIds([]);
 
     const loadStatus = async () => {
       if (!AUTH_API_BASE_URL) return;
@@ -2011,7 +2156,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           `/google/calendar/status?userId=${encodeURIComponent(currentUser.id)}`
         );
         if (isCancelled) return;
-        setGoogleCalendarStatus(normalizeGoogleCalendarStatus(result));
+        const normalizedStatus = normalizeGoogleCalendarStatus(result);
+        setGoogleCalendarStatus(normalizedStatus);
+        setGoogleCalendarSelectedCalendarIds(normalizedStatus.selectedCalendarIds);
       } catch (error) {
         if (isCancelled) return;
         setGoogleCalendarStatus(
@@ -2020,6 +2167,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             configured: false,
           })
         );
+        setGoogleCalendarCalendars([]);
+        setGoogleCalendarSelectedCalendarIds([]);
         console.warn('Failed to load Google Calendar status:', error.message);
       }
     };
@@ -2029,6 +2178,32 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       isCancelled = true;
     };
   }, [currentUser.id]);
+
+  useEffect(() => {
+    if (!showProjectModal || !googleCalendarStatus.linked || !AUTH_API_BASE_URL) {
+      if (!googleCalendarStatus.linked) {
+        setGoogleCalendarCalendars([]);
+        setGoogleCalendarSelectedCalendarIds([]);
+      }
+      return;
+    }
+
+    let isCancelled = false;
+    const loadGoogleCalendars = async () => {
+      try {
+        await refreshGoogleCalendarCalendars();
+      } catch (error) {
+        if (!isCancelled) {
+          console.warn('Failed to load Google Calendar list:', error.message);
+        }
+      }
+    };
+
+    void loadGoogleCalendars();
+    return () => {
+      isCancelled = true;
+    };
+  }, [showProjectModal, googleCalendarStatus.linked, currentUser.id]);
 
   useEffect(() => {
     if (!isAccountDataHydrated) return;
@@ -2229,6 +2404,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     isAccountDataHydrated,
     currentUser.id,
     googleCalendarStatus.linked,
+    googleCalendarSelectedCalendarIds,
     effectiveMergeView,
     mergeViewRange,
   ]);
@@ -2459,6 +2635,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       }
 
       const status = await refreshGoogleCalendarStatus();
+      if (status?.linked) {
+        try {
+          await refreshGoogleCalendarCalendars();
+        } catch (error) {
+          console.warn('Failed to load Google Calendar list after linking:', error.message);
+        }
+      }
       await popup.alert({
         title: 'Google Calendar linked',
         message: `Linked account: ${status?.linkedEmail || currentUser.email}`,
@@ -2490,6 +2673,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         method: 'DELETE',
       });
       setGoogleCalendarEvents([]);
+      setGoogleCalendarCalendars([]);
+      setGoogleCalendarSelectedCalendarIds([]);
       await refreshGoogleCalendarStatus();
       await popup.alert({
         title: 'Google Calendar unlinked',
@@ -3406,9 +3591,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           startupView={startupView}
           setStartupView={setStartupView}
           googleCalendarStatus={googleCalendarStatus}
+          googleCalendarCalendars={googleCalendarCalendars}
+          googleCalendarSelectedCalendarIds={googleCalendarSelectedCalendarIds}
           onLinkGoogleCalendar={handleLinkGoogleCalendar}
           onUnlinkGoogleCalendar={handleUnlinkGoogleCalendar}
+          onSaveGoogleCalendarSelection={handleSaveGoogleCalendarSelection}
           isGoogleCalendarBusy={isGoogleCalendarBusy}
+          isGoogleCalendarCalendarsLoading={isGoogleCalendarCalendarsLoading}
+          isGoogleCalendarSelectionSaving={isGoogleCalendarSelectionSaving}
         />
       )}
 
@@ -6416,15 +6606,37 @@ function ProjectManagerModal({
   startupView,
   setStartupView,
   googleCalendarStatus,
+  googleCalendarCalendars,
+  googleCalendarSelectedCalendarIds,
   onLinkGoogleCalendar,
   onUnlinkGoogleCalendar,
+  onSaveGoogleCalendarSelection,
   isGoogleCalendarBusy,
+  isGoogleCalendarCalendarsLoading,
+  isGoogleCalendarSelectionSaving,
 }) {
   const popup = usePopup();
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState('');
   const [editColorIndex, setEditColorIndex] = useState(0);
   const [inviteInputs, setInviteInputs] = useState({});
+  const [googleCalendarDraftSelection, setGoogleCalendarDraftSelection] = useState([]);
+
+  useEffect(() => {
+    if (!googleCalendarStatus?.linked) {
+      setGoogleCalendarDraftSelection([]);
+      return;
+    }
+
+    const availableIds = normalizeGoogleCalendarSelection(
+      (Array.isArray(googleCalendarCalendars) ? googleCalendarCalendars : []).map((calendar) => calendar.id)
+    );
+    const selectedIds = normalizeGoogleCalendarSelection(googleCalendarSelectedCalendarIds).filter((calendarId) =>
+      availableIds.includes(calendarId)
+    );
+
+    setGoogleCalendarDraftSelection(selectedIds.length > 0 ? selectedIds : availableIds);
+  }, [googleCalendarStatus?.linked, googleCalendarCalendars, googleCalendarSelectedCalendarIds]);
 
   const startEdit = (project) => {
     if (project.ownerId !== currentUser.id) {
@@ -6486,9 +6698,43 @@ function ProjectManagerModal({
     }
   };
 
+  const toggleGoogleCalendarSelection = (calendarId) => {
+    const normalizedCalendarId = String(calendarId || '').trim();
+    if (!normalizedCalendarId) return;
+    setGoogleCalendarDraftSelection((prev) => {
+      const hasCalendar = prev.includes(normalizedCalendarId);
+      return hasCalendar
+        ? prev.filter((id) => id !== normalizedCalendarId)
+        : [...prev, normalizedCalendarId];
+    });
+  };
+
+  const handleSaveGoogleCalendarSelectionDraft = async () => {
+    const selectedIds = normalizeGoogleCalendarSelection(googleCalendarDraftSelection);
+    if (selectedIds.length === 0) {
+      await popup.alert({
+        title: 'Selection required',
+        message: 'Please select at least 1 Google Calendar.',
+      });
+      return;
+    }
+
+    const result = await Promise.resolve(onSaveGoogleCalendarSelection?.(selectedIds));
+    if (result?.message) {
+      await popup.alert({
+        title: result.ok ? 'Saved' : 'Unable to save',
+        message: result.message,
+      });
+    }
+  };
+
   const visibleCount = projects.filter((project) => project.isVisible).length;
   const googleLinked = Boolean(googleCalendarStatus?.linked);
   const googleConfigured = Boolean(googleCalendarStatus?.configured);
+  const googleCalendarTotalCount = Array.isArray(googleCalendarCalendars)
+    ? googleCalendarCalendars.length
+    : 0;
+  const googleCalendarSelectedCount = googleCalendarDraftSelection.length;
   const startupViewOptions = [
     {
       id: STARTUP_VIEW_MODES.CALENDAR,
@@ -6773,6 +7019,95 @@ function ProjectManagerModal({
                   </button>
                 )}
               </div>
+
+              {googleLinked && (
+                <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold text-gray-700">Choose calendars shown in Merge view</p>
+                    <span className="text-[11px] text-gray-500">
+                      {googleCalendarTotalCount > 0
+                        ? `${googleCalendarSelectedCount}/${googleCalendarTotalCount}`
+                        : '0/0'}
+                    </span>
+                  </div>
+
+                  {isGoogleCalendarCalendarsLoading ? (
+                    <div className="flex items-center gap-2 text-xs text-gray-500">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Loading calendar list...
+                    </div>
+                  ) : googleCalendarTotalCount === 0 ? (
+                    <p className="text-xs text-gray-500">
+                      No calendars found for this Google account.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="max-h-44 overflow-y-auto pr-1 space-y-1.5">
+                        {googleCalendarCalendars.map((calendar) => {
+                          const isChecked = googleCalendarDraftSelection.includes(calendar.id);
+                          return (
+                            <label
+                              key={calendar.id}
+                              className="flex items-start gap-2 px-2 py-1.5 rounded-md border border-gray-200 hover:border-blue-200 hover:bg-blue-50/40 cursor-pointer transition-colors"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => toggleGoogleCalendarSelection(calendar.id)}
+                                className="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-xs font-medium text-gray-800 truncate">
+                                  {calendar.summary}
+                                  {calendar.primary ? ' (Primary)' : ''}
+                                </span>
+                                <span className="block text-[11px] text-gray-500 truncate">
+                                  {calendar.id}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setGoogleCalendarDraftSelection(
+                              normalizeGoogleCalendarSelection(
+                                googleCalendarCalendars.map((calendar) => calendar.id)
+                              )
+                            )
+                          }
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-semibold border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+                        >
+                          Select all
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleSaveGoogleCalendarSelectionDraft();
+                          }}
+                          disabled={isGoogleCalendarSelectionSaving || isGoogleCalendarBusy}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-semibold transition-colors ${
+                            isGoogleCalendarSelectionSaving || isGoogleCalendarBusy
+                              ? 'bg-blue-200 text-white cursor-not-allowed'
+                              : 'bg-blue-600 hover:bg-blue-700 text-white'
+                          }`}
+                        >
+                          {isGoogleCalendarSelectionSaving ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Check className="w-3.5 h-3.5" />
+                          )}
+                          Save selection
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

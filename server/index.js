@@ -156,7 +156,33 @@ const getGoogleCalendarIntegration = (userData) => {
     updatedAt: raw.updatedAt ? String(raw.updatedAt) : null,
     scope: String(raw.scope || '').trim(),
     tokenType: String(raw.tokenType || '').trim(),
+    selectedCalendarIds: Array.from(
+      new Set(
+        (Array.isArray(raw.selectedCalendarIds) ? raw.selectedCalendarIds : [])
+          .map((calendarId) => String(calendarId || '').trim())
+          .filter(Boolean)
+      )
+    ),
   };
+};
+
+const normalizeGoogleCalendarSelection = (selectedCalendarIds) =>
+  Array.from(
+    new Set(
+      (Array.isArray(selectedCalendarIds) ? selectedCalendarIds : [])
+        .map((calendarId) => String(calendarId || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+const filterGoogleCalendarSelectionByAvailableCalendars = (selectedCalendarIds, calendars) => {
+  const normalizedSelection = normalizeGoogleCalendarSelection(selectedCalendarIds);
+  const availableCalendarIds = new Set(
+    (Array.isArray(calendars) ? calendars : [])
+      .map((calendar) => String(calendar?.id || '').trim())
+      .filter(Boolean)
+  );
+  return normalizedSelection.filter((calendarId) => availableCalendarIds.has(calendarId));
 };
 
 const shiftIsoDateByDays = (dateString, diffDays) => {
@@ -282,6 +308,8 @@ const fetchGoogleCalendarList = async (accessToken) => {
         id: calendarId,
         summary: String(item?.summary || calendarId).trim() || calendarId,
         primary: item?.primary === true,
+        accessRole: String(item?.accessRole || '').trim(),
+        backgroundColor: String(item?.backgroundColor || '').trim(),
       });
     });
 
@@ -292,9 +320,18 @@ const fetchGoogleCalendarList = async (accessToken) => {
   return calendars;
 };
 
-const fetchGoogleCalendarEvents = async (accessToken, timeMin, timeMax) => {
+const fetchGoogleCalendarEvents = async (accessToken, timeMin, timeMax, selectedCalendarIds = []) => {
   const calendars = await fetchGoogleCalendarList(accessToken);
-  const calendarsToFetch = calendars.length > 0 ? calendars.slice(0, 60) : [{ id: 'primary', summary: 'Primary' }];
+  const selectedIds = filterGoogleCalendarSelectionByAvailableCalendars(selectedCalendarIds, calendars);
+  const selectedSet = new Set(selectedIds);
+  const filteredCalendars = selectedIds.length > 0
+    ? calendars.filter((calendar) => selectedSet.has(calendar.id))
+    : calendars;
+  const calendarsToFetch = (selectedIds.length > 0
+    ? filteredCalendars
+    : calendars.length > 0
+    ? calendars
+    : [{ id: 'primary', summary: 'Primary', primary: true }]).slice(0, 60);
   const dedupeMap = new Map();
 
   for (const calendar of calendarsToFetch) {
@@ -357,11 +394,17 @@ const fetchGoogleCalendarEvents = async (accessToken, timeMin, timeMax) => {
     }
   }
 
-  return Array.from(dedupeMap.values()).sort((a, b) => {
+  const events = Array.from(dedupeMap.values()).sort((a, b) => {
     const aKey = `${a.startDate}T${a.startTime}`;
     const bKey = `${b.startDate}T${b.startTime}`;
     return aKey.localeCompare(bKey);
   });
+
+  return {
+    events,
+    calendars,
+    selectedCalendarIds: selectedIds,
+  };
 };
 
 const sendGoogleCalendarPopupResponse = (res, payload) => {
@@ -964,6 +1007,7 @@ app.get('/google/calendar/callback', async (req, res) => {
           tokenType: String(tokens.token_type || '').trim(),
           linkedAt: previousIntegration?.linkedAt || nowIso,
           updatedAt: nowIso,
+          selectedCalendarIds: previousIntegration?.selectedCalendarIds || [],
         },
         updatedAt: nowIso,
       },
@@ -1002,11 +1046,181 @@ app.get('/google/calendar/status', async (req, res) => {
       linkedEmail: linkedGoogleCalendar?.linkedEmail || '',
       linkedAt: linkedGoogleCalendar?.linkedAt || null,
       updatedAt: linkedGoogleCalendar?.updatedAt || null,
+      selectedCalendarIds: linkedGoogleCalendar?.selectedCalendarIds || [],
       configured: Boolean(createGoogleCalendarOauthClient(req)),
       redirectUri: resolveGoogleCalendarRedirectUri(req),
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to get Google Calendar status.' });
+  }
+});
+
+app.get('/google/calendar/calendars', async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.query?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
+    }
+
+    const oauthForCalendar = createGoogleCalendarOauthClient(req);
+    if (!oauthForCalendar) {
+      return res.status(503).json({
+        message:
+          'Google Calendar OAuth is not configured. Set GOOGLE_CLIENT_SECRET and GOOGLE_CALENDAR_REDIRECT_URI (or GOOGLE_OAUTH_JSON_PATH).',
+      });
+    }
+
+    const userDoc = await usersRef.doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const userData = userDoc.data() || {};
+    const googleCalendarIntegration = getGoogleCalendarIntegration(userData);
+    if (!googleCalendarIntegration) {
+      return res.status(404).json({ message: 'Google Calendar is not linked for this user.' });
+    }
+
+    oauthForCalendar.setCredentials({
+      refresh_token: googleCalendarIntegration.refreshToken,
+      access_token: googleCalendarIntegration.accessToken || undefined,
+      expiry_date:
+        Number.isFinite(googleCalendarIntegration.accessTokenExpiresAt) &&
+        googleCalendarIntegration.accessTokenExpiresAt > 0
+          ? googleCalendarIntegration.accessTokenExpiresAt
+          : undefined,
+    });
+
+    const accessToken = String((await oauthForCalendar.getAccessToken())?.token || '').trim();
+    if (!accessToken) {
+      return res.status(401).json({
+        message: 'Unable to refresh Google Calendar access token. Please unlink and link again.',
+      });
+    }
+
+    const calendars = await fetchGoogleCalendarList(accessToken);
+    const selectedCalendarIds = filterGoogleCalendarSelectionByAvailableCalendars(
+      googleCalendarIntegration.selectedCalendarIds,
+      calendars
+    );
+    const refreshedCredentials = oauthForCalendar.credentials || {};
+    const nextRefreshToken =
+      String(refreshedCredentials.refresh_token || '').trim() || googleCalendarIntegration.refreshToken;
+    const nowIso = new Date().toISOString();
+
+    await usersRef.doc(userId).set(
+      {
+        googleCalendarIntegration: {
+          linkedEmail: googleCalendarIntegration.linkedEmail,
+          refreshToken: nextRefreshToken,
+          accessToken,
+          accessTokenExpiresAt: Number(refreshedCredentials.expiry_date || 0),
+          scope: String(refreshedCredentials.scope || googleCalendarIntegration.scope || '').trim(),
+          tokenType: String(refreshedCredentials.token_type || googleCalendarIntegration.tokenType || '').trim(),
+          linkedAt: googleCalendarIntegration.linkedAt || nowIso,
+          updatedAt: nowIso,
+          selectedCalendarIds,
+        },
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+
+    return res.json({
+      source: 'google_calendar',
+      linkedEmail: googleCalendarIntegration.linkedEmail,
+      calendars,
+      selectedCalendarIds,
+      count: calendars.length,
+      updatedAt: nowIso,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to fetch Google Calendar list.' });
+  }
+});
+
+app.put('/google/calendar/calendars', async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.query?.userId || req.body?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
+    }
+
+    const oauthForCalendar = createGoogleCalendarOauthClient(req);
+    if (!oauthForCalendar) {
+      return res.status(503).json({
+        message:
+          'Google Calendar OAuth is not configured. Set GOOGLE_CLIENT_SECRET and GOOGLE_CALENDAR_REDIRECT_URI (or GOOGLE_OAUTH_JSON_PATH).',
+      });
+    }
+
+    const userDoc = await usersRef.doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const userData = userDoc.data() || {};
+    const googleCalendarIntegration = getGoogleCalendarIntegration(userData);
+    if (!googleCalendarIntegration) {
+      return res.status(404).json({ message: 'Google Calendar is not linked for this user.' });
+    }
+
+    const requestedSelection = normalizeGoogleCalendarSelection(req.body?.selectedCalendarIds);
+
+    oauthForCalendar.setCredentials({
+      refresh_token: googleCalendarIntegration.refreshToken,
+      access_token: googleCalendarIntegration.accessToken || undefined,
+      expiry_date:
+        Number.isFinite(googleCalendarIntegration.accessTokenExpiresAt) &&
+        googleCalendarIntegration.accessTokenExpiresAt > 0
+          ? googleCalendarIntegration.accessTokenExpiresAt
+          : undefined,
+    });
+
+    const accessToken = String((await oauthForCalendar.getAccessToken())?.token || '').trim();
+    if (!accessToken) {
+      return res.status(401).json({
+        message: 'Unable to refresh Google Calendar access token. Please unlink and link again.',
+      });
+    }
+
+    const calendars = await fetchGoogleCalendarList(accessToken);
+    const selectedCalendarIds = filterGoogleCalendarSelectionByAvailableCalendars(
+      requestedSelection,
+      calendars
+    );
+    const refreshedCredentials = oauthForCalendar.credentials || {};
+    const nextRefreshToken =
+      String(refreshedCredentials.refresh_token || '').trim() || googleCalendarIntegration.refreshToken;
+    const nowIso = new Date().toISOString();
+
+    await usersRef.doc(userId).set(
+      {
+        googleCalendarIntegration: {
+          linkedEmail: googleCalendarIntegration.linkedEmail,
+          refreshToken: nextRefreshToken,
+          accessToken,
+          accessTokenExpiresAt: Number(refreshedCredentials.expiry_date || 0),
+          scope: String(refreshedCredentials.scope || googleCalendarIntegration.scope || '').trim(),
+          tokenType: String(refreshedCredentials.token_type || googleCalendarIntegration.tokenType || '').trim(),
+          linkedAt: googleCalendarIntegration.linkedAt || nowIso,
+          updatedAt: nowIso,
+          selectedCalendarIds,
+        },
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+
+    return res.json({
+      ok: true,
+      source: 'google_calendar',
+      linkedEmail: googleCalendarIntegration.linkedEmail,
+      calendars,
+      selectedCalendarIds,
+      count: calendars.length,
+      updatedAt: nowIso,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to save Google Calendar selection.' });
   }
 });
 
@@ -1095,7 +1309,18 @@ app.get('/google/calendar/events', async (req, res) => {
       });
     }
 
-    const events = await fetchGoogleCalendarEvents(accessToken, timeMinDate.toISOString(), timeMaxDate.toISOString());
+    const eventsResult = await fetchGoogleCalendarEvents(
+      accessToken,
+      timeMinDate.toISOString(),
+      timeMaxDate.toISOString(),
+      googleCalendarIntegration.selectedCalendarIds
+    );
+    const events = Array.isArray(eventsResult?.events) ? eventsResult.events : [];
+    const calendars = Array.isArray(eventsResult?.calendars) ? eventsResult.calendars : [];
+    const selectedCalendarIds = filterGoogleCalendarSelectionByAvailableCalendars(
+      eventsResult?.selectedCalendarIds,
+      calendars
+    );
     const refreshedCredentials = oauthForCalendar.credentials || {};
     const nextRefreshToken =
       String(refreshedCredentials.refresh_token || '').trim() || googleCalendarIntegration.refreshToken;
@@ -1112,6 +1337,7 @@ app.get('/google/calendar/events', async (req, res) => {
           tokenType: String(refreshedCredentials.token_type || googleCalendarIntegration.tokenType || '').trim(),
           linkedAt: googleCalendarIntegration.linkedAt || nowIso,
           updatedAt: nowIso,
+          selectedCalendarIds,
         },
         updatedAt: nowIso,
       },
@@ -1123,6 +1349,8 @@ app.get('/google/calendar/events', async (req, res) => {
       source: 'google_calendar',
       projectId: GOOGLE_CALENDAR_PROJECT_ID,
       linkedEmail: googleCalendarIntegration.linkedEmail,
+      calendars,
+      selectedCalendarIds,
       count: events.length,
     });
   } catch (error) {
