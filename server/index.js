@@ -273,6 +273,31 @@ const fetchGoogleProfileFromAccessToken = async (accessToken) => {
   };
 };
 
+const verifyGoogleIdentityFromTokens = async ({ idToken, accessToken }) => {
+  const normalizedIdToken = String(idToken || '').trim();
+  const normalizedAccessToken = String(accessToken || '').trim();
+  if (!normalizedIdToken && !normalizedAccessToken) {
+    throw new Error('Google token is required.');
+  }
+
+  if (normalizedIdToken) {
+    if (!oauthClient || !GOOGLE_CLIENT_ID) {
+      throw new Error('Google OAuth is not configured.');
+    }
+    const ticket = await oauthClient.verifyIdToken({
+      idToken: normalizedIdToken,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    return {
+      email: sanitizeEmail(payload?.email),
+      emailVerified: payload?.email_verified === true || payload?.email_verified === 'true',
+    };
+  }
+
+  return fetchGoogleProfileFromAccessToken(normalizedAccessToken);
+};
+
 const fetchGoogleCalendarList = async (accessToken) => {
   const calendars = [];
   let pageToken = '';
@@ -836,6 +861,25 @@ app.post('/auth/google', async (req, res) => {
   }
 });
 
+app.post('/auth/verify-otp', async (req, res) => {
+  try {
+    const email = sanitizeEmail(req.body?.email);
+    const otp = String(req.body?.otp || '').trim();
+    if (!email || !otp) {
+      return res.status(400).json({ message: 'email and otp are required.' });
+    }
+
+    const otpStatus = await validateOtp(email, otp);
+    if (!otpStatus.ok) {
+      return res.status(400).json({ message: otpStatus.message });
+    }
+
+    return res.json({ message: 'OTP verified successfully.' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to verify OTP.' });
+  }
+});
+
 app.get('/google/calendar/auth-url', async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId);
@@ -1377,6 +1421,120 @@ app.get('/users/lookup', async (req, res) => {
     return res.json({ user: toPublicUser(user) });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to lookup user.' });
+  }
+});
+
+app.put('/users/:userId/profile', async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.params?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
+    }
+
+    const username = sanitizeUsername(req.body?.username);
+    const avatarUrl = String(req.body?.avatarUrl || '').trim();
+    if (!username) {
+      return res.status(400).json({ message: 'username is required.' });
+    }
+
+    const userDocRef = usersRef.doc(userId);
+    const userDoc = await userDocRef.get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const existingUser = { id: userDoc.id, ...userDoc.data() };
+    const existingByUsername = await getUserByUsername(username);
+    if (existingByUsername && existingByUsername.id !== userId) {
+      return res.status(409).json({ message: 'This username is already taken.' });
+    }
+
+    const updatedAt = new Date().toISOString();
+    await userDocRef.set(
+      {
+        username,
+        avatarUrl,
+        updatedAt,
+      },
+      { merge: true }
+    );
+
+    return res.json({
+      message: 'Profile updated successfully.',
+      user: toPublicUser({
+        ...existingUser,
+        username,
+        avatarUrl,
+      }),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to update profile.' });
+  }
+});
+
+app.put('/users/:userId/password', async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.params?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
+    }
+
+    const newPassword = String(req.body?.newPassword || '');
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters.' });
+    }
+
+    const verificationMethod = String(req.body?.verificationMethod || '').trim().toLowerCase();
+    if (!verificationMethod) {
+      return res.status(400).json({ message: 'verificationMethod is required.' });
+    }
+
+    const userDocRef = usersRef.doc(userId);
+    const userDoc = await userDocRef.get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const user = { id: userDoc.id, ...userDoc.data() };
+    const userEmail = sanitizeEmail(user.email);
+
+    if (verificationMethod === 'otp') {
+      const otp = String(req.body?.otp || '').trim();
+      if (!otp) {
+        return res.status(400).json({ message: 'otp is required for OTP verification.' });
+      }
+      const otpStatus = await validateOtp(userEmail, otp);
+      if (!otpStatus.ok) {
+        return res.status(400).json({ message: otpStatus.message });
+      }
+    } else if (verificationMethod === 'google') {
+      const identity = await verifyGoogleIdentityFromTokens({
+        idToken: req.body?.idToken,
+        accessToken: req.body?.accessToken,
+      });
+      if (!identity?.email || !identity.emailVerified) {
+        return res.status(401).json({ message: 'Google account email is not verified.' });
+      }
+      if (identity.email !== userEmail) {
+        return res
+          .status(403)
+          .json({ message: 'Google account does not match this user email.' });
+      }
+    } else {
+      return res.status(400).json({ message: 'Unsupported verification method.' });
+    }
+
+    await userDocRef.set(
+      {
+        passwordHash: await bcrypt.hash(newPassword, 10),
+        password: '',
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    return res.json({ message: 'Password changed successfully.' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to change password.' });
   }
 });
 
