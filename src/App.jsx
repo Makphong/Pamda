@@ -6621,10 +6621,12 @@ function ProjectManagerModal({
   const [editColorIndex, setEditColorIndex] = useState(0);
   const [inviteInputs, setInviteInputs] = useState({});
   const [googleCalendarDraftSelection, setGoogleCalendarDraftSelection] = useState([]);
+  const [isGoogleCalendarPickerOpen, setIsGoogleCalendarPickerOpen] = useState(false);
 
   useEffect(() => {
     if (!googleCalendarStatus?.linked) {
       setGoogleCalendarDraftSelection([]);
+      setIsGoogleCalendarPickerOpen(false);
       return;
     }
 
@@ -7021,90 +7023,116 @@ function ProjectManagerModal({
               </div>
 
               {googleLinked && (
-                <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold text-gray-700">Choose calendars shown in Merge view</p>
-                    <span className="text-[11px] text-gray-500">
-                      {googleCalendarTotalCount > 0
-                        ? `${googleCalendarSelectedCount}/${googleCalendarTotalCount}`
-                        : '0/0'}
+                <div className="rounded-lg border border-gray-200 bg-white">
+                  <button
+                    type="button"
+                    onClick={() => setIsGoogleCalendarPickerOpen((prev) => !prev)}
+                    className="w-full px-3 py-2.5 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors text-left"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-xs font-semibold text-gray-800">
+                        Calendar visibility in Merge view
+                      </span>
+                      <span className="block text-[11px] text-gray-500 truncate">
+                        {googleCalendarTotalCount > 0
+                          ? `${googleCalendarSelectedCount}/${googleCalendarTotalCount} selected`
+                          : 'No calendars found'}
+                      </span>
                     </span>
-                  </div>
+                    <ChevronDown
+                      className={`w-4 h-4 text-gray-500 transition-transform ${
+                        isGoogleCalendarPickerOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
 
-                  {isGoogleCalendarCalendarsLoading ? (
-                    <div className="flex items-center gap-2 text-xs text-gray-500">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Loading calendar list...
-                    </div>
-                  ) : googleCalendarTotalCount === 0 ? (
-                    <p className="text-xs text-gray-500">
-                      No calendars found for this Google account.
-                    </p>
-                  ) : (
-                    <>
-                      <div className="max-h-44 overflow-y-auto pr-1 space-y-1.5">
-                        {googleCalendarCalendars.map((calendar) => {
-                          const isChecked = googleCalendarDraftSelection.includes(calendar.id);
-                          return (
-                            <label
-                              key={calendar.id}
-                              className="flex items-start gap-2 px-2 py-1.5 rounded-md border border-gray-200 hover:border-blue-200 hover:bg-blue-50/40 cursor-pointer transition-colors"
+                  {isGoogleCalendarPickerOpen && (
+                    <div className="border-t border-gray-200 px-3 pt-2.5 pb-3 space-y-2.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs font-semibold text-gray-700">Choose calendars shown in Merge view</p>
+                        <span className="text-[11px] text-gray-500">
+                          {googleCalendarTotalCount > 0
+                            ? `${googleCalendarSelectedCount}/${googleCalendarTotalCount}`
+                            : '0/0'}
+                        </span>
+                      </div>
+
+                      {isGoogleCalendarCalendarsLoading ? (
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Loading calendar list...
+                        </div>
+                      ) : googleCalendarTotalCount === 0 ? (
+                        <p className="text-xs text-gray-500">
+                          No calendars found for this Google account.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="max-h-44 overflow-y-auto pr-1 space-y-1.5">
+                            {googleCalendarCalendars.map((calendar) => {
+                              const isChecked = googleCalendarDraftSelection.includes(calendar.id);
+                              return (
+                                <label
+                                  key={calendar.id}
+                                  className="flex items-start gap-2 px-2 py-1.5 rounded-md border border-gray-200 hover:border-blue-200 hover:bg-blue-50/40 cursor-pointer transition-colors"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => toggleGoogleCalendarSelection(calendar.id)}
+                                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                  />
+                                  <span className="min-w-0">
+                                    <span className="block text-xs font-medium text-gray-800 truncate">
+                                      {calendar.summary}
+                                      {calendar.primary ? ' (Primary)' : ''}
+                                    </span>
+                                    <span className="block text-[11px] text-gray-500 truncate">
+                                      {calendar.id}
+                                    </span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setGoogleCalendarDraftSelection(
+                                  normalizeGoogleCalendarSelection(
+                                    googleCalendarCalendars.map((calendar) => calendar.id)
+                                  )
+                                )
+                              }
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-semibold border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 transition-colors"
                             >
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => toggleGoogleCalendarSelection(calendar.id)}
-                                className="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                              />
-                              <span className="min-w-0">
-                                <span className="block text-xs font-medium text-gray-800 truncate">
-                                  {calendar.summary}
-                                  {calendar.primary ? ' (Primary)' : ''}
-                                </span>
-                                <span className="block text-[11px] text-gray-500 truncate">
-                                  {calendar.id}
-                                </span>
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setGoogleCalendarDraftSelection(
-                              normalizeGoogleCalendarSelection(
-                                googleCalendarCalendars.map((calendar) => calendar.id)
-                              )
-                            )
-                          }
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-semibold border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-                        >
-                          Select all
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleSaveGoogleCalendarSelectionDraft();
-                          }}
-                          disabled={isGoogleCalendarSelectionSaving || isGoogleCalendarBusy}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-semibold transition-colors ${
-                            isGoogleCalendarSelectionSaving || isGoogleCalendarBusy
-                              ? 'bg-blue-200 text-white cursor-not-allowed'
-                              : 'bg-blue-600 hover:bg-blue-700 text-white'
-                          }`}
-                        >
-                          {isGoogleCalendarSelectionSaving ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Check className="w-3.5 h-3.5" />
-                          )}
-                          Save selection
-                        </button>
-                      </div>
-                    </>
+                              Select all
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleSaveGoogleCalendarSelectionDraft();
+                              }}
+                              disabled={isGoogleCalendarSelectionSaving || isGoogleCalendarBusy}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-semibold transition-colors ${
+                                isGoogleCalendarSelectionSaving || isGoogleCalendarBusy
+                                  ? 'bg-blue-200 text-white cursor-not-allowed'
+                                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+                              }`}
+                            >
+                              {isGoogleCalendarSelectionSaving ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Check className="w-3.5 h-3.5" />
+                              )}
+                              Save selection
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
