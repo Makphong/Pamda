@@ -1557,17 +1557,47 @@ app.post('/google/calendar/events', async (req, res) => {
       googlePayload.end = { date: shiftIsoDateByDays(endDate, 1) };
     }
 
-    const insertResponse = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(googlePayload),
+    let targetGoogleEventId = '';
+    if (pmCalendarEventId) {
+      const lookupParams = new URLSearchParams({
+        maxResults: '1',
+        singleEvents: 'true',
+      });
+      lookupParams.set('privateExtendedProperty', `pmCalendarEventId=${pmCalendarEventId}`);
+      const lookupResponse = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
+          calendarId
+        )}/events?${lookupParams.toString()}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+      if (lookupResponse.ok) {
+        const lookupPayload = await lookupResponse.json();
+        const existingEvent = Array.isArray(lookupPayload?.items)
+          ? lookupPayload.items.find((item) => String(item?.id || '').trim())
+          : null;
+        targetGoogleEventId = String(existingEvent?.id || '').trim();
       }
-    );
+    }
+
+    const upsertMethod = targetGoogleEventId ? 'PATCH' : 'POST';
+    const upsertUrl = targetGoogleEventId
+      ? `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
+          calendarId
+        )}/events/${encodeURIComponent(targetGoogleEventId)}`
+      : `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
+
+    const insertResponse = await fetch(upsertUrl, {
+      method: upsertMethod,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(googlePayload),
+    });
 
     if (!insertResponse.ok) {
       let googleErrorMessage = '';
