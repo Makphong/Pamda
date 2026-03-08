@@ -11195,6 +11195,12 @@ function NoteEditor({
   const docImageClipboardRef = React.useRef(null);
   const previousNoteIdRef = React.useRef(noteId);
   const lastHydratedDocPageRef = React.useRef('');
+  const lastDocPresenceSnapshotRef = React.useRef({
+    pageId: '',
+    line: 1,
+    cursorXRatio: null,
+    cursorYRatio: null,
+  });
   const docTableSelectionRangeRef = React.useRef(null);
   const docTableRangeDragRef = React.useRef({
     active: false,
@@ -12575,6 +12581,85 @@ function NoteEditor({
     });
     return clone.innerHTML;
   };
+  const captureDocSelectionSnapshot = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    if (!editor.contains(range.startContainer) || !editor.contains(range.endContainer)) return null;
+
+    const startRange = document.createRange();
+    startRange.selectNodeContents(editor);
+    startRange.setEnd(range.startContainer, range.startOffset);
+    const startOffset = startRange.toString().length;
+
+    const endRange = document.createRange();
+    endRange.selectNodeContents(editor);
+    endRange.setEnd(range.endContainer, range.endOffset);
+    const endOffset = endRange.toString().length;
+
+    return {
+      start: Math.max(0, startOffset),
+      end: Math.max(0, endOffset),
+      isCollapsed: range.collapsed,
+    };
+  };
+  const resolveDocTextPosition = (rootNode, targetOffsetInput) => {
+    const targetOffset = Math.max(0, Number(targetOffsetInput) || 0);
+    const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT);
+    let consumed = 0;
+    let lastTextNode = null;
+    while (walker.nextNode()) {
+      const textNode = walker.currentNode;
+      const textLength = String(textNode.textContent || '').length;
+      lastTextNode = textNode;
+      if (consumed + textLength >= targetOffset) {
+        return {
+          node: textNode,
+          offset: Math.max(0, Math.min(textLength, targetOffset - consumed)),
+        };
+      }
+      consumed += textLength;
+    }
+    if (lastTextNode) {
+      const textLength = String(lastTextNode.textContent || '').length;
+      return {
+        node: lastTextNode,
+        offset: textLength,
+      };
+    }
+    return {
+      node: rootNode,
+      offset: rootNode.childNodes.length,
+    };
+  };
+  const restoreDocSelectionSnapshot = (snapshotInput) => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || !snapshotInput) return;
+    const snapshot =
+      snapshotInput && typeof snapshotInput === 'object' && !Array.isArray(snapshotInput)
+        ? snapshotInput
+        : null;
+    if (!snapshot) return;
+
+    const startPos = resolveDocTextPosition(editor, snapshot.start);
+    const endPos = resolveDocTextPosition(editor, snapshot.end);
+    if (!startPos?.node || !endPos?.node) return;
+
+    const range = document.createRange();
+    try {
+      range.setStart(startPos.node, startPos.offset);
+      range.setEnd(endPos.node, endPos.offset);
+    } catch {
+      return;
+    }
+    if (snapshot.isCollapsed) {
+      range.collapse(false);
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
 
   const handleInput = () => {
     if (!isActiveDocPage) return;
@@ -13487,11 +13572,24 @@ function NoteEditor({
     const editor = editorRef.current;
     const incomingContent = String(activePage.content || '');
     const isPageSwitchHydration = lastHydratedDocPageRef.current !== hydrateKey;
-    const shouldHydrate =
-      isPageSwitchHydration || String(editor.innerHTML || '') !== incomingContent;
+    const currentSanitizedContent = getSanitizedDocEditorHtml();
+    const shouldHydrate = isPageSwitchHydration || currentSanitizedContent !== incomingContent;
     if (!shouldHydrate) return;
+    const isEditorFocused = document.activeElement === editor;
+    const selectionSnapshot = isEditorFocused ? captureDocSelectionSnapshot() : null;
+    const previousScrollTop = Number(editor.scrollTop || 0);
+    const previousScrollLeft = Number(editor.scrollLeft || 0);
     editor.innerHTML = incomingContent;
     normalizeEditorImages();
+    if (selectionSnapshot) {
+      restoreDocSelectionSnapshot(selectionSnapshot);
+      if (Number.isFinite(previousScrollTop)) {
+        editor.scrollTop = previousScrollTop;
+      }
+      if (Number.isFinite(previousScrollLeft)) {
+        editor.scrollLeft = previousScrollLeft;
+      }
+    }
     if (isPageSwitchHydration) {
       setImageMenuState(null);
       setActiveImageFrame(null);
@@ -15681,16 +15779,16 @@ function NoteEditor({
   const getDocCursorLine = () => {
     const editor = editorRef.current;
     const selection = window.getSelection();
-    if (!editor || !selection || selection.rangeCount === 0) return 1;
+    if (!editor || !selection || selection.rangeCount === 0) return null;
     const anchorNode = selection.anchorNode;
-    if (!anchorNode || !editor.contains(anchorNode)) return 1;
+    if (!anchorNode || !editor.contains(anchorNode)) return null;
     const range = selection.getRangeAt(0).cloneRange();
     const preRange = document.createRange();
     preRange.selectNodeContents(editor);
     preRange.setEnd(range.endContainer, range.endOffset);
     const text = preRange.toString();
     const line = text.split(/\r?\n/).length;
-    return Number.isFinite(line) ? Math.max(1, line) : 1;
+    return Number.isFinite(line) ? Math.max(1, line) : null;
   };
   const getDocCursorRatios = () => {
     const editor = editorRef.current;
@@ -15738,16 +15836,46 @@ function NoteEditor({
   };
   const emitPresenceUpdate = (typingText = '') => {
     if (typeof onPresenceUpdate !== 'function') return;
-    const docCursorRatios = activePage?.type === 'sheet' ? null : getDocCursorRatios();
+    const activePageId = String(activePage?.id || '').trim();
+    if (activePage?.type !== 'sheet') {
+      if (lastDocPresenceSnapshotRef.current.pageId !== activePageId) {
+        lastDocPresenceSnapshotRef.current = {
+          pageId: activePageId,
+          line: 1,
+          cursorXRatio: null,
+          cursorYRatio: null,
+        };
+      }
+      const currentLine = getDocCursorLine();
+      if (Number.isFinite(currentLine) && currentLine > 0) {
+        lastDocPresenceSnapshotRef.current.line = currentLine;
+      }
+      const docCursorRatios = getDocCursorRatios();
+      if (Number.isFinite(docCursorRatios?.xRatio) && Number.isFinite(docCursorRatios?.yRatio)) {
+        lastDocPresenceSnapshotRef.current.cursorXRatio = docCursorRatios.xRatio;
+        lastDocPresenceSnapshotRef.current.cursorYRatio = docCursorRatios.yRatio;
+      }
+    }
+    const persistedDocPresence = lastDocPresenceSnapshotRef.current;
     const payload = {
-      pageId: activePage?.id || '',
+      pageId: activePageId,
       pageType: activePage?.type || 'doc',
       line:
         activePage?.type === 'sheet'
           ? `${toSheetColumnLabel(sheetSelection.col)}${sheetSelection.row + 1}`
-          : String(getDocCursorLine()),
-      cursorXRatio: docCursorRatios?.xRatio ?? null,
-      cursorYRatio: docCursorRatios?.yRatio ?? null,
+          : String(persistedDocPresence.line || 1),
+      cursorXRatio:
+        activePage?.type === 'sheet'
+          ? null
+          : Number.isFinite(persistedDocPresence.cursorXRatio)
+            ? persistedDocPresence.cursorXRatio
+            : null,
+      cursorYRatio:
+        activePage?.type === 'sheet'
+          ? null
+          : Number.isFinite(persistedDocPresence.cursorYRatio)
+            ? persistedDocPresence.cursorYRatio
+            : null,
       typingText: String(typingText || '').trim().slice(0, NOTE_PRESENCE_TYPING_MAX),
       updatedAt: new Date().toISOString(),
     };
@@ -16577,30 +16705,33 @@ function NoteEditor({
     const baseY = editorOffsetTop;
     const nextFrames = docPresenceItems
       .map((entry) => {
+        const parsedLine = Number.parseInt(String(entry.line || '1'), 10);
+        const lineNumber = Number.isFinite(parsedLine)
+          ? Math.min(totalLines, Math.max(1, parsedLine))
+          : 1;
+        const lineRatio = totalLines <= 1 ? 0 : (lineNumber - 1) / (totalLines - 1);
         const hasRatioPosition =
           Number.isFinite(entry.cursorXRatio) && Number.isFinite(entry.cursorYRatio);
         if (hasRatioPosition) {
           const xRatio = Math.max(0, Math.min(1, Number(entry.cursorXRatio)));
           const yRatio = Math.max(0, Math.min(1, Number(entry.cursorYRatio)));
-          return {
-            key: entry.presenceKey,
-            label: entry.label,
-            cursorColor: entry.cursorColor,
-            x: Math.round(editorOffsetLeft + xRatio * Math.max(0, editorContentWidth - 2)),
-            y: Math.round(editorOffsetTop + yRatio * Math.max(0, editorContentHeight - 16)),
-          };
+          const seemsStableWithLine = Math.abs(yRatio - lineRatio) <= 0.35;
+          if (seemsStableWithLine) {
+            return {
+              key: entry.presenceKey,
+              label: entry.label,
+              cursorColor: entry.cursorColor,
+              x: Math.round(editorOffsetLeft + xRatio * Math.max(0, editorContentWidth - 2)),
+              y: Math.round(editorOffsetTop + yRatio * Math.max(0, editorContentHeight - 16)),
+            };
+          }
         }
-        const parsedLine = Number.parseInt(String(entry.line || '1'), 10);
-        const lineNumber = Number.isFinite(parsedLine)
-          ? Math.min(totalLines, Math.max(1, parsedLine))
-          : 1;
-        const ratio = totalLines <= 1 ? 0 : (lineNumber - 1) / (totalLines - 1);
         return {
           key: entry.presenceKey,
           label: entry.label,
           cursorColor: entry.cursorColor,
           x: baseX,
-          y: baseY + Math.round(ratio * availableTrack) + 6,
+          y: baseY + Math.round(lineRatio * availableTrack) + 6,
         };
       })
       .filter((frame) => Number.isFinite(frame.x) && Number.isFinite(frame.y));
