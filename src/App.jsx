@@ -13410,43 +13410,6 @@ function NoteEditor({
       if (incomingSerialized === currentSerialized) {
         return;
       }
-      const editorNode = editorRef.current;
-      const isEditorFocused = Boolean(editorNode && document.activeElement === editorNode);
-      const currentSnapshot = normalizeNoteDocumentPayload(noteDocumentRef.current || noteDocument);
-      const focusedPageId =
-        String(activePageId || currentSnapshot.activePageId || '').trim() || currentSnapshot.activePageId;
-      const incomingFocusedDocPage = parsedDocument.pages.find(
-        (page) => page.id === focusedPageId && page.type !== 'sheet'
-      );
-      if (isEditorFocused && incomingFocusedDocPage) {
-        const liveDocContent = String(editorNode?.innerHTML || '');
-        const currentFocusedDocPage = currentSnapshot.pages.find(
-          (page) => page.id === focusedPageId && page.type !== 'sheet'
-        );
-        const localFocusedDocPage = normalizeNoteDocumentPage(
-          {
-            ...(currentFocusedDocPage || incomingFocusedDocPage),
-            id: focusedPageId,
-            type: 'doc',
-            content: liveDocContent,
-          },
-          0
-        );
-        const mergedDocument = normalizeNoteDocumentPayload({
-          ...parsedDocument,
-          pages: parsedDocument.pages.map((page) =>
-            page.id === focusedPageId && page.type !== 'sheet' ? localFocusedDocPage : page
-          ),
-          activePageId: parsedDocument.activePageId,
-        });
-        const mergedSerialized = serializeStoredNoteDocument(mergedDocument);
-        if (mergedSerialized === currentSerialized) {
-          return;
-        }
-        noteDocumentRef.current = mergedDocument;
-        setNoteDocument(mergedDocument);
-        return;
-      }
     }
     noteDocumentRef.current = parsedDocument;
     setNoteDocument(parsedDocument);
@@ -13525,8 +13488,7 @@ function NoteEditor({
     const incomingContent = String(activePage.content || '');
     const isPageSwitchHydration = lastHydratedDocPageRef.current !== hydrateKey;
     const shouldHydrate =
-      isPageSwitchHydration ||
-      (document.activeElement !== editor && String(editor.innerHTML || '') !== incomingContent);
+      isPageSwitchHydration || String(editor.innerHTML || '') !== incomingContent;
     if (!shouldHydrate) return;
     editor.innerHTML = incomingContent;
     normalizeEditorImages();
