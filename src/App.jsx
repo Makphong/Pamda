@@ -73,6 +73,7 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 const AUTH_USER_KEY = 'pm_calendar_auth_user';
 const AUTH_USERS_KEY = 'pm_calendar_users';
 const ACCOUNT_DB_PREFIX = 'pm_calendar_db_';
+const ACCOUNT_DB_SAVE_QUEUE_BY_USER = new Map();
 const PROJECT_INVITES_KEY = 'pm_calendar_project_invites';
 const PROJECT_INVITE_STATUSES = {
   PENDING: 'pending',
@@ -1289,6 +1290,61 @@ const writeAccountDbPayload = (userId, payload) => {
   const safePayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
   localStorage.setItem(key, JSON.stringify(safePayload));
 };
+const getAccountSaveQueueState = (userId) => {
+  const state = ACCOUNT_DB_SAVE_QUEUE_BY_USER.get(userId);
+  if (state) return state;
+  const nextState = {
+    inFlight: false,
+    jobs: [],
+  };
+  ACCOUNT_DB_SAVE_QUEUE_BY_USER.set(userId, nextState);
+  return nextState;
+};
+const hasPendingAccountSaveQueue = (userId) => {
+  const state = ACCOUNT_DB_SAVE_QUEUE_BY_USER.get(userId);
+  if (!state) return false;
+  return state.inFlight || state.jobs.length > 0;
+};
+const flushAccountSaveQueue = async (userId) => {
+  const state = ACCOUNT_DB_SAVE_QUEUE_BY_USER.get(userId);
+  if (!state || state.inFlight) return;
+  state.inFlight = true;
+  while (state.jobs.length > 0) {
+    const nextJob = state.jobs.shift();
+    if (!nextJob) continue;
+    try {
+      await requestCloudDataApi(`/data/account/${encodeURIComponent(userId)}`, {
+        method: 'PUT',
+        body: { payload: nextJob.payload },
+      });
+    } catch (error) {
+      console.warn('Failed to save account data to Firestore API:', error.message);
+    } finally {
+      nextJob.resolves.forEach((resolve) => resolve());
+    }
+  }
+  state.inFlight = false;
+  if (state.jobs.length === 0) {
+    ACCOUNT_DB_SAVE_QUEUE_BY_USER.delete(userId);
+  }
+};
+const enqueueAccountPayloadSave = (userId, payload) =>
+  new Promise((resolve) => {
+    const state = getAccountSaveQueueState(userId);
+    if (state.jobs.length > 0) {
+      const lastJob = state.jobs[state.jobs.length - 1];
+      lastJob.payload = payload;
+      lastJob.resolves.push(resolve);
+    } else {
+      state.jobs.push({
+        payload,
+        resolves: [resolve],
+      });
+    }
+    if (!state.inFlight) {
+      void flushAccountSaveQueue(userId);
+    }
+  });
 
 const normalizeProjectInvite = (invite) => {
   const status = VALID_PROJECT_INVITE_STATUSES.has(invite?.status)
@@ -1569,6 +1625,9 @@ const loadAccountDbPayload = async (userId) => {
   }
 
   try {
+    if (hasPendingAccountSaveQueue(normalizedUserId)) {
+      return localPayload;
+    }
     const result = await requestCloudDataApi(`/data/account/${encodeURIComponent(normalizedUserId)}`);
     const remotePayload =
       result?.payload && typeof result.payload === 'object' && !Array.isArray(result.payload)
@@ -1598,15 +1657,7 @@ const saveAccountDbPayload = async (userId, payload) => {
   writeAccountDbPayload(normalizedUserId, safePayload);
 
   if (!AUTH_API_BASE_URL) return;
-
-  try {
-    await requestCloudDataApi(`/data/account/${encodeURIComponent(normalizedUserId)}`, {
-      method: 'PUT',
-      body: { payload: safePayload },
-    });
-  } catch (error) {
-    console.warn('Failed to save account data to Firestore API:', error.message);
-  }
+  await enqueueAccountPayloadSave(normalizedUserId, safePayload);
 };
 
 const loadProjectInvitesStore = async () => {
@@ -4475,6 +4526,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     const refreshCollaborativeSnapshot = async () => {
       try {
+        if (hasPendingAccountSaveQueue(currentUser.id)) {
+          return;
+        }
         const [latestPayload, latestInvites] = await Promise.all([
           loadAccountDbPayload(currentUser.id),
           loadProjectInvitesStore(),
@@ -4796,8 +4850,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     const collaborativeRefreshIntervalMs = activeDashboardProjectId
       ? activeDashboardTab === 'notes'
-        ? 420
-        : 1400
+        ? 900
+        : 2000
       : COLLABORATIVE_REFRESH_INTERVAL_MS;
     const refreshInterval = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
@@ -5173,7 +5227,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     }
   };
 
-	  const syncSharedProjectDetailsToOwner = async (projectId, nextProjectsSnapshot = projects) => {
+  const syncSharedProjectDetailsToOwner = async (projectId, nextProjectsSnapshot = projects) => {
     if (!AUTH_API_BASE_URL) return;
 
     const normalizedProjectId = String(projectId || '').trim();
@@ -5195,17 +5249,28 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       );
       if (ownerProjectIndex < 0) return;
 
-	      const ownerProject = ownerProjects[ownerProjectIndex];
-	      const strippedTargetProject = stripLocalOnlyProjectFields(targetProject);
-	      const preferredProjectSnapshot =
-	        selectPreferredProjectSnapshot(ownerProject, strippedTargetProject) || ownerProject;
-	      const ownerReference = {
-	        id: ownerId,
-	        username:
-	          String(ownerProject?.ownerUsername || '').trim().toLowerCase() ||
-	          String(targetProject.ownerUsername || '').trim().toLowerCase() ||
+      const ownerProject = ownerProjects[ownerProjectIndex];
+      const strippedTargetProject = stripLocalOnlyProjectFields(targetProject);
+      const ownerReference = {
+        id: ownerId,
+        username:
+          String(ownerProject?.ownerUsername || '').trim().toLowerCase() ||
+          String(targetProject.ownerUsername || '').trim().toLowerCase() ||
           currentUser.username,
       };
+      const ownerFeed = normalizeProjectActivityFeed(ownerProject?.changeFeed, ownerProject);
+      const targetFeed = normalizeProjectActivityFeed(
+        strippedTargetProject?.changeFeed,
+        strippedTargetProject
+      );
+      const mergedFeedById = new Map();
+      [...targetFeed, ...ownerFeed].forEach((entry) => {
+        if (!entry?.id || mergedFeedById.has(entry.id)) return;
+        mergedFeedById.set(entry.id, entry);
+      });
+      const mergedChangeFeed = Array.from(mergedFeedById.values())
+        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+        .slice(0, MAX_PROJECT_ACTIVITY_FEED);
       const mergedNotesState = mergeProjectNotesContentByRevision(
         ownerProject?.notesContent,
         ownerProject?.noteRevisionMap,
@@ -5216,14 +5281,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         ownerProject?.notesPresence,
         targetProject?.notesPresence
       );
-	      const mergedOwnerProject = ensureProjectOwnership(
-	        {
-	          ...ownerProject,
-	          ...preferredProjectSnapshot,
-	          isVisible: Boolean(ownerProject?.isVisible),
-	          notesPreferences: ownerProject?.notesPreferences || {},
-	          notesContent: mergedNotesState.notesContent,
-	          noteRevisionMap: mergedNotesState.noteRevisionMap,
+      const mergedOwnerProject = ensureProjectOwnership(
+        {
+          ...ownerProject,
+          ...strippedTargetProject,
+          isVisible: Boolean(ownerProject?.isVisible),
+          notesPreferences: ownerProject?.notesPreferences || {},
+          changeFeed: mergedChangeFeed,
+          notesContent: mergedNotesState.notesContent,
+          noteRevisionMap: mergedNotesState.noteRevisionMap,
           notesPresence: mergedNotesPresence,
         },
         ownerReference
