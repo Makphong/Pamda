@@ -922,6 +922,10 @@ const mergeProjectNotesContentByRevision = (
     const incomingRevisionNumber = Number.parseInt(String(incomingMeta.revision || '0'), 10) || 0;
     const baseMs = toTimestampMs(baseMeta.updatedAt);
     const incomingMs = toTimestampMs(incomingMeta.updatedAt);
+    const baseUpdatedById = String(baseMeta.updatedById || '').trim();
+    const incomingUpdatedById = String(incomingMeta.updatedById || '').trim();
+    const baseUpdatedByUsername = String(baseMeta.updatedByUsername || '').trim().toLowerCase();
+    const incomingUpdatedByUsername = String(incomingMeta.updatedByUsername || '').trim().toLowerCase();
     let source = 'base';
     if (incomingRevisionNumber > baseRevisionNumber) {
       source = 'incoming';
@@ -929,20 +933,18 @@ const mergeProjectNotesContentByRevision = (
       source = 'base';
     } else if (incomingMs > baseMs) {
       source = 'incoming';
-    } else if (baseMs === incomingMs) {
-      if (!hasBaseContent && hasIncomingContent) {
-        source = 'incoming';
-      } else if (hasBaseContent && hasIncomingContent && incomingValue !== baseValue) {
-        source = 'incoming';
-      }
-    } else if (
-      hasBaseContent &&
-      hasIncomingContent &&
-      incomingValue !== baseValue &&
-      String(incomingMeta.updatedById || '').trim() &&
-      String(incomingMeta.updatedById || '').trim() !== String(baseMeta.updatedById || '').trim()
-    ) {
+    } else if (incomingMs < baseMs) {
+      source = 'base';
+    } else if (hasIncomingContent && !hasBaseContent) {
       source = 'incoming';
+    } else if (!hasIncomingContent && hasBaseContent) {
+      source = 'base';
+    } else if (incomingUpdatedById !== baseUpdatedById) {
+      source = incomingUpdatedById > baseUpdatedById ? 'incoming' : 'base';
+    } else if (incomingUpdatedByUsername !== baseUpdatedByUsername) {
+      source = incomingUpdatedByUsername > baseUpdatedByUsername ? 'incoming' : 'base';
+    } else if (incomingValue !== baseValue) {
+      source = incomingValue > baseValue ? 'incoming' : 'base';
     }
     const selectedValue = source === 'incoming' ? incomingValue : baseValue;
     const selectedMeta = source === 'incoming' ? incomingMeta : baseMeta;
