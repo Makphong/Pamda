@@ -205,6 +205,9 @@ const ISO_TIME_PATTERN = /^\d{2}:\d{2}$/;
 const normalizeGoogleCalendarEvent = (googleEvent, calendarContext = null) => {
   const googleEventId = String(googleEvent?.id || '').trim();
   if (!googleEventId) return null;
+  const pmCalendarEventId = String(
+    googleEvent?.extendedProperties?.private?.pmCalendarEventId || ''
+  ).trim();
   const calendarId = String(calendarContext?.id || 'primary').trim() || 'primary';
   const calendarName =
     String(calendarContext?.summary || calendarContext?.id || 'Google Calendar').trim() ||
@@ -249,6 +252,7 @@ const normalizeGoogleCalendarEvent = (googleEvent, calendarContext = null) => {
     id: `google-${calendarIdKey}-${googleEventId}`,
     googleEventId,
     iCalUID: String(googleEvent?.iCalUID || '').trim(),
+    pmCalendarEventId,
     calendarId,
     calendarName,
     projectId: GOOGLE_CALENDAR_PROJECT_ID,
@@ -352,6 +356,9 @@ const fetchGoogleCalendarList = async (accessToken) => {
 
   return calendars;
 };
+const GOOGLE_CALENDAR_WRITABLE_ROLES = new Set(['owner', 'writer']);
+const canWriteToGoogleCalendar = (calendar) =>
+  GOOGLE_CALENDAR_WRITABLE_ROLES.has(String(calendar?.accessRole || '').trim().toLowerCase());
 
 const fetchGoogleCalendarEvents = async (accessToken, timeMin, timeMax, selectedCalendarIds = []) => {
   const calendars = await fetchGoogleCalendarList(accessToken);
@@ -1435,6 +1442,7 @@ app.post('/google/calendar/events', async (req, res) => {
     const endTime = String(req.body?.endTime || '10:00').trim();
     const requestedCalendarId = String(req.body?.calendarId || '').trim();
     const colorId = normalizeGoogleEventColorId(req.body?.colorId);
+    const pmCalendarEventId = String(req.body?.pmCalendarEventId || '').trim();
     const timeZone = String(req.body?.timeZone || '').trim() || 'UTC';
 
     if (!title) {
@@ -1484,6 +1492,10 @@ app.post('/google/calendar/events', async (req, res) => {
     const availableCalendarIds = new Set(
       calendars.map((calendar) => String(calendar.id || '').trim()).filter(Boolean)
     );
+    const writableCalendars = calendars.filter((calendar) => canWriteToGoogleCalendar(calendar));
+    const writableCalendarIds = new Set(
+      writableCalendars.map((calendar) => String(calendar.id || '').trim()).filter(Boolean)
+    );
     const selectedCalendarIds = filterGoogleCalendarSelectionByAvailableCalendars(
       googleCalendarIntegration.selectedCalendarIds,
       calendars
@@ -1493,8 +1505,22 @@ app.post('/google/calendar/events', async (req, res) => {
     if (calendarId && !availableCalendarIds.has(calendarId)) {
       return res.status(400).json({ message: 'Selected Google Calendar is not available.' });
     }
+    if (calendarId && !writableCalendarIds.has(calendarId)) {
+      return res.status(403).json({
+        message: 'You need to have writer access to this calendar.',
+      });
+    }
     if (!calendarId) {
-      calendarId = selectedCalendarIds[0] || calendars[0]?.id || 'primary';
+      calendarId =
+        selectedCalendarIds.find((id) => writableCalendarIds.has(String(id || '').trim())) ||
+        writableCalendars[0]?.id ||
+        '';
+    }
+    if (!calendarId) {
+      return res.status(403).json({
+        message:
+          'No writable Google Calendar found. Grant "Make changes to events" permission and try again.',
+      });
     }
 
     const calendarContext =
@@ -1508,6 +1534,13 @@ app.post('/google/calendar/events', async (req, res) => {
     };
     if (colorId) {
       googlePayload.colorId = colorId;
+    }
+    if (pmCalendarEventId) {
+      googlePayload.extendedProperties = {
+        private: {
+          pmCalendarEventId,
+        },
+      };
     }
 
     if (showTime) {

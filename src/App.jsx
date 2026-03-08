@@ -1464,6 +1464,9 @@ const normalizeGoogleCalendarSelection = (selectedCalendarIds) =>
         .filter(Boolean)
     )
   );
+const GOOGLE_CALENDAR_WRITABLE_ROLES = new Set(['owner', 'writer']);
+const canWriteGoogleCalendar = (calendar) =>
+  GOOGLE_CALENDAR_WRITABLE_ROLES.has(String(calendar?.accessRole || '').trim().toLowerCase());
 
 const normalizeGoogleCalendarCalendars = (calendarsInput) =>
   (Array.isArray(calendarsInput) ? calendarsInput : [])
@@ -3983,10 +3986,27 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     const alreadyIncluded = visibleProjects.some((project) => project.id === GOOGLE_CALENDAR_PROJECT_ID);
     return alreadyIncluded ? visibleProjects : [...visibleProjects, GOOGLE_CALENDAR_PROJECT_META];
   }, [visibleProjects, googleCalendarStatus.linked]);
-  const mergeViewEvents = useMemo(() => {
-    if (!googleCalendarStatus.linked || googleCalendarEvents.length === 0) return events;
-    return [...events, ...googleCalendarEvents];
-  }, [events, googleCalendarStatus.linked, googleCalendarEvents]);
+	  const mergeViewEvents = useMemo(() => {
+	    if (!googleCalendarStatus.linked || googleCalendarEvents.length === 0) return events;
+	    const localEventIdSet = new Set(
+	      events.map((event) => String(event?.id || '').trim()).filter(Boolean)
+	    );
+	    const localLinkedGoogleEventIdSet = new Set(
+	      events
+	        .map((event) =>
+	          String(event?.googleCalendarLinkedEventId || event?.googleEventId || '').trim()
+	        )
+	        .filter(Boolean)
+	    );
+	    const filteredGoogleEvents = googleCalendarEvents.filter((event) => {
+	      const linkedPmEventId = String(event?.pmCalendarEventId || '').trim();
+	      if (linkedPmEventId && localEventIdSet.has(linkedPmEventId)) return false;
+	      const googleEventId = String(event?.googleEventId || '').trim();
+	      if (googleEventId && localLinkedGoogleEventIdSet.has(googleEventId)) return false;
+	      return true;
+	    });
+	    return [...events, ...filteredGoogleEvents];
+	  }, [events, googleCalendarStatus.linked, googleCalendarEvents]);
   const mobileCalendarProjects = selectedMobileProject ? [selectedMobileProject] : mergeViewProjects;
   const mobileCalendarEvents = selectedMobileProject
     ? events.filter((event) => event.projectId === selectedMobileProject.id)
@@ -4781,15 +4801,32 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       };
     }
 
-    const targetCalendarId = String(options.calendarId || '').trim();
+    const writableCalendarIds = new Set(
+      (Array.isArray(googleCalendarCalendars) ? googleCalendarCalendars : [])
+        .filter((calendar) => canWriteGoogleCalendar(calendar))
+        .map((calendar) => String(calendar.id || '').trim())
+        .filter(Boolean)
+    );
+    let targetCalendarId = String(options.calendarId || '').trim();
+    if (targetCalendarId && writableCalendarIds.size > 0 && !writableCalendarIds.has(targetCalendarId)) {
+      return {
+        ok: false,
+        message: 'Selected Google Calendar is read-only. Please choose a calendar with writer access.',
+      };
+    }
+    if (!targetCalendarId && writableCalendarIds.size > 0) {
+      targetCalendarId = Array.from(writableCalendarIds)[0] || '';
+    }
     if (!targetCalendarId) {
       return {
         ok: false,
-        message: 'Please select Google Calendar target.',
+        message:
+          'No writable Google Calendar available. Please grant "Make changes to events" permission first.',
       };
     }
 
     const eventColorId = String(options.colorId || '').trim();
+    const pmCalendarEventId = String(options.pmCalendarEventId || '').trim();
     const timeZone =
       String(
         (typeof Intl !== 'undefined' &&
@@ -4813,6 +4850,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             showTime: payload.showTime !== false,
             calendarId: targetCalendarId,
             colorId: eventColorId,
+            pmCalendarEventId,
             timeZone,
           },
         }
@@ -4844,7 +4882,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         }
       }
 
-      return { ok: true };
+      return { ok: true, event: createdEvent };
     } catch (error) {
       return {
         ok: false,
@@ -5136,13 +5174,20 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         : null;
     const eventPayload = { ...payload };
     delete eventPayload.googleCalendarOptions;
+    let nextEvents = events;
+    let localEventId = '';
+    let localEventProjectId = String(eventPayload.projectId || '').trim();
+    const baseSyncProjectIds = [];
 
     if (editingEvent) {
-      const nextEvents = events.map((event) =>
+      localEventId = String(editingEvent.id || '').trim();
+      if (!localEventProjectId) {
+        localEventProjectId = String(editingEvent.projectId || '').trim();
+      }
+      nextEvents = events.map((event) =>
         event.id === editingEvent.id ? { ...event, ...eventPayload } : event
       );
-      setEvents(nextEvents);
-      syncSharedEventsForProjects([editingEvent.projectId, eventPayload.projectId], nextEvents);
+      baseSyncProjectIds.push(editingEvent.projectId, localEventProjectId);
     } else {
       const createdEvent = {
         ...eventPayload,
@@ -5151,9 +5196,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         department: 'Unassigned',
         assigneeId: 'u' + (Math.floor(Math.random() * 5) + 1),
       };
-      const nextEvents = [...events, createdEvent];
-      setEvents(nextEvents);
-      syncSharedEventsForProjects([createdEvent.projectId], nextEvents);
+      localEventId = String(createdEvent.id || '').trim();
+      localEventProjectId = String(createdEvent.projectId || '').trim();
+      nextEvents = [...events, createdEvent];
+      baseSyncProjectIds.push(localEventProjectId);
       appendProjectActivityLog(createdEvent.projectId, {
         type: PROJECT_ACTIVITY_TYPES.EVENT_CREATED,
         title: String(createdEvent.title || '').trim(),
@@ -5168,14 +5214,34 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         },
       });
     }
+    setEvents(nextEvents);
+    syncSharedEventsForProjects(baseSyncProjectIds, nextEvents);
     setShowEventModal(false);
     if (googleCalendarOptions?.enabled) {
-      const googleResult = await handleAddEventToGoogleCalendar(eventPayload, googleCalendarOptions);
+      const googleResult = await handleAddEventToGoogleCalendar(eventPayload, {
+        ...googleCalendarOptions,
+        pmCalendarEventId: localEventId,
+      });
       if (!googleResult.ok) {
         await popup.alert({
           title: 'Google Calendar add failed',
           message: googleResult.message || 'Could not add event to Google Calendar.',
         });
+      } else {
+        const createdGoogleEvent =
+          googleResult.event && typeof googleResult.event === 'object' ? googleResult.event : null;
+        const googleLinkPatch = {
+          googleCalendarLinked: true,
+          googleCalendarId:
+            String(createdGoogleEvent?.calendarId || googleCalendarOptions.calendarId || '').trim() || '',
+          googleCalendarLinkedEventId: String(createdGoogleEvent?.googleEventId || '').trim() || '',
+          googleCalendarLinkedAt: new Date().toISOString(),
+        };
+        const nextEventsWithGoogleLink = nextEvents.map((event) =>
+          String(event.id || '').trim() === localEventId ? { ...event, ...googleLinkPatch } : event
+        );
+        setEvents(nextEventsWithGoogleLink);
+        syncSharedEventsForProjects([localEventProjectId], nextEventsWithGoogleLink);
       }
     }
   };
@@ -9696,7 +9762,8 @@ function TaskDetailPane({
       ></div>
 
       {/* Slide-over Panel */}
-      <div className="fixed top-0 bottom-0 right-0 left-auto w-[min(540px,100vw)] max-w-full bg-white shadow-2xl z-50 transition-transform duration-300 flex flex-col border-l border-slate-200 rounded-l-2xl overflow-hidden relative">
+      <div className="fixed inset-y-0 right-0 z-50 w-full flex justify-end pointer-events-none">
+        <div className="pointer-events-auto h-screen max-h-screen w-[min(540px,100vw)] max-w-full bg-white shadow-2xl transition-transform duration-300 flex flex-col border-l border-slate-200 rounded-none md:rounded-l-2xl overflow-hidden relative">
         
         {/* Header Options */}
         <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/50">
@@ -10089,6 +10156,7 @@ function TaskDetailPane({
             </button>
           </div>
         )}
+        </div>
       </div>
     </>
   );
@@ -17411,7 +17479,7 @@ function NoteEditor({
             </p>
           </div>
         )}
-      </div>
+        </div>
 
       <div
         ref={docViewportRef}
@@ -19644,12 +19712,16 @@ function EventModal({
   const availableGoogleCalendars = Array.isArray(googleCalendarCalendars)
     ? googleCalendarCalendars
     : [];
+  const writableGoogleCalendars = availableGoogleCalendars.filter((calendar) =>
+    canWriteGoogleCalendar(calendar)
+  );
+  const hasWritableGoogleCalendars = writableGoogleCalendars.length > 0;
   const preferredGoogleCalendarId =
     normalizeGoogleCalendarSelection(googleCalendarSelectedCalendarIds).find((calendarId) =>
-      availableGoogleCalendars.some((calendar) => calendar.id === calendarId)
+      writableGoogleCalendars.some((calendar) => calendar.id === calendarId)
     ) ||
-    availableGoogleCalendars[0]?.id ||
-    'primary';
+    writableGoogleCalendars[0]?.id ||
+    '';
   const [addToGoogleCalendar, setAddToGoogleCalendar] = useState(false);
   const [googleCalendarId, setGoogleCalendarId] = useState(preferredGoogleCalendarId);
   const [googleEventColorId, setGoogleEventColorId] = useState('');
@@ -19663,10 +19735,10 @@ function EventModal({
 
   useEffect(() => {
     if (!addToGoogleCalendar) return;
-    const hasCurrent = availableGoogleCalendars.some((calendar) => calendar.id === googleCalendarId);
+    const hasCurrent = writableGoogleCalendars.some((calendar) => calendar.id === googleCalendarId);
     if (hasCurrent) return;
     setGoogleCalendarId(preferredGoogleCalendarId);
-  }, [addToGoogleCalendar, availableGoogleCalendars, googleCalendarId, preferredGoogleCalendarId]);
+  }, [addToGoogleCalendar, writableGoogleCalendars, googleCalendarId, preferredGoogleCalendarId]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -19682,6 +19754,14 @@ function EventModal({
       await popup.alert({
         title: 'Google Calendar not linked',
         message: 'Please link Google Calendar first in Manage Projects.',
+      });
+      return;
+    }
+    if (addToGoogleCalendar && !hasWritableGoogleCalendars) {
+      await popup.alert({
+        title: 'No writable calendar',
+        message:
+          'No calendar with writer access found. Please grant "Make changes to events" permission in Google Calendar.',
       });
       return;
     }
@@ -19853,7 +19933,7 @@ function EventModal({
                   type="checkbox"
                   checked={addToGoogleCalendar}
                   onChange={(e) => setAddToGoogleCalendar(e.target.checked)}
-                  disabled={!googleLinked}
+                  disabled={!googleLinked || !hasWritableGoogleCalendars}
                   className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
                 />
                 <span className="font-medium">Add this event to Google Calendar</span>
@@ -19861,6 +19941,11 @@ function EventModal({
               {!googleLinked && (
                 <p className="text-xs text-gray-500">
                   Link Google Calendar in Manage Projects to enable this option.
+                </p>
+              )}
+              {googleLinked && !hasWritableGoogleCalendars && (
+                <p className="text-xs text-amber-700">
+                  This Google account has no writable calendar. Grant "Make changes to events" permission first.
                 </p>
               )}
               {googleLinked && addToGoogleCalendar && (
@@ -19877,10 +19962,7 @@ function EventModal({
                         onChange={(e) => setGoogleCalendarId(e.target.value)}
                         className="w-full border-gray-300 rounded-md p-2 bg-white text-sm focus:ring-blue-500 focus:border-blue-500"
                       >
-                        {(availableGoogleCalendars.length > 0
-                          ? availableGoogleCalendars
-                          : [{ id: 'primary', summary: 'Primary' }]
-                        ).map((calendar) => (
+                        {writableGoogleCalendars.map((calendar) => (
                           <option key={`google-calendar-target-${calendar.id}`} value={calendar.id}>
                             {calendar.summary || calendar.id}
                           </option>
