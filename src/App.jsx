@@ -7304,7 +7304,10 @@ const NoteTargetSelect = ({
   }, [isOpen]);
 
   return (
-    <div ref={containerRef} className="relative w-full">
+    <div
+      ref={containerRef}
+      className={`relative w-full ${isOpen ? 'z-[130]' : 'z-10'}`}
+    >
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
@@ -7334,7 +7337,7 @@ const NoteTargetSelect = ({
       </button>
 
       {isOpen && (
-        <div className="absolute z-30 mt-2 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+        <div className="absolute z-[140] mt-2 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
           <div className="p-2 border-b border-gray-100">
             <div className="relative">
               <Search className="w-4 h-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -11254,6 +11257,7 @@ function NoteEditor({
   const dragImageIdRef = React.useRef('');
   const docImagePointerDragRef = React.useRef(null);
   const docImageResizeRef = React.useRef(null);
+  const isImageInteractionActiveRef = React.useRef(false);
   const docImageClipboardRef = React.useRef(null);
   const previousNoteIdRef = React.useRef(noteId);
   const lastHydratedDocPageRef = React.useRef('');
@@ -11584,6 +11588,7 @@ function NoteEditor({
       lastX: 0,
       lastY: 0,
     };
+    isImageInteractionActiveRef.current = false;
     clearLongPressTimer();
   };
 
@@ -13343,6 +13348,55 @@ function NoteEditor({
     }
     clearDocTableSelection();
   };
+  const resolveClientPointFromEvent = (event) => {
+    const touchPoint =
+      (event?.touches && event.touches[0]) ||
+      (event?.changedTouches && event.changedTouches[0]) ||
+      null;
+    const pointX =
+      touchPoint && Number.isFinite(Number(touchPoint.clientX))
+        ? Number(touchPoint.clientX)
+        : Number(event?.clientX);
+    const pointY =
+      touchPoint && Number.isFinite(Number(touchPoint.clientY))
+        ? Number(touchPoint.clientY)
+        : Number(event?.clientY);
+    if (!Number.isFinite(pointX) || !Number.isFinite(pointY)) return null;
+    return { x: pointX, y: pointY };
+  };
+  const startImagePointerDrag = (event, imageIdInput = '') => {
+    if (!isActiveDocPage) return;
+    const point = resolveClientPointFromEvent(event);
+    if (!point) return;
+    const explicitImageId = String(imageIdInput || '').trim();
+    const imageNode =
+      explicitImageId
+        ? getImageById(explicitImageId)
+        : event?.target?.closest?.('img[data-note-image-id]') || null;
+    if (!imageNode || !editorRef.current?.contains(imageNode)) return;
+    const imageId = String(imageNode.dataset.noteImageId || explicitImageId || '').trim();
+    if (!imageId) return;
+    if (event?.cancelable) {
+      event.preventDefault();
+    }
+    if (typeof event?.stopPropagation === 'function') {
+      event.stopPropagation();
+    }
+    const currentX = Number.parseFloat(String(imageNode.dataset.posX || '0'));
+    const currentY = Number.parseFloat(String(imageNode.dataset.posY || '0'));
+    docImagePointerDragRef.current = {
+      imageId,
+      startClientX: point.x,
+      startClientY: point.y,
+      originX: Number.isFinite(currentX) ? currentX : 0,
+      originY: Number.isFinite(currentY) ? currentY : 0,
+      moved: false,
+    };
+    isImageInteractionActiveRef.current = true;
+    imageNode.style.cursor = 'grabbing';
+    openImageMenu(imageNode);
+    setDocLinkMenuState(null);
+  };
   const handleDocEditorMouseDown = (event) => {
     if (!isActiveDocPage) return;
     const tableCellNode = getDocTableCellFromTarget(event.target);
@@ -13384,41 +13438,21 @@ function NoteEditor({
       openImageMenu(imageNode);
       return;
     }
-    event.preventDefault();
-    const currentX = Number.parseFloat(String(imageNode.dataset.posX || '0'));
-    const currentY = Number.parseFloat(String(imageNode.dataset.posY || '0'));
-    docImagePointerDragRef.current = {
-      imageId: imageNode.dataset.noteImageId || '',
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      originX: Number.isFinite(currentX) ? currentX : 0,
-      originY: Number.isFinite(currentY) ? currentY : 0,
-      moved: false,
-    };
-    imageNode.style.cursor = 'grabbing';
-    openImageMenu(imageNode);
-    setDocLinkMenuState(null);
+    startImagePointerDrag(event);
   };
   const handleImageResizeStart = (event, direction, mode = 'resize') => {
     if (!isActiveDocPage) return;
+    const point = resolveClientPointFromEvent(event);
     const touchPoint =
       (event.touches && event.touches[0]) ||
       (event.changedTouches && event.changedTouches[0]) ||
       null;
-    const pointerClientX =
-      touchPoint && Number.isFinite(Number(touchPoint.clientX))
-        ? Number(touchPoint.clientX)
-        : Number(event.clientX);
-    const pointerClientY =
-      touchPoint && Number.isFinite(Number(touchPoint.clientY))
-        ? Number(touchPoint.clientY)
-        : Number(event.clientY);
     const isMouseLikeEvent = !touchPoint && typeof event.button === 'number';
     if (isMouseLikeEvent && event.button !== 0) return;
-    if (!Number.isFinite(pointerClientX) || !Number.isFinite(pointerClientY)) return;
+    if (!point) return;
     event.preventDefault();
     event.stopPropagation();
-    const imageId = String(imageMenuState?.imageId || '').trim();
+    const imageId = String(imageMenuState?.imageId || activeImageFrame?.imageId || '').trim();
     if (!imageId) return;
     const imageNode = getImageById(imageId);
     if (!imageNode) return;
@@ -13434,8 +13468,8 @@ function NoteEditor({
       imageId,
       direction,
       mode,
-      startClientX: pointerClientX,
-      startClientY: pointerClientY,
+      startClientX: point.x,
+      startClientY: point.y,
       startWidth: Math.max(48, rect.width || 48),
       startHeight: Math.max(48, rect.height || 48),
       startPosX: Number.isFinite(startPosX) ? startPosX : 0,
@@ -13460,6 +13494,7 @@ function NoteEditor({
     } else {
       docImageResizeRef.current = baseResizeState;
     }
+    isImageInteractionActiveRef.current = true;
     imageNode.style.cursor = mode === 'crop' ? 'crosshair' : 'nwse-resize';
     refreshActiveImageFrame(imageId);
   };
@@ -13496,19 +13531,36 @@ function NoteEditor({
     if (!touch) return;
 
     clearLongPressTimer();
+    const touchedImageId = String(imageNode.dataset.noteImageId || '').trim();
+    const selectedImageId = String(imageMenuState?.imageId || '').trim();
+    const shouldStartImmediateDrag = Boolean(touchedImageId && selectedImageId === touchedImageId);
     touchDragStateRef.current = {
-      imageId: imageNode.dataset.noteImageId || '',
-      active: false,
+      imageId: touchedImageId,
+      active: shouldStartImmediateDrag,
       startX: touch.clientX,
       startY: touch.clientY,
       lastX: touch.clientX,
       lastY: touch.clientY,
     };
 
+    if (shouldStartImmediateDrag) {
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      imageNode.style.opacity = '0.6';
+      imageNode.style.cursor = 'grabbing';
+      setImageMenuState(null);
+      setActiveImageFrame(null);
+      setActiveCropFrame(null);
+      isImageInteractionActiveRef.current = true;
+      return;
+    }
+
     longPressTimerRef.current = window.setTimeout(() => {
       const current = touchDragStateRef.current;
       if (!current.imageId || current.imageId !== imageNode.dataset.noteImageId) return;
       current.active = true;
+      isImageInteractionActiveRef.current = true;
       imageNode.style.opacity = '0.6';
       imageNode.style.cursor = 'grabbing';
       setImageMenuState(null);
@@ -13541,6 +13593,7 @@ function NoteEditor({
     const current = touchDragStateRef.current;
     if (!current.imageId) {
       clearLongPressTimer();
+      isImageInteractionActiveRef.current = false;
       return;
     }
 
@@ -13548,21 +13601,31 @@ function NoteEditor({
     const touchPoint = event.changedTouches?.[0];
     resetTouchDragState();
 
-    if (!wasActive) return;
+    if (!wasActive) {
+      isImageInteractionActiveRef.current = false;
+      return;
+    }
 
     const dropX = touchPoint?.clientX ?? current.lastX;
     const dropY = touchPoint?.clientY ?? current.lastY;
     const movedImage = placeImageAtPoint(current.imageId, dropX, dropY);
-    if (!movedImage) return;
+    if (!movedImage) {
+      isImageInteractionActiveRef.current = false;
+      return;
+    }
 
     handleInput();
     openImageMenu(movedImage);
+    isImageInteractionActiveRef.current = false;
   };
 
   React.useEffect(() => {
     const parsedDocument = parseStoredNoteDocument(initialContent);
     const isSwitchingNote = previousNoteIdRef.current !== noteId;
     previousNoteIdRef.current = noteId;
+    if (!isSwitchingNote && isImageInteractionActiveRef.current) {
+      return;
+    }
     if (!isSwitchingNote) {
       const currentSerialized = serializeStoredNoteDocument(
         normalizeNoteDocumentPayload(noteDocumentRef.current || noteDocument)
@@ -13583,6 +13646,9 @@ function NoteEditor({
       return hasPreviousPage ? prevActivePageId : parsedDocument.activePageId;
     });
     if (isSwitchingNote) {
+      isImageInteractionActiveRef.current = false;
+      docImagePointerDragRef.current = null;
+      docImageResizeRef.current = null;
       setSheetSelection({ row: 0, col: 0 });
       setSheetSelectionRange({
         start: { row: 0, col: 0 },
@@ -13676,6 +13742,9 @@ function NoteEditor({
   }, [noteId, activePageId, activePage?.content, isActiveDocPage]);
   React.useEffect(() => {
     if (!isActiveSheetPage) return;
+    isImageInteractionActiveRef.current = false;
+    docImagePointerDragRef.current = null;
+    docImageResizeRef.current = null;
     setImageMenuState(null);
     setActiveImageFrame(null);
     setActiveCropFrame(null);
@@ -13997,6 +14066,9 @@ function NoteEditor({
       }
       const dragState = docImagePointerDragRef.current;
       if (!dragState?.imageId || !editorRef.current) return;
+      if (event.cancelable) {
+        event.preventDefault();
+      }
       const imageNode = getImageById(dragState.imageId);
       if (!imageNode) return;
       const editor = editorRef.current;
@@ -14032,10 +14104,14 @@ function NoteEditor({
         }
         docImageResizeRef.current = null;
         handleInput();
+        isImageInteractionActiveRef.current = false;
         return;
       }
       const dragState = docImagePointerDragRef.current;
-      if (!dragState?.imageId) return;
+      if (!dragState?.imageId) {
+        isImageInteractionActiveRef.current = false;
+        return;
+      }
       const imageNode = getImageById(dragState.imageId);
       if (imageNode) {
         imageNode.style.cursor = 'grab';
@@ -14045,6 +14121,7 @@ function NoteEditor({
       if (dragState.moved) {
         handleInput();
       }
+      isImageInteractionActiveRef.current = false;
     };
     window.addEventListener('mousemove', handlePointerMove);
     window.addEventListener('mouseup', handlePointerUp);
@@ -19092,6 +19169,18 @@ function NoteEditor({
               height: `${activeImageFrame.height}px`,
             }}
           >
+            <button
+              type="button"
+              className="pointer-events-auto absolute inset-0 cursor-move"
+              onMouseDown={(event) => {
+                startImagePointerDrag(event, activeImageFrame.imageId);
+              }}
+              onTouchStart={(event) => {
+                startImagePointerDrag(event, activeImageFrame.imageId);
+              }}
+              style={{ touchAction: 'none' }}
+              title="Drag image"
+            />
             {[
               { key: 'nw', className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
               { key: 'n', className: 'left-1/2 -translate-x-1/2 -top-1.5 cursor-ns-resize' },
