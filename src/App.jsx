@@ -806,6 +806,11 @@ const toTimestampMs = (value) => {
   const parsed = new Date(raw).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 };
+const toNormalizedUnitInterval = (value) => {
+  const parsed = Number.parseFloat(String(value ?? '').trim());
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.min(1, parsed));
+};
 const normalizeNoteContentMap = (value) => {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const result = {};
@@ -849,6 +854,8 @@ const normalizeNotePresenceEntry = (value) => {
     pageType: raw.pageType === 'sheet' ? 'sheet' : 'doc',
     line: String(raw.line || '').trim() || '1',
     typingText: String(raw.typingText || '').trim().slice(0, NOTE_PRESENCE_TYPING_MAX),
+    cursorXRatio: toNormalizedUnitInterval(raw.cursorXRatio),
+    cursorYRatio: toNormalizedUnitInterval(raw.cursorYRatio),
     updatedAt,
   };
 };
@@ -962,6 +969,25 @@ const mergeProjectNotesPresence = (basePresenceInput, incomingPresenceInput, now
     }
   });
   return merged;
+};
+const stripTransientProjectFieldsForAutoSave = (projectInput) => {
+  if (!projectInput || typeof projectInput !== 'object' || Array.isArray(projectInput)) {
+    return projectInput;
+  }
+  const { notesPresence, ...project } = projectInput;
+  return project;
+};
+const buildAccountAutoSaveComparablePayload = (payloadInput) => {
+  const payload =
+    payloadInput && typeof payloadInput === 'object' && !Array.isArray(payloadInput)
+      ? payloadInput
+      : {};
+  return {
+    ...payload,
+    projects: (Array.isArray(payload.projects) ? payload.projects : []).map(
+      stripTransientProjectFieldsForAutoSave
+    ),
+  };
 };
 const describeProjectActivityEntry = (entry) => {
   const meta = entry?.meta && typeof entry.meta === 'object' ? entry.meta : {};
@@ -3538,6 +3564,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }, [googleCalendarSelectedCalendarIds, writableGoogleCalendars]);
   const projectsRef = useRef(projects);
   const eventsRef = useRef(events);
+  const accountAutoSaveComparableRef = useRef('');
   const previousUnseenProjectUpdateIdsRef = useRef([]);
   const projectUpdateToastTimersRef = useRef({ autoHide: null, clear: null });
 
@@ -3548,6 +3575,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   useEffect(() => {
     eventsRef.current = events;
   }, [events]);
+
+  useEffect(() => {
+    accountAutoSaveComparableRef.current = '';
+  }, [currentUser.id]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -3887,6 +3918,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       projectUpdatePopupMode,
       seenProjectUpdateIds,
     };
+    const comparablePayload = buildAccountAutoSaveComparablePayload(dbPayload);
+    const comparableSerialized = JSON.stringify(comparablePayload);
+    if (accountAutoSaveComparableRef.current === comparableSerialized) {
+      return;
+    }
+    accountAutoSaveComparableRef.current = comparableSerialized;
 
     void saveAccountDbPayload(currentUser.id, dbPayload);
   }, [
@@ -5141,6 +5178,47 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       console.warn('Failed to sync shared project details to owner payload:', error.message);
     }
   };
+  const syncOwnerProjectPresencePatchToCloud = async (
+    projectId,
+    notePresencePatchInput,
+    nextProjectsSnapshot = projects
+  ) => {
+    if (!AUTH_API_BASE_URL) return;
+
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) return;
+    const targetProject = (Array.isArray(nextProjectsSnapshot) ? nextProjectsSnapshot : []).find(
+      (project) => String(project?.id || '').trim() === normalizedProjectId
+    );
+    if (!targetProject) return;
+    if (String(targetProject.ownerId || '').trim() !== currentUser.id) return;
+
+    const presencePatch = normalizeProjectNotesPresence(notePresencePatchInput);
+    if (Object.keys(presencePatch).length === 0) return;
+
+    try {
+      const remotePayload = await loadAccountDbPayload(currentUser.id);
+      const remoteProjects = Array.isArray(remotePayload.projects) ? remotePayload.projects : [];
+      const projectIndex = remoteProjects.findIndex(
+        (project) => String(project?.id || '').trim() === normalizedProjectId
+      );
+      if (projectIndex < 0) return;
+      const remoteProject = ensureProjectOwnership(remoteProjects[projectIndex], currentUser);
+      const nextPresence = mergeProjectNotesPresence(remoteProject.notesPresence, presencePatch);
+      if (isJsonEqual(remoteProject.notesPresence, nextPresence)) return;
+      const nextRemoteProjects = [...remoteProjects];
+      nextRemoteProjects[projectIndex] = {
+        ...remoteProject,
+        notesPresence: nextPresence,
+      };
+      await saveAccountDbPayload(currentUser.id, {
+        ...remotePayload,
+        projects: nextRemoteProjects,
+      });
+    } catch (error) {
+      console.warn('Failed to sync owner note presence patch:', error.message);
+    }
+  };
 
   const syncSharedProjectDetailsForProjects = (projectIds, nextProjectsSnapshot = projects) => {
     const uniqueProjectIds = Array.from(
@@ -5729,6 +5807,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     setProjects((prevProjects) => {
       let didUpdate = false;
+      let ownerPresencePatchToSync = null;
       const nextProjects = prevProjects.map((project) => {
         if (project.id !== normalizedProjectId) return project;
         didUpdate = true;
@@ -5779,6 +5858,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             project.notesPresence,
             notePresencePatchInput
           );
+          if (isOwner) {
+            ownerPresencePatchToSync = notePresencePatchInput;
+          }
         }
         if (Array.isArray(safeUpdates.changeFeed)) {
           const requestedFeed = normalizeProjectActivityFeed(safeUpdates.changeFeed, project);
@@ -5821,6 +5903,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
       if (didUpdate) {
         syncSharedProjectDetailsForProjects([normalizedProjectId], nextProjects);
+        if (ownerPresencePatchToSync) {
+          void syncOwnerProjectPresencePatchToCloud(
+            normalizedProjectId,
+            ownerPresencePatchToSync,
+            nextProjects
+          );
+        }
       }
 
       return nextProjects;
@@ -7067,6 +7156,7 @@ function ProjectDashboard({
   const [newDepartmentColor, setNewDepartmentColor] = useState(DEPARTMENT_COLOR_PRESETS[0] || '#3b82f6');
   const [editingOptionOriginal, setEditingOptionOriginal] = useState('');
   const [editingOptionValue, setEditingOptionValue] = useState('');
+  const [editingOptionDepartmentColor, setEditingOptionDepartmentColor] = useState('');
   const [announcementDraft, setAnnouncementDraft] = useState('');
   const [showAnnouncementHistory, setShowAnnouncementHistory] = useState(false);
 
@@ -7514,7 +7604,7 @@ function ProjectDashboard({
     return true;
   };
 
-  const handleRenameDepartmentOption = (currentName, nextName) => {
+  const handleRenameDepartmentOption = (currentName, nextName, nextColor = '') => {
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
@@ -7527,12 +7617,27 @@ function ProjectDashboard({
     const nextTrimmed = String(nextName || '').trim();
     if (!currentTrimmed || !nextTrimmed) return false;
     if (currentTrimmed.toLowerCase() === 'unassigned') return false;
-    if (currentTrimmed.toLowerCase() === nextTrimmed.toLowerCase()) return false;
+    const currentLower = currentTrimmed.toLowerCase();
+    const nextLower = nextTrimmed.toLowerCase();
+    const currentColor = resolveDepartmentColorHex(
+      projectDepartmentColors,
+      currentTrimmed,
+      pickDepartmentPresetColor(currentTrimmed)
+    );
+    const requestedColor =
+      normalizeDepartmentColorHex(nextColor) ||
+      normalizeDepartmentColorHex(currentColor) ||
+      pickDepartmentPresetColor(nextTrimmed);
+    const isNameChanged = currentLower !== nextLower;
+    const isColorChanged =
+      normalizeDepartmentColorHex(requestedColor) !==
+      normalizeDepartmentColorHex(currentColor);
+    if (!isNameChanged && !isColorChanged) return true;
 
     const duplicated = projectDepartments.some(
       (department) =>
-        String(department || '').trim().toLowerCase() === nextTrimmed.toLowerCase() &&
-        String(department || '').trim().toLowerCase() !== currentTrimmed.toLowerCase()
+        String(department || '').trim().toLowerCase() === nextLower &&
+        String(department || '').trim().toLowerCase() !== currentLower
     );
     if (duplicated) {
       void popup.alert({
@@ -7543,21 +7648,20 @@ function ProjectDashboard({
     }
 
     const nextDepartments = projectDepartments.map((department) =>
-      String(department || '').trim().toLowerCase() === currentTrimmed.toLowerCase() ? nextTrimmed : department
+      String(department || '').trim().toLowerCase() === currentLower ? nextTrimmed : department
     );
-    const nextDepartmentColors = normalizeDepartmentColorMap(
-      Object.fromEntries(
-        Object.entries(projectDepartmentColors).map(([departmentName, colorValue]) => {
-          if (String(departmentName || '').trim().toLowerCase() === currentTrimmed.toLowerCase()) {
-            return [nextTrimmed, colorValue];
-          }
-          return [departmentName, colorValue];
-        })
-      ),
-      nextDepartments
+    const renamedDepartmentColors = Object.fromEntries(
+      Object.entries(projectDepartmentColors).map(([departmentName, colorValue]) => {
+        if (String(departmentName || '').trim().toLowerCase() === currentLower) {
+          return [nextTrimmed, colorValue];
+        }
+        return [departmentName, colorValue];
+      })
     );
+    renamedDepartmentColors[nextTrimmed] = requestedColor;
+    const nextDepartmentColors = normalizeDepartmentColorMap(renamedDepartmentColors, nextDepartments);
     const nextMembers = teamMembers.map((member) =>
-      String(member.department || '').trim().toLowerCase() === currentTrimmed.toLowerCase()
+      String(member.department || '').trim().toLowerCase() === currentLower
         ? { ...member, department: nextTrimmed }
         : member
     );
@@ -7573,6 +7677,7 @@ function ProjectDashboard({
     setNewDepartmentColor(DEPARTMENT_COLOR_PRESETS[0] || '#3b82f6');
     setEditingOptionOriginal('');
     setEditingOptionValue('');
+    setEditingOptionDepartmentColor('');
   };
 
   const closeOptionsPopup = () => {
@@ -7581,6 +7686,7 @@ function ProjectDashboard({
     setNewDepartmentColor(DEPARTMENT_COLOR_PRESETS[0] || '#3b82f6');
     setEditingOptionOriginal('');
     setEditingOptionValue('');
+    setEditingOptionDepartmentColor('');
   };
 
   const handleAddMember = async () => {
@@ -9848,15 +9954,51 @@ function ProjectDashboard({
                         String(editingOptionOriginal || '').trim().toLowerCase() === normalizedValue;
 
                       return (
-                        <div key={`${optionsPopupType}-${optionValue}`} className="px-4 py-3 flex items-center gap-2">
+                        <div
+                          key={`${optionsPopupType}-${optionValue}`}
+                          className={`px-4 py-3 flex gap-2 ${
+                            isEditing && optionsPopupType === 'department'
+                              ? 'items-start'
+                              : 'items-center'
+                          }`}
+                        >
                           {isEditing ? (
-                            <input
-                              type="text"
-                              value={editingOptionValue}
-                              onChange={(e) => setEditingOptionValue(e.target.value)}
-                              className="flex-1 border border-gray-300 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                              autoFocus
-                            />
+                            optionsPopupType === 'department' ? (
+                              <div className="flex-1 space-y-2">
+                                <input
+                                  type="text"
+                                  value={editingOptionValue}
+                                  onChange={(e) => setEditingOptionValue(e.target.value)}
+                                  className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                  autoFocus
+                                />
+                                <div className="flex flex-wrap gap-1.5">
+                                  {DEPARTMENT_COLOR_PRESETS.map((colorValue) => {
+                                    const isSelected = editingOptionDepartmentColor === colorValue;
+                                    return (
+                                      <button
+                                        key={`edit-department-color-${optionValue}-${colorValue}`}
+                                        type="button"
+                                        onClick={() => setEditingOptionDepartmentColor(colorValue)}
+                                        className={`h-5 w-5 rounded-full border-2 transition-transform hover:scale-105 ${
+                                          isSelected ? 'border-gray-700' : 'border-white ring-1 ring-gray-300'
+                                        }`}
+                                        style={{ backgroundColor: colorValue }}
+                                        title={colorValue}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : (
+                              <input
+                                type="text"
+                                value={editingOptionValue}
+                                onChange={(e) => setEditingOptionValue(e.target.value)}
+                                className="flex-1 border border-gray-300 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                                autoFocus
+                              />
+                            )
 	                          ) : (
 	                            <span className={`flex-1 text-sm ${isLockedOption ? 'text-gray-400' : 'text-gray-700'}`}>
 	                              <span className="inline-flex items-center gap-2">
@@ -9884,11 +10026,16 @@ function ProjectDashboard({
                                   const updated =
                                     optionsPopupType === 'position'
                                       ? handleRenamePositionOption(editingOptionOriginal, editingOptionValue)
-                                      : handleRenameDepartmentOption(editingOptionOriginal, editingOptionValue);
+                                      : handleRenameDepartmentOption(
+                                          editingOptionOriginal,
+                                          editingOptionValue,
+                                          editingOptionDepartmentColor
+                                        );
 
                                   if (updated) {
                                     setEditingOptionOriginal('');
                                     setEditingOptionValue('');
+                                    setEditingOptionDepartmentColor('');
                                   }
                                 }}
                                 className="p-1.5 rounded-md text-green-600 hover:bg-green-50"
@@ -9901,6 +10048,7 @@ function ProjectDashboard({
                                 onClick={() => {
                                   setEditingOptionOriginal('');
                                   setEditingOptionValue('');
+                                  setEditingOptionDepartmentColor('');
                                 }}
                                 className="p-1.5 rounded-md text-gray-400 hover:bg-gray-100"
                                 title="Cancel"
@@ -9915,6 +10063,17 @@ function ProjectDashboard({
                                 onClick={() => {
                                   setEditingOptionOriginal(optionValue);
                                   setEditingOptionValue(optionValue);
+                                  if (optionsPopupType === 'department') {
+                                    setEditingOptionDepartmentColor(
+                                      resolveDepartmentColorHex(
+                                        projectDepartmentColors,
+                                        optionValue,
+                                        pickDepartmentPresetColor(optionValue)
+                                      )
+                                    );
+                                  } else {
+                                    setEditingOptionDepartmentColor('');
+                                  }
                                 }}
                                 disabled={isLockedOption}
                                 className={`p-1.5 rounded-md ${
@@ -12877,6 +13036,43 @@ function NoteEditor({
       if (incomingSerialized === currentSerialized) {
         return;
       }
+      const editorNode = editorRef.current;
+      const isEditorFocused = Boolean(editorNode && document.activeElement === editorNode);
+      const currentSnapshot = normalizeNoteDocumentPayload(noteDocumentRef.current || noteDocument);
+      const focusedPageId =
+        String(activePageId || currentSnapshot.activePageId || '').trim() || currentSnapshot.activePageId;
+      const incomingFocusedDocPage = parsedDocument.pages.find(
+        (page) => page.id === focusedPageId && page.type !== 'sheet'
+      );
+      if (isEditorFocused && incomingFocusedDocPage) {
+        const liveDocContent = String(editorNode?.innerHTML || '');
+        const currentFocusedDocPage = currentSnapshot.pages.find(
+          (page) => page.id === focusedPageId && page.type !== 'sheet'
+        );
+        const localFocusedDocPage = normalizeNoteDocumentPage(
+          {
+            ...(currentFocusedDocPage || incomingFocusedDocPage),
+            id: focusedPageId,
+            type: 'doc',
+            content: liveDocContent,
+          },
+          0
+        );
+        const mergedDocument = normalizeNoteDocumentPayload({
+          ...parsedDocument,
+          pages: parsedDocument.pages.map((page) =>
+            page.id === focusedPageId && page.type !== 'sheet' ? localFocusedDocPage : page
+          ),
+          activePageId: parsedDocument.activePageId,
+        });
+        const mergedSerialized = serializeStoredNoteDocument(mergedDocument);
+        if (mergedSerialized === currentSerialized) {
+          return;
+        }
+        noteDocumentRef.current = mergedDocument;
+        setNoteDocument(mergedDocument);
+        return;
+      }
     }
     noteDocumentRef.current = parsedDocument;
     setNoteDocument(parsedDocument);
@@ -15160,8 +15356,53 @@ function NoteEditor({
     const line = text.split(/\r?\n/).length;
     return Number.isFinite(line) ? Math.max(1, line) : 1;
   };
+  const getDocCursorRatios = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0) {
+      return { xRatio: null, yRatio: null };
+    }
+    const anchorNode = selection.anchorNode;
+    if (!anchorNode || !editor.contains(anchorNode)) {
+      return { xRatio: null, yRatio: null };
+    }
+    const range = selection.getRangeAt(0).cloneRange();
+    range.collapse(true);
+    const clientRect =
+      (range.getClientRects && range.getClientRects().length > 0
+        ? range.getClientRects()[0]
+        : null) || range.getBoundingClientRect();
+    if (
+      !clientRect ||
+      !Number.isFinite(clientRect.left) ||
+      !Number.isFinite(clientRect.top)
+    ) {
+      return { xRatio: null, yRatio: null };
+    }
+    const editorRect = editor.getBoundingClientRect();
+    const contentWidth = Math.max(
+      1,
+      Number(editor.scrollWidth || editor.clientWidth || editorRect.width || 1)
+    );
+    const contentHeight = Math.max(
+      1,
+      Number(editor.scrollHeight || editor.clientHeight || editorRect.height || 1)
+    );
+    const localX =
+      clientRect.left - editorRect.left + Number(editor.scrollLeft || 0);
+    const localY =
+      clientRect.top - editorRect.top + Number(editor.scrollTop || 0);
+    if (!Number.isFinite(localX) || !Number.isFinite(localY)) {
+      return { xRatio: null, yRatio: null };
+    }
+    return {
+      xRatio: Math.max(0, Math.min(1, localX / contentWidth)),
+      yRatio: Math.max(0, Math.min(1, localY / contentHeight)),
+    };
+  };
   const emitPresenceUpdate = (typingText = '') => {
     if (typeof onPresenceUpdate !== 'function') return;
+    const docCursorRatios = activePage?.type === 'sheet' ? null : getDocCursorRatios();
     const payload = {
       pageId: activePage?.id || '',
       pageType: activePage?.type || 'doc',
@@ -15169,6 +15410,8 @@ function NoteEditor({
         activePage?.type === 'sheet'
           ? `${toSheetColumnLabel(sheetSelection.col)}${sheetSelection.row + 1}`
           : String(getDocCursorLine()),
+      cursorXRatio: docCursorRatios?.xRatio ?? null,
+      cursorYRatio: docCursorRatios?.yRatio ?? null,
       typingText: String(typingText || '').trim().slice(0, NOTE_PRESENCE_TYPING_MAX),
       updatedAt: new Date().toISOString(),
     };
@@ -15980,26 +16223,51 @@ function NoteEditor({
     const editorRect = editorNode.getBoundingClientRect();
     const viewportScrollLeft = Number(viewportNode.scrollLeft || 0);
     const viewportScrollTop = Number(viewportNode.scrollTop || 0);
+    const editorOffsetLeft = editorRect.left - viewportRect.left + viewportScrollLeft;
+    const editorOffsetTop = editorRect.top - viewportRect.top + viewportScrollTop;
+    const editorContentWidth = Math.max(
+      1,
+      Number(editorNode.scrollWidth || editorNode.clientWidth || editorRect.width || 1)
+    );
+    const editorContentHeight = Math.max(
+      1,
+      Number(editorNode.scrollHeight || editorNode.clientHeight || editorRect.height || 1)
+    );
     const plainText = String(editorNode.innerText || editorNode.textContent || '').replace(/\r/g, '');
     const totalLines = Math.max(1, plainText.split('\n').length);
     const contentHeight = Math.max(24, Number(editorNode.scrollHeight || editorNode.offsetHeight || 0));
     const availableTrack = Math.max(0, contentHeight - 20);
-    const baseX = editorRect.left - viewportRect.left + viewportScrollLeft + 10;
-    const baseY = editorRect.top - viewportRect.top + viewportScrollTop;
-    const nextFrames = docPresenceItems.map((entry) => {
-      const parsedLine = Number.parseInt(String(entry.line || '1'), 10);
-      const lineNumber = Number.isFinite(parsedLine)
-        ? Math.min(totalLines, Math.max(1, parsedLine))
-        : 1;
-      const ratio = totalLines <= 1 ? 0 : (lineNumber - 1) / (totalLines - 1);
-      return {
-        key: entry.presenceKey,
-        label: entry.label,
-        cursorColor: entry.cursorColor,
-        x: baseX,
-        y: baseY + Math.round(ratio * availableTrack) + 6,
-      };
-    });
+    const baseX = editorOffsetLeft + 10;
+    const baseY = editorOffsetTop;
+    const nextFrames = docPresenceItems
+      .map((entry) => {
+        const hasRatioPosition =
+          Number.isFinite(entry.cursorXRatio) && Number.isFinite(entry.cursorYRatio);
+        if (hasRatioPosition) {
+          const xRatio = Math.max(0, Math.min(1, Number(entry.cursorXRatio)));
+          const yRatio = Math.max(0, Math.min(1, Number(entry.cursorYRatio)));
+          return {
+            key: entry.presenceKey,
+            label: entry.label,
+            cursorColor: entry.cursorColor,
+            x: Math.round(editorOffsetLeft + xRatio * Math.max(0, editorContentWidth - 2)),
+            y: Math.round(editorOffsetTop + yRatio * Math.max(0, editorContentHeight - 16)),
+          };
+        }
+        const parsedLine = Number.parseInt(String(entry.line || '1'), 10);
+        const lineNumber = Number.isFinite(parsedLine)
+          ? Math.min(totalLines, Math.max(1, parsedLine))
+          : 1;
+        const ratio = totalLines <= 1 ? 0 : (lineNumber - 1) / (totalLines - 1);
+        return {
+          key: entry.presenceKey,
+          label: entry.label,
+          cursorColor: entry.cursorColor,
+          x: baseX,
+          y: baseY + Math.round(ratio * availableTrack) + 6,
+        };
+      })
+      .filter((frame) => Number.isFinite(frame.x) && Number.isFinite(frame.y));
     setDocPresenceCursorFrames((prev) => (isJsonEqual(prev, nextFrames) ? prev : nextFrames));
   }, [isActiveDocPage, docPresenceItems]);
   React.useEffect(() => {
