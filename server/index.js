@@ -208,6 +208,12 @@ const normalizeGoogleCalendarEvent = (googleEvent, calendarContext = null) => {
   const pmCalendarEventId = String(
     googleEvent?.extendedProperties?.private?.pmCalendarEventId || ''
   ).trim();
+  const recordType = String(
+    googleEvent?.extendedProperties?.private?.recordType || ''
+  ).trim().toLowerCase();
+  const department = String(
+    googleEvent?.extendedProperties?.private?.department || ''
+  ).trim();
   const calendarId = String(calendarContext?.id || 'primary').trim() || 'primary';
   const calendarName =
     String(calendarContext?.summary || calendarContext?.id || 'Google Calendar').trim() ||
@@ -257,6 +263,8 @@ const normalizeGoogleCalendarEvent = (googleEvent, calendarContext = null) => {
     calendarName,
     projectId: GOOGLE_CALENDAR_PROJECT_ID,
     source: 'google',
+    recordType: recordType === 'task' ? 'task' : 'event',
+    department,
     readOnly: true,
     title: String(googleEvent?.summary || '(Untitled Google event)').trim(),
     description: String(googleEvent?.description || '').trim(),
@@ -1443,6 +1451,9 @@ app.post('/google/calendar/events', async (req, res) => {
     const requestedCalendarId = String(req.body?.calendarId || '').trim();
     const colorId = normalizeGoogleEventColorId(req.body?.colorId);
     const pmCalendarEventId = String(req.body?.pmCalendarEventId || '').trim();
+    const requestedGoogleEventId = String(req.body?.googleEventId || '').trim();
+    const recordType = String(req.body?.recordType || '').trim().toLowerCase();
+    const department = String(req.body?.department || '').trim();
     const timeZone = String(req.body?.timeZone || '').trim() || 'UTC';
 
     if (!title) {
@@ -1532,13 +1543,18 @@ app.post('/google/calendar/events', async (req, res) => {
       description: description || undefined,
       location: location || undefined,
     };
+    if (recordType === 'task') {
+      googlePayload.transparency = 'transparent';
+    }
     if (colorId) {
       googlePayload.colorId = colorId;
     }
-    if (pmCalendarEventId) {
+    if (pmCalendarEventId || recordType || department) {
       googlePayload.extendedProperties = {
         private: {
-          pmCalendarEventId,
+          ...(pmCalendarEventId ? { pmCalendarEventId } : {}),
+          ...(recordType ? { recordType } : {}),
+          ...(department ? { department } : {}),
         },
       };
     }
@@ -1557,8 +1573,8 @@ app.post('/google/calendar/events', async (req, res) => {
       googlePayload.end = { date: shiftIsoDateByDays(endDate, 1) };
     }
 
-    let targetGoogleEventId = '';
-    if (pmCalendarEventId) {
+    let targetGoogleEventId = requestedGoogleEventId;
+    if (!targetGoogleEventId && pmCalendarEventId) {
       const lookupParams = new URLSearchParams({
         maxResults: '1',
         singleEvents: 'true',
@@ -1661,6 +1677,94 @@ app.post('/google/calendar/events', async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to create Google Calendar event.' });
+  }
+});
+
+app.delete('/google/calendar/events', async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.query?.userId || req.body?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
+    }
+
+    const oauthForCalendar = createGoogleCalendarOauthClient(req);
+    if (!oauthForCalendar) {
+      return res.status(503).json({
+        message:
+          'Google Calendar OAuth is not configured. Set GOOGLE_CLIENT_SECRET and GOOGLE_CALENDAR_REDIRECT_URI (or GOOGLE_OAUTH_JSON_PATH).',
+      });
+    }
+
+    const calendarId = String(req.body?.calendarId || '').trim();
+    const googleEventId = String(req.body?.googleEventId || '').trim();
+    if (!calendarId || !googleEventId) {
+      return res.status(400).json({ message: 'calendarId and googleEventId are required.' });
+    }
+
+    const userDoc = await usersRef.doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const userData = userDoc.data() || {};
+    const googleCalendarIntegration = getGoogleCalendarIntegration(userData);
+    if (!googleCalendarIntegration) {
+      return res.status(404).json({ message: 'Google Calendar is not linked for this user.' });
+    }
+
+    oauthForCalendar.setCredentials({
+      refresh_token: googleCalendarIntegration.refreshToken,
+      access_token: googleCalendarIntegration.accessToken || undefined,
+      expiry_date:
+        Number.isFinite(googleCalendarIntegration.accessTokenExpiresAt) &&
+        googleCalendarIntegration.accessTokenExpiresAt > 0
+          ? googleCalendarIntegration.accessTokenExpiresAt
+          : undefined,
+    });
+
+    const accessToken = String((await oauthForCalendar.getAccessToken())?.token || '').trim();
+    if (!accessToken) {
+      return res.status(401).json({
+        message: 'Unable to refresh Google Calendar access token. Please unlink and link again.',
+      });
+    }
+
+    const deleteResponse = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
+        calendarId
+      )}/events/${encodeURIComponent(googleEventId)}`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+
+    if (!deleteResponse.ok && deleteResponse.status !== 404) {
+      let googleErrorMessage = '';
+      try {
+        const googleErrorPayload = await deleteResponse.json();
+        googleErrorMessage = String(
+          googleErrorPayload?.error?.message || googleErrorPayload?.message || ''
+        ).trim();
+      } catch {
+        googleErrorMessage = '';
+      }
+      return res.status(deleteResponse.status).json({
+        message:
+          googleErrorMessage ||
+          `Google Calendar event delete failed (${deleteResponse.status}).`,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      calendarId,
+      googleEventId,
+      deletedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to delete Google Calendar event.' });
   }
 });
 

@@ -373,6 +373,7 @@ const DOC_COLOR_PRESETS = [
   '#7f1d1d', '#9a3412', '#92400e', '#854d0e', '#365314', '#14532d', '#164e63', '#1e3a8a',
   '#312e81', '#581c87',
 ];
+const DEPARTMENT_COLOR_PRESETS = Array.from(new Set(DOC_COLOR_PRESETS)).slice(0, 24);
 const DOC_FONT_SIZE_OPTIONS = ['10', '11', '12', '13', '14', '16', '18', '20', '22', '24', '28', '32', '36', '40', '48', '56', '64', '72'];
 const DOC_FONT_FAMILY_GROUPS = [
   {
@@ -1107,6 +1108,25 @@ const GOOGLE_CALENDAR_EVENT_COLOR_PRESETS = [
   { id: '10', label: 'Basil', hex: '#51b749' },
   { id: '11', label: 'Tomato', hex: '#dc2127' },
 ];
+const pickGoogleCalendarColorIdByHex = (hexColorInput) => {
+  const sourceRgb = toRgb(hexColorInput);
+  if (!sourceRgb) return '';
+  let nearestColorId = '';
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  GOOGLE_CALENDAR_EVENT_COLOR_PRESETS.forEach((preset) => {
+    const presetRgb = toRgb(preset.hex);
+    if (!presetRgb) return;
+    const distance =
+      (sourceRgb.r - presetRgb.r) ** 2 +
+      (sourceRgb.g - presetRgb.g) ** 2 +
+      (sourceRgb.b - presetRgb.b) ** 2;
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestColorId = preset.id;
+    }
+  });
+  return nearestColorId;
+};
 
 const getLocalUsers = () => {
   try {
@@ -1934,6 +1954,65 @@ const normalizeDepartments = (departments) =>
         .filter(Boolean)
     )
   );
+const normalizeDepartmentColorHex = (value) => {
+  const color = String(value || '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : '';
+};
+const pickDepartmentPresetColor = (departmentName = '') => {
+  const presets = DEPARTMENT_COLOR_PRESETS.length > 0 ? DEPARTMENT_COLOR_PRESETS : ['#3b82f6'];
+  const text = String(departmentName || '').trim().toLowerCase();
+  const hash = Array.from(text).reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return presets[Math.abs(hash) % presets.length];
+};
+const normalizeDepartmentColorMap = (colorMapInput, departmentsInput = []) => {
+  const baseMap =
+    colorMapInput && typeof colorMapInput === 'object' && !Array.isArray(colorMapInput)
+      ? colorMapInput
+      : {};
+  const normalized = {};
+  Object.entries(baseMap).forEach(([departmentName, colorValue]) => {
+    const normalizedDepartmentName = String(departmentName || '').trim();
+    const normalizedColorValue = normalizeDepartmentColorHex(colorValue);
+    if (!normalizedDepartmentName || !normalizedColorValue) return;
+    if (normalizedDepartmentName.toLowerCase() === 'unassigned') return;
+    normalized[normalizedDepartmentName] = normalizedColorValue;
+  });
+
+  normalizeDepartments(departmentsInput).forEach((departmentName) => {
+    if (departmentName.toLowerCase() === 'unassigned') return;
+    if (!normalized[departmentName]) {
+      normalized[departmentName] = pickDepartmentPresetColor(departmentName);
+    }
+  });
+
+  return normalized;
+};
+const resolveDepartmentColorHex = (
+  departmentColorMapInput,
+  departmentNameInput,
+  fallbackColor = '#94a3b8'
+) => {
+  const departmentName = String(departmentNameInput || '').trim();
+  const normalizedFallback = normalizeDepartmentColorHex(fallbackColor) || '#94a3b8';
+  if (!departmentName || departmentName.toLowerCase() === 'unassigned') return normalizedFallback;
+  const normalizedMap = normalizeDepartmentColorMap(departmentColorMapInput, [departmentName]);
+  return normalizeDepartmentColorHex(normalizedMap[departmentName]) || normalizedFallback;
+};
+const toRgb = (hexColorInput) => {
+  const hexColor = normalizeDepartmentColorHex(hexColorInput);
+  if (!hexColor) return null;
+  return {
+    r: Number.parseInt(hexColor.slice(1, 3), 16),
+    g: Number.parseInt(hexColor.slice(3, 5), 16),
+    b: Number.parseInt(hexColor.slice(5, 7), 16),
+  };
+};
+const toRgba = (hexColorInput, alpha = 1) => {
+  const rgb = toRgb(hexColorInput);
+  if (!rgb) return `rgba(148, 163, 184, ${alpha})`;
+  const clampedAlpha = Math.max(0, Math.min(1, Number(alpha)));
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${clampedAlpha})`;
+};
 
 const getInitials = (value) => {
   const text = String(value || '').trim();
@@ -3446,6 +3525,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [isGoogleCalendarCalendarsLoading, setIsGoogleCalendarCalendarsLoading] = useState(false);
   const [isGoogleCalendarSelectionSaving, setIsGoogleCalendarSelectionSaving] = useState(false);
   const [isGoogleCalendarEventsLoading, setIsGoogleCalendarEventsLoading] = useState(false);
+  const writableGoogleCalendars = useMemo(
+    () => (Array.isArray(googleCalendarCalendars) ? googleCalendarCalendars : []).filter((calendar) => canWriteGoogleCalendar(calendar)),
+    [googleCalendarCalendars]
+  );
+  const defaultWritableGoogleCalendarId = useMemo(() => {
+    const selectedIds = normalizeGoogleCalendarSelection(googleCalendarSelectedCalendarIds);
+    const selectedWritable = selectedIds.find((calendarId) =>
+      writableGoogleCalendars.some((calendar) => calendar.id === calendarId)
+    );
+    return selectedWritable || writableGoogleCalendars[0]?.id || '';
+  }, [googleCalendarSelectedCalendarIds, writableGoogleCalendars]);
   const projectsRef = useRef(projects);
   const eventsRef = useRef(events);
   const previousUnseenProjectUpdateIdsRef = useRef([]);
@@ -4826,7 +4916,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     }
 
     const eventColorId = String(options.colorId || '').trim();
-    const pmCalendarEventId = String(options.pmCalendarEventId || '').trim();
+    const pmCalendarEventId = String(options.pmCalendarEventId || payload.id || '').trim();
+    const googleEventId = String(options.googleEventId || payload.googleCalendarLinkedEventId || '').trim();
     const timeZone =
       String(
         (typeof Intl !== 'undefined' &&
@@ -4848,9 +4939,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             startTime: String(payload.startTime || '').trim(),
             endTime: String(payload.endTime || '').trim(),
             showTime: payload.showTime !== false,
+            recordType: String(payload.recordType || '').trim(),
+            department: String(payload.department || '').trim(),
             calendarId: targetCalendarId,
             colorId: eventColorId,
             pmCalendarEventId,
+            googleEventId,
             timeZone,
           },
         }
@@ -4869,7 +4963,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             const list = Array.isArray(prev) ? prev : [];
             const dedupe = new Map();
             [...list, createdEvent].forEach((item) => {
-              const key = String(item?.id || '').trim();
+              const key =
+                String(item?.pmCalendarEventId || '').trim() || String(item?.id || '').trim();
               if (!key) return;
               dedupe.set(key, item);
             });
@@ -4887,6 +4982,58 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return {
         ok: false,
         message: error.message || 'Failed to add event to Google Calendar.',
+      };
+    }
+  };
+  const handleDeleteGoogleCalendarEvent = async (eventInput, options = {}) => {
+    if (!AUTH_API_BASE_URL) {
+      return {
+        ok: false,
+        message: 'Cloud Auth API is not configured.',
+      };
+    }
+    if (!googleCalendarStatus.linked) {
+      return {
+        ok: false,
+        message: 'Google Calendar is not linked for this account.',
+      };
+    }
+
+    const eventValue =
+      eventInput && typeof eventInput === 'object' && !Array.isArray(eventInput) ? eventInput : {};
+    const calendarId = String(options.calendarId || eventValue.googleCalendarId || eventValue.calendarId || '').trim();
+    const googleEventId = String(options.googleEventId || eventValue.googleCalendarLinkedEventId || eventValue.googleEventId || '').trim();
+    const pmCalendarEventId = String(options.pmCalendarEventId || eventValue.id || '').trim();
+    if (!calendarId || !googleEventId) {
+      return {
+        ok: false,
+        message: 'Google Calendar id or event id is missing.',
+      };
+    }
+
+    try {
+      await requestCloudDataApi(`/google/calendar/events?userId=${encodeURIComponent(currentUser.id)}`, {
+        method: 'DELETE',
+        body: {
+          calendarId,
+          googleEventId,
+          pmCalendarEventId,
+        },
+      });
+      setGoogleCalendarEvents((prev) =>
+        (Array.isArray(prev) ? prev : []).filter(
+          (event) =>
+            !(
+              String(event?.calendarId || '').trim() === calendarId &&
+              String(event?.googleEventId || '').trim() === googleEventId
+            )
+        )
+      );
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to delete Google Calendar event.',
       };
     }
   };
@@ -5055,33 +5202,107 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       ...(taskData && typeof taskData === 'object' ? taskData : {}),
       assigneeIds: normalizedAssigneeIds,
       assigneeId: normalizedAssigneeIds[0] || '',
+      recordType: 'task',
     };
-    if (taskData.id) {
-      updateEvent(taskData.id, normalizedTaskData);
-      return;
+    const isUpdate = Boolean(taskData?.id);
+    const localTaskId = isUpdate ? String(taskData.id || '').trim() : generateId();
+    const localTaskProjectId = normalizedProjectId;
+    let nextEvents = events;
+    let persistedTask = null;
+
+    if (isUpdate) {
+      nextEvents = events.map((event) =>
+        String(event.id || '').trim() === localTaskId
+          ? { ...event, ...normalizedTaskData, projectId: localTaskProjectId, recordType: 'task' }
+          : event
+      );
+      persistedTask =
+        nextEvents.find((event) => String(event.id || '').trim() === localTaskId) ||
+        { ...normalizedTaskData, id: localTaskId, projectId: localTaskProjectId, recordType: 'task' };
+      setEvents(nextEvents);
+      syncSharedEventsForProjects([localTaskProjectId], nextEvents);
+    } else {
+      const createdTask = {
+        ...normalizedTaskData,
+        id: localTaskId,
+        projectId: localTaskProjectId,
+        recordType: 'task',
+      };
+      persistedTask = createdTask;
+      nextEvents = [...events, createdTask];
+      setEvents(nextEvents);
+      syncSharedEventsForProjects([localTaskProjectId], nextEvents);
+      appendProjectActivityLog(normalizedProjectId, {
+        type: PROJECT_ACTIVITY_TYPES.TASK_CREATED,
+        title: String(createdTask.title || '').trim(),
+        message: 'New task was created.',
+        meta: {
+          taskTitle: String(createdTask.title || '').trim() || 'Untitled task',
+          startDate: String(createdTask.startDate || '').trim(),
+          startTime: String(createdTask.startTime || '').trim(),
+          endDate: String(createdTask.endDate || '').trim(),
+          endTime: String(createdTask.endTime || '').trim(),
+          department: String(createdTask.department || '').trim() || 'Unassigned',
+          showTime: Boolean(
+            String(createdTask.startTime || '').trim() ||
+              String(createdTask.endTime || '').trim()
+          ),
+        },
+      });
     }
 
-    const createdTask = { ...normalizedTaskData, id: generateId(), projectId: normalizedProjectId };
-    const nextEvents = [...events, createdTask];
-    setEvents(nextEvents);
-    syncSharedEventsForProjects([normalizedProjectId], nextEvents);
-    appendProjectActivityLog(normalizedProjectId, {
-      type: PROJECT_ACTIVITY_TYPES.TASK_CREATED,
-      title: String(createdTask.title || '').trim(),
-      message: 'New task was created.',
-      meta: {
-        taskTitle: String(createdTask.title || '').trim() || 'Untitled task',
-        startDate: String(createdTask.startDate || '').trim(),
-        startTime: String(createdTask.startTime || '').trim(),
-        endDate: String(createdTask.endDate || '').trim(),
-        endTime: String(createdTask.endTime || '').trim(),
-        department: String(createdTask.department || '').trim() || 'Unassigned',
-        showTime: Boolean(
-          String(createdTask.startTime || '').trim() ||
-            String(createdTask.endTime || '').trim()
-        ),
-      },
-    });
+    const hasGoogleLink = googleCalendarStatus.linked && Boolean(defaultWritableGoogleCalendarId);
+    if (!hasGoogleLink || !persistedTask) return;
+
+    void (async () => {
+      const targetProject = projects.find((projectItem) => projectItem.id === localTaskProjectId) || null;
+      const departmentName = String(persistedTask.department || '').trim() || 'Unassigned';
+      const departmentColorHex = resolveDepartmentColorHex(
+        targetProject?.departmentColors,
+        departmentName,
+        getProjectColorHexByIndex(targetProject?.colorIndex)
+      );
+      const googleColorId = pickGoogleCalendarColorIdByHex(departmentColorHex);
+      const googleCalendarId =
+        String(persistedTask.googleCalendarId || '').trim() || defaultWritableGoogleCalendarId;
+      const googleResult = await handleAddEventToGoogleCalendar(
+        {
+          ...persistedTask,
+          title: String(persistedTask.title || '').trim() || 'Untitled task',
+          description: String(persistedTask.description || '').trim(),
+          startDate: String(persistedTask.startDate || persistedTask.endDate || '').trim(),
+          endDate: String(persistedTask.endDate || persistedTask.startDate || '').trim(),
+          startTime: String(persistedTask.startTime || '').trim(),
+          endTime: String(persistedTask.endTime || '').trim(),
+          showTime: Boolean(
+            String(persistedTask.startTime || '').trim() || String(persistedTask.endTime || '').trim()
+          ),
+        },
+        {
+          calendarId: googleCalendarId,
+          colorId: googleColorId,
+          pmCalendarEventId: localTaskId,
+          googleEventId: String(persistedTask.googleCalendarLinkedEventId || '').trim(),
+        }
+      );
+      if (!googleResult.ok) return;
+      const createdGoogleEvent =
+        googleResult.event && typeof googleResult.event === 'object' ? googleResult.event : null;
+      if (!createdGoogleEvent) return;
+      const nextEventsWithGoogleLink = (Array.isArray(eventsRef.current) ? eventsRef.current : []).map((event) =>
+        String(event.id || '').trim() === localTaskId
+          ? {
+              ...event,
+              googleCalendarLinked: true,
+              googleCalendarId: String(createdGoogleEvent.calendarId || googleCalendarId).trim(),
+              googleCalendarLinkedEventId: String(createdGoogleEvent.googleEventId || '').trim(),
+              googleCalendarLinkedAt: new Date().toISOString(),
+            }
+          : event
+      );
+      setEvents(nextEventsWithGoogleLink);
+      syncSharedEventsForProjects([localTaskProjectId], nextEventsWithGoogleLink);
+    })();
   };
 
   const handleDayClick = (dateStr, projectId) => {
@@ -5144,18 +5365,31 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     e.stopPropagation(); // Prevent triggering day click
     if (event?.source === 'google') {
       void (async () => {
-        const shouldOpen = await popup.confirm({
+        const shouldDelete = await popup.confirm({
           title: 'Google Calendar event',
           message:
-            `This event is synced from Google Calendar and is read-only here.\n\n` +
-            `${event.title || '(Untitled)'}\n${event.startDate} ${event.startTime} - ${event.endDate} ${event.endTime}\n\n` +
-            `${event.htmlLink ? 'Open this event in Google Calendar?' : 'Edit it directly in Google Calendar.'}`,
-          confirmText: event.htmlLink ? 'Open Google Calendar' : 'OK',
-          cancelText: event.htmlLink ? 'Close' : 'Cancel',
+            `Delete this event from Google Calendar?\n\n` +
+            `${event.title || '(Untitled)'}\n${event.startDate} ${event.startTime} - ${event.endDate} ${event.endTime}`,
+          confirmText: 'Delete',
+          cancelText: 'Close',
+          tone: 'danger',
         });
-        if (shouldOpen && event.htmlLink) {
-          window.open(event.htmlLink, '_blank', 'noopener,noreferrer');
+        if (!shouldDelete) return;
+        const deleteResult = await handleDeleteGoogleCalendarEvent(event, {
+          calendarId: event.calendarId,
+          googleEventId: event.googleEventId,
+        });
+        if (!deleteResult.ok) {
+          await popup.alert({
+            title: 'Google Calendar delete failed',
+            message: deleteResult.message || 'Could not delete event from Google Calendar.',
+          });
+          return;
         }
+        await popup.alert({
+          title: 'Deleted',
+          message: 'Event was removed from Google Calendar.',
+        });
       })();
       return;
     }
@@ -5174,6 +5408,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         : null;
     const eventPayload = { ...payload };
     delete eventPayload.googleCalendarOptions;
+    if (String(eventPayload.recordType || '').trim().toLowerCase() !== 'task') {
+      eventPayload.recordType = 'event';
+    }
     let nextEvents = events;
     let localEventId = '';
     let localEventProjectId = String(eventPayload.projectId || '').trim();
@@ -5195,6 +5432,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         status: 'To Do',
         department: 'Unassigned',
         assigneeId: 'u' + (Math.floor(Math.random() * 5) + 1),
+        recordType: 'event',
       };
       localEventId = String(createdEvent.id || '').trim();
       localEventProjectId = String(createdEvent.projectId || '').trim();
@@ -5218,9 +5456,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     syncSharedEventsForProjects(baseSyncProjectIds, nextEvents);
     setShowEventModal(false);
     if (googleCalendarOptions?.enabled) {
+      const existingLinkedGoogleCalendarId = String(editingEvent?.googleCalendarId || '').trim();
+      const existingLinkedGoogleEventId = String(editingEvent?.googleCalendarLinkedEventId || '').trim();
       const googleResult = await handleAddEventToGoogleCalendar(eventPayload, {
         ...googleCalendarOptions,
+        calendarId: existingLinkedGoogleCalendarId || googleCalendarOptions.calendarId,
         pmCalendarEventId: localEventId,
+        googleEventId: existingLinkedGoogleEventId,
       });
       if (!googleResult.ok) {
         await popup.alert({
@@ -5242,6 +5484,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         );
         setEvents(nextEventsWithGoogleLink);
         syncSharedEventsForProjects([localEventProjectId], nextEventsWithGoogleLink);
+        await popup.alert({
+          title: 'Google Calendar synced',
+          message: 'Event has been added to Google Calendar.',
+        });
       }
     }
   };
@@ -5254,12 +5500,29 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     syncSharedEventsForProjects([existingEvent?.projectId, updatedEvent?.projectId], nextEvents);
   };
 
-  const deleteEvent = (eventId) => {
+  const deleteEvent = async (eventId) => {
     const targetEvent = events.find((event) => event.id === eventId) || null;
+    const linkedGoogleEventId = String(targetEvent?.googleCalendarLinkedEventId || '').trim();
+    const linkedGoogleCalendarId = String(targetEvent?.googleCalendarId || '').trim();
+    if (linkedGoogleEventId && linkedGoogleCalendarId) {
+      const deleteGoogleResult = await handleDeleteGoogleCalendarEvent(targetEvent, {
+        calendarId: linkedGoogleCalendarId,
+        googleEventId: linkedGoogleEventId,
+        pmCalendarEventId: String(targetEvent?.id || '').trim(),
+      });
+      if (!deleteGoogleResult.ok) {
+        await popup.alert({
+          title: 'Google Calendar delete failed',
+          message: deleteGoogleResult.message || 'Could not delete linked Google Calendar event.',
+        });
+        return false;
+      }
+    }
     const nextEvents = events.filter((event) => event.id !== eventId);
     setEvents(nextEvents);
     syncSharedEventsForProjects([targetEvent?.projectId], nextEvents);
     setShowEventModal(false);
+    return true;
   };
 
   const toggleProjectVisibility = (projectId) => {
@@ -5307,6 +5570,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         ownerId: currentUser.id,
         ownerUsername: currentUser.username,
         members: [currentUser.username],
+        teamMembers: [],
+        positions: [],
+        roles: [],
+        departments: [],
+        departmentColors: {},
         joinCodeSecret: generateProjectJoinCodeSecret(),
         changeFeed: [],
       };
@@ -6731,7 +6999,7 @@ function ProjectDashboard({
     initialNotesPreferences.section === 'member' ? 'member' : 'department'
   ); // 'department' | 'member'
   const [selectedDepartmentNoteId, setSelectedDepartmentNoteId] = useState(
-    initialNotesPreferences.selectedDepartment || 'Unassigned'
+    initialNotesPreferences.selectedDepartment || ''
   );
   const [selectedMemberNoteId, setSelectedMemberNoteId] = useState(
     initialNotesPreferences.selectedMemberId || ''
@@ -6790,9 +7058,13 @@ function ProjectDashboard({
   const [teamMembers, setTeamMembers] = useState(() => normalizeProjectTeamMembers(project));
   const [projectPositions, setProjectPositions] = useState(() => normalizeRoles(project.positions || project.roles));
   const [projectDepartments, setProjectDepartments] = useState(() => normalizeDepartments(project.departments));
+  const [projectDepartmentColors, setProjectDepartmentColors] = useState(() =>
+    normalizeDepartmentColorMap(project.departmentColors, project.departments)
+  );
   const [isOrgEditMode, setIsOrgEditMode] = useState(false);
   const [optionsPopupType, setOptionsPopupType] = useState(null); // 'position' | 'department' | null
   const [newOptionValue, setNewOptionValue] = useState('');
+  const [newDepartmentColor, setNewDepartmentColor] = useState(DEPARTMENT_COLOR_PRESETS[0] || '#3b82f6');
   const [editingOptionOriginal, setEditingOptionOriginal] = useState('');
   const [editingOptionValue, setEditingOptionValue] = useState('');
   const [announcementDraft, setAnnouncementDraft] = useState('');
@@ -6824,6 +7096,10 @@ function ProjectDashboard({
     const nextTeamMembers = normalizeProjectTeamMembers(project);
     const nextProjectPositions = normalizeRoles(project.positions || project.roles);
     const nextProjectDepartments = normalizeDepartments(project.departments);
+    const nextProjectDepartmentColors = normalizeDepartmentColorMap(
+      project.departmentColors,
+      nextProjectDepartments
+    );
     const nextNotesContent = normalizeNoteContentMap(project.notesContent);
     const nextNoteRevisionMap = normalizeNoteRevisionMap(project.noteRevisionMap);
     setTeamMembers((prev) => (isJsonEqual(prev, nextTeamMembers) ? prev : nextTeamMembers));
@@ -6832,6 +7108,9 @@ function ProjectDashboard({
     );
     setProjectDepartments((prev) =>
       isJsonEqual(prev, nextProjectDepartments) ? prev : nextProjectDepartments
+    );
+    setProjectDepartmentColors((prev) =>
+      isJsonEqual(prev, nextProjectDepartmentColors) ? prev : nextProjectDepartmentColors
     );
     setNotesContent((prev) => (isJsonEqual(prev, nextNotesContent) ? prev : nextNotesContent));
     setNoteRevisionMap((prev) =>
@@ -6843,6 +7122,7 @@ function ProjectDashboard({
     project.positions,
     project.roles,
     project.departments,
+    project.departmentColors,
     project.notesContent,
     project.noteRevisionMap,
     project.members,
@@ -6859,7 +7139,7 @@ function ProjectDashboard({
       projectOwnerId: project.ownerId,
     });
     const nextNoteSection = nextNotesPreferences.section === 'member' ? 'member' : 'department';
-    const nextDepartmentNoteId = nextNotesPreferences.selectedDepartment || 'Unassigned';
+    const nextDepartmentNoteId = nextNotesPreferences.selectedDepartment || '';
     const nextMemberNoteId = nextNotesPreferences.selectedMemberId || '';
     const nextPinnedDepartments = normalizePinnedIds(nextNotesPreferences.pinnedDepartments);
     const nextPinnedMembers = normalizePinnedIds(nextNotesPreferences.pinnedMembers);
@@ -6911,7 +7191,8 @@ function ProjectDashboard({
   const persistTeamManagement = (
     membersInput,
     positionsInput = projectPositions,
-    departmentsInput = projectDepartments
+    departmentsInput = projectDepartments,
+    departmentColorsInput = projectDepartmentColors
   ) => {
     const ownerUsername = String(project.ownerUsername || '').trim().toLowerCase();
     const membersByUsername = new Map();
@@ -6935,11 +7216,16 @@ function ProjectDashboard({
       ...normalizedMembers.map((member) => member.department || 'Unassigned'),
       'Unassigned',
     ]);
+    const normalizedDepartmentColors = normalizeDepartmentColorMap(
+      departmentColorsInput,
+      normalizedDepartments
+    );
     const memberUsernames = normalizedMembers.map((member) => member.username);
 
     setTeamMembers(normalizedMembers);
     setProjectPositions(normalizedPositions);
     setProjectDepartments(normalizedDepartments);
+    setProjectDepartmentColors(normalizedDepartmentColors);
 
     onUpdateProject(project.id, {
       members: memberUsernames,
@@ -6947,6 +7233,7 @@ function ProjectDashboard({
       positions: normalizedPositions,
       roles: normalizedPositions, // Backward compatibility for old records
       departments: normalizedDepartments,
+      departmentColors: normalizedDepartmentColors,
     });
   };
 
@@ -7003,7 +7290,7 @@ function ProjectDashboard({
     return trimmedPosition;
   };
 
-  const handleCreateDepartment = async (memberId = null, optionName = '') => {
+  const handleCreateDepartment = async (memberId = null, optionName = '', optionColor = '') => {
     if (!canManageMembers) {
       void popup.alert({
         title: 'Permission denied',
@@ -7036,13 +7323,21 @@ function ProjectDashboard({
     }
 
     const nextDepartments = normalizeDepartments([...projectDepartments, trimmedDepartment, 'Unassigned']);
+    const nextDepartmentColors = normalizeDepartmentColorMap(
+      {
+        ...projectDepartmentColors,
+        [trimmedDepartment]:
+          normalizeDepartmentColorHex(optionColor) || pickDepartmentPresetColor(trimmedDepartment),
+      },
+      nextDepartments
+    );
     const nextMembers = memberId
       ? teamMembers.map((member) =>
           member.id === memberId ? { ...member, department: trimmedDepartment } : member
         )
       : teamMembers;
 
-    persistTeamManagement(nextMembers, projectPositions, nextDepartments);
+    persistTeamManagement(nextMembers, projectPositions, nextDepartments, nextDepartmentColors);
     return trimmedDepartment;
   };
 
@@ -7157,13 +7452,21 @@ function ProjectDashboard({
     const nextDepartments = projectDepartments.filter(
       (department) => String(department || '').trim().toLowerCase() !== normalizedTarget
     );
+    const nextDepartmentColors = normalizeDepartmentColorMap(
+      Object.fromEntries(
+        Object.entries(projectDepartmentColors).filter(
+          ([departmentName]) => String(departmentName || '').trim().toLowerCase() !== normalizedTarget
+        )
+      ),
+      nextDepartments
+    );
     const nextMembers = teamMembers.map((member) =>
       String(member.department || '').trim().toLowerCase() === normalizedTarget
         ? { ...member, department: 'Unassigned' }
         : member
     );
 
-    persistTeamManagement(nextMembers, projectPositions, nextDepartments);
+    persistTeamManagement(nextMembers, projectPositions, nextDepartments, nextDepartmentColors);
   };
 
   const handleRenamePositionOption = (currentName, nextName) => {
@@ -7242,13 +7545,24 @@ function ProjectDashboard({
     const nextDepartments = projectDepartments.map((department) =>
       String(department || '').trim().toLowerCase() === currentTrimmed.toLowerCase() ? nextTrimmed : department
     );
+    const nextDepartmentColors = normalizeDepartmentColorMap(
+      Object.fromEntries(
+        Object.entries(projectDepartmentColors).map(([departmentName, colorValue]) => {
+          if (String(departmentName || '').trim().toLowerCase() === currentTrimmed.toLowerCase()) {
+            return [nextTrimmed, colorValue];
+          }
+          return [departmentName, colorValue];
+        })
+      ),
+      nextDepartments
+    );
     const nextMembers = teamMembers.map((member) =>
       String(member.department || '').trim().toLowerCase() === currentTrimmed.toLowerCase()
         ? { ...member, department: nextTrimmed }
         : member
     );
 
-    persistTeamManagement(nextMembers, projectPositions, nextDepartments);
+    persistTeamManagement(nextMembers, projectPositions, nextDepartments, nextDepartmentColors);
     return true;
   };
 
@@ -7256,6 +7570,7 @@ function ProjectDashboard({
     if (!canManageMembers) return;
     setOptionsPopupType(type);
     setNewOptionValue('');
+    setNewDepartmentColor(DEPARTMENT_COLOR_PRESETS[0] || '#3b82f6');
     setEditingOptionOriginal('');
     setEditingOptionValue('');
   };
@@ -7263,6 +7578,7 @@ function ProjectDashboard({
   const closeOptionsPopup = () => {
     setOptionsPopupType(null);
     setNewOptionValue('');
+    setNewDepartmentColor(DEPARTMENT_COLOR_PRESETS[0] || '#3b82f6');
     setEditingOptionOriginal('');
     setEditingOptionValue('');
   };
@@ -7396,6 +7712,7 @@ function ProjectDashboard({
       ),
     [DEPARTMENTS]
   );
+  const NOTE_DEPARTMENTS = ASSIGNABLE_DEPARTMENTS;
   const optionsPopupItems =
     optionsPopupType === 'position'
       ? projectPositions
@@ -7404,8 +7721,8 @@ function ProjectDashboard({
       : [];
   const activeNoteId = noteSection === 'department' ? selectedDepartmentNoteId : selectedMemberNoteId;
   const departmentNoteOptions = useMemo(
-    () => DEPARTMENTS.map((department) => ({ value: department, label: department })),
-    [DEPARTMENTS]
+    () => NOTE_DEPARTMENTS.map((department) => ({ value: department, label: department })),
+    [NOTE_DEPARTMENTS]
   );
   const orderedDepartmentNoteOptions = useMemo(() => {
     const pinnedSet = new Set(pinnedDepartmentNoteIds);
@@ -7559,9 +7876,9 @@ function ProjectDashboard({
   }, [activeTab, activeNoteId, noteSection]);
 
   useEffect(() => {
-    const nextDepartment = DEPARTMENTS.includes(selectedDepartmentNoteId)
+    const nextDepartment = NOTE_DEPARTMENTS.includes(selectedDepartmentNoteId)
       ? selectedDepartmentNoteId
-      : DEPARTMENTS[0] || 'Unassigned';
+      : NOTE_DEPARTMENTS[0] || '';
 
     if (nextDepartment !== selectedDepartmentNoteId) {
       setSelectedDepartmentNoteId(nextDepartment);
@@ -7573,7 +7890,7 @@ function ProjectDashboard({
     if (nextMemberId !== selectedMemberNoteId) {
       setSelectedMemberNoteId(nextMemberId);
     }
-  }, [DEPARTMENTS, selectedDepartmentNoteId, teamMembers, selectedMemberNoteId]);
+  }, [NOTE_DEPARTMENTS, selectedDepartmentNoteId, teamMembers, selectedMemberNoteId]);
 
   useEffect(() => {
     const currentNotesPreferences = resolveAccountScopedNotesPreferences(project.notesPreferences, {
@@ -7581,7 +7898,7 @@ function ProjectDashboard({
       projectOwnerId: project.ownerId,
     });
     const currentNoteSection = currentNotesPreferences.section === 'member' ? 'member' : 'department';
-    const currentDepartmentNoteId = currentNotesPreferences.selectedDepartment || 'Unassigned';
+    const currentDepartmentNoteId = currentNotesPreferences.selectedDepartment || '';
     const currentMemberNoteId = currentNotesPreferences.selectedMemberId || '';
     const currentPinnedDepartments = normalizePinnedIds(currentNotesPreferences.pinnedDepartments);
     const currentPinnedMembers = normalizePinnedIds(currentNotesPreferences.pinnedMembers);
@@ -7745,11 +8062,19 @@ function ProjectDashboard({
   const isTaskFilterActive =
     statusFilter.length > 0 || deptFilter.length > 0 || hasCustomizedAssigneeFilter;
   const filteredTasks = events.filter(ev => {
+    const normalizedRecordType = String(ev.recordType || '').trim().toLowerCase();
+    const isTaskRecord =
+      normalizedRecordType === 'task' ||
+      (!normalizedRecordType &&
+        (Array.isArray(ev.assigneeIds) ||
+          typeof ev.hasExplicitStartDate === 'boolean' ||
+          typeof ev.hasExplicitStartTime === 'boolean'));
+    if (!isTaskRecord) return false;
     const matchStatus = statusFilter.length === 0 || statusFilter.includes(ev.status || 'To Do');
     const matchDept = deptFilter.length === 0 || deptFilter.includes(ev.department || 'Unassigned');
     const eventAssigneeIds = normalizeTaskAssigneeIds(ev);
     const matchAssignee =
-      normalizedTaskAssigneeFilters.length === 0 ||
+      !hasCustomizedAssigneeFilter ||
       normalizedTaskAssigneeFilters.some((assigneeId) => eventAssigneeIds.includes(assigneeId));
     return matchStatus && matchDept && matchAssignee;
   });
@@ -8000,7 +8325,7 @@ function ProjectDashboard({
                     onClick={() => {
                       setNoteSection('department');
                       if (!selectedDepartmentNoteId) {
-                        setSelectedDepartmentNoteId(DEPARTMENTS[0] || 'Unassigned');
+                        setSelectedDepartmentNoteId(NOTE_DEPARTMENTS[0] || '');
                       }
                     }}
                     className={`flex-1 md:flex-none px-3 md:px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
@@ -8630,8 +8955,21 @@ function ProjectDashboard({
                         </tr>
                       </thead>
 	                      <tbody className="divide-y divide-gray-100">
-	                        {teamMembers.map((member) => (
-	                          <tr key={member.id} className="hover:bg-gray-50 transition-colors group">
+		                        {teamMembers.map((member) => {
+                              const memberDepartment = ASSIGNABLE_DEPARTMENTS.includes(member.department)
+                                ? member.department
+                                : '';
+                              const memberDepartmentColor = memberDepartment
+                                ? resolveDepartmentColorHex(projectDepartmentColors, memberDepartment, '#94a3b8')
+                                : '#94a3b8';
+                              const memberDepartmentStyle = memberDepartment
+                                ? {
+                                    borderColor: toRgba(memberDepartmentColor, 0.5),
+                                    boxShadow: `inset 0 0 0 1px ${toRgba(memberDepartmentColor, 0.18)}`,
+                                  }
+                                : undefined;
+                              return (
+		                          <tr key={member.id} className="hover:bg-gray-50 transition-colors group">
 	                            <td className="px-6 py-4 flex items-center gap-4">
 	                              <UserAvatar
 	                                user={member}
@@ -8656,15 +8994,15 @@ function ProjectDashboard({
                                   Add position
                                 </button>
                               ) : (
-                                <select
-                                  value={member.position || ''}
-                                  onChange={(e) => {
-                                    void handleAssignPosition(member.id, e.target.value);
-                                  }}
-                                  disabled={!canManageMembers}
-                                  className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                  {!member.position && <option value="">Select position</option>}
+	                                <select
+	                                  value={member.position || ''}
+	                                  onChange={(e) => {
+	                                    void handleAssignPosition(member.id, e.target.value);
+	                                  }}
+	                                  disabled={!canManageMembers}
+	                                  className="w-full h-9 rounded-lg border border-blue-200 bg-blue-50 px-3 text-sm font-medium text-blue-700 outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200"
+	                                >
+	                                  {!member.position && <option value="">Select position</option>}
                                   {member.position && !projectPositions.includes(member.position) && (
                                     <option value={member.position}>{member.position}</option>
                                   )}
@@ -8678,35 +9016,46 @@ function ProjectDashboard({
                               )}
                             </td>
                             <td className="px-6 py-4">
-                              {ASSIGNABLE_DEPARTMENTS.length === 0 ? (
-                                <button
-                                  onClick={() => {
-                                    void handleCreateDepartment();
-                                  }}
-                                  disabled={!canManageMembers}
-                                  className={`text-xs border px-3 py-1.5 rounded-lg font-medium transition-colors ${canManageMembers ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`}
-                                >
+	                              {ASSIGNABLE_DEPARTMENTS.length === 0 ? (
+	                                <button
+	                                  onClick={() => {
+	                                    openOptionsPopup('department');
+	                                  }}
+	                                  disabled={!canManageMembers}
+	                                  className={`text-xs border px-3 py-1.5 rounded-lg font-medium transition-colors ${canManageMembers ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'}`}
+	                                >
                                   Add department
                                 </button>
                               ) : (
-                                <select
-                                  value={ASSIGNABLE_DEPARTMENTS.includes(member.department) ? member.department : ''}
-                                  onChange={(e) => {
-                                    void handleAssignDepartment(member.id, e.target.value);
-                                  }}
-                                  disabled={!canManageMembers}
-                                  className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                  <option value="">Select department</option>
-                                  {ASSIGNABLE_DEPARTMENTS.map((department) => (
-                                    <option key={department} value={department}>
-                                      {department}
-                                    </option>
-                                  ))}
-                                  <option value={CREATE_DEPARTMENT_OPTION}>+ Create new department</option>
-                                </select>
-                              )}
-                            </td>
+                                <div className="relative">
+                                  {memberDepartment && (
+                                    <span
+                                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full border border-white/70"
+                                      style={{ backgroundColor: memberDepartmentColor }}
+                                    />
+                                  )}
+	                                <select
+	                                  value={memberDepartment}
+	                                  onChange={(e) => {
+	                                    void handleAssignDepartment(member.id, e.target.value);
+	                                  }}
+	                                  disabled={!canManageMembers}
+                                    className={`w-full h-9 rounded-lg border bg-white px-3 text-sm font-medium text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 ${
+                                      memberDepartment ? 'pl-7' : ''
+                                    }`}
+                                    style={memberDepartmentStyle}
+	                                >
+	                                  <option value="">Select department</option>
+	                                  {ASSIGNABLE_DEPARTMENTS.map((department) => (
+	                                    <option key={department} value={department}>
+	                                      {department}
+	                                    </option>
+	                                  ))}
+	                                  <option value={CREATE_DEPARTMENT_OPTION}>+ Create new department</option>
+	                                </select>
+                                </div>
+	                              )}
+	                            </td>
                             <td className="px-6 py-4 text-right">
                               <button
                                 onClick={() => {
@@ -8719,8 +9068,9 @@ function ProjectDashboard({
                                 <Trash2 className="w-4 h-4" />
                               </button>
                             </td>
-                          </tr>
-                        ))}
+		                          </tr>
+	                        );
+	                        })}
                       </tbody>
                     </table>
                   </div>
@@ -9222,7 +9572,7 @@ function ProjectDashboard({
                           onClick={() => {
                             setNoteSection('department');
                             if (!selectedDepartmentNoteId) {
-                              setSelectedDepartmentNoteId(DEPARTMENTS[0] || 'Unassigned');
+                              setSelectedDepartmentNoteId(NOTE_DEPARTMENTS[0] || '');
                             }
                           }}
                           className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
@@ -9393,15 +9743,22 @@ function ProjectDashboard({
 
 	      {/* Slide-over Task Detail/Edit Pane */}
 	      <TaskDetailPane 
-        isOpen={isPaneOpen} 
-        onClose={() => setIsPaneOpen(false)} 
-        task={paneTask} 
-        onSave={(data) => { onSaveTask(data); setIsPaneOpen(false); }}
-        onDelete={(id) => { onDeleteTask(id); setIsPaneOpen(false); }}
-        teamMembers={teamMembers}
-        TASK_STATUSES={TASK_STATUSES}
-        DEPARTMENTS={DEPARTMENTS}
-      />
+	        isOpen={isPaneOpen} 
+	        onClose={() => setIsPaneOpen(false)} 
+	        task={paneTask} 
+	        onSave={(data) => { onSaveTask(data); setIsPaneOpen(false); }}
+	        onDelete={async (id) => {
+            const deleted = await onDeleteTask(id);
+            if (deleted !== false) {
+              setIsPaneOpen(false);
+            }
+          }}
+	        currentUserId={currentUser.id}
+	        teamMembers={teamMembers}
+	        TASK_STATUSES={TASK_STATUSES}
+	        DEPARTMENTS={DEPARTMENTS}
+          departmentColors={projectDepartmentColors}
+	      />
 
       {optionsPopupType && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
@@ -9419,31 +9776,62 @@ function ProjectDashboard({
               </button>
             </div>
 
-            <div className="p-5 space-y-4">
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={newOptionValue}
-                  onChange={(e) => setNewOptionValue(e.target.value)}
-                  placeholder={optionsPopupType === 'position' ? 'New position' : 'New department'}
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
+	            <div className="p-5 space-y-4">
+	              <div className="flex items-center gap-2">
+	                <input
+	                  type="text"
+	                  value={newOptionValue}
+	                  onChange={(e) => setNewOptionValue(e.target.value)}
+	                  placeholder={optionsPopupType === 'position' ? 'New position' : 'New department'}
+	                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+	                />
                 <button
                   type="button"
                   onClick={async () => {
-                    if (optionsPopupType === 'position') {
-                      const created = await handleCreatePosition(null, newOptionValue);
-                      if (created) setNewOptionValue('');
-                    } else {
-                      const created = await handleCreateDepartment(null, newOptionValue);
-                      if (created) setNewOptionValue('');
-                    }
-                  }}
-                  className="px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
-                >
-                  Add
-                </button>
-              </div>
+	                    if (optionsPopupType === 'position') {
+	                      const created = await handleCreatePosition(null, newOptionValue);
+	                      if (created) setNewOptionValue('');
+	                    } else {
+	                      const created = await handleCreateDepartment(
+	                        null,
+	                        newOptionValue,
+	                        newDepartmentColor
+	                      );
+	                      if (created) {
+	                        setNewOptionValue('');
+	                        setNewDepartmentColor(DEPARTMENT_COLOR_PRESETS[0] || '#3b82f6');
+	                      }
+	                    }
+	                  }}
+	                  className="px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+	                >
+	                  Add
+	                </button>
+	              </div>
+	              {optionsPopupType === 'department' && (
+	                <div>
+	                  <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+	                    Department color
+	                  </p>
+	                  <div className="flex flex-wrap gap-1.5">
+	                    {DEPARTMENT_COLOR_PRESETS.map((colorValue) => {
+	                      const isActiveColor = newDepartmentColor === colorValue;
+	                      return (
+	                        <button
+	                          key={`department-color-preset-${colorValue}`}
+	                          type="button"
+	                          onClick={() => setNewDepartmentColor(colorValue)}
+	                          className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-105 ${
+	                            isActiveColor ? 'border-gray-700' : 'border-white ring-1 ring-gray-300'
+	                          }`}
+	                          style={{ backgroundColor: colorValue }}
+	                          title={colorValue}
+	                        />
+	                      );
+	                    })}
+	                  </div>
+	                </div>
+	              )}
 
               <div className="border border-gray-200 rounded-xl overflow-hidden">
                 {optionsPopupItems.length === 0 ? (
@@ -9469,11 +9857,24 @@ function ProjectDashboard({
                               className="flex-1 border border-gray-300 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500"
                               autoFocus
                             />
-                          ) : (
-                            <span className={`flex-1 text-sm ${isLockedOption ? 'text-gray-400' : 'text-gray-700'}`}>
-                              {optionValue}
-                            </span>
-                          )}
+	                          ) : (
+	                            <span className={`flex-1 text-sm ${isLockedOption ? 'text-gray-400' : 'text-gray-700'}`}>
+	                              <span className="inline-flex items-center gap-2">
+	                                {optionsPopupType === 'department' && (
+	                                  <span
+	                                    className="w-2.5 h-2.5 rounded-full border border-gray-200"
+	                                    style={{
+	                                      backgroundColor: resolveDepartmentColorHex(
+	                                        projectDepartmentColors,
+	                                        optionValue
+	                                      ),
+	                                    }}
+	                                  />
+	                                )}
+	                                <span>{optionValue}</span>
+	                              </span>
+	                            </span>
+	                          )}
 
                           {isEditing ? (
                             <>
@@ -9567,9 +9968,11 @@ function TaskDetailPane({
   task,
   onSave,
   onDelete,
+  currentUserId = '',
   teamMembers,
   TASK_STATUSES,
   DEPARTMENTS = [],
+  departmentColors = {},
 }) {
   const popup = usePopup();
   const [isEditing, setIsEditing] = useState(false);
@@ -9645,6 +10048,22 @@ function TaskDetailPane({
       ),
     [assigneeIds, teamMembers]
   );
+  const getDepartmentBadgeStyle = (departmentName) => {
+    const safeDepartment = String(departmentName || '').trim() || 'Unassigned';
+    if (safeDepartment.toLowerCase() === 'unassigned') {
+      return {
+        borderColor: '#e2e8f0',
+        backgroundColor: '#f8fafc',
+        color: '#64748b',
+      };
+    }
+    const colorHex = resolveDepartmentColorHex(departmentColors, safeDepartment, '#64748b');
+    return {
+      borderColor: toRgba(colorHex, 0.45),
+      backgroundColor: toRgba(colorHex, 0.14),
+      color: colorHex,
+    };
+  };
   const toggleAssigneeSelection = (memberId) => {
     const normalizedId = String(memberId || '').trim();
     if (!normalizedId) return;
@@ -9692,7 +10111,11 @@ function TaskDetailPane({
         setIsEditing(true); // Force edit mode for new task
         const now = new Date();
         const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        const defaultAssigneeIds = teamMembers.length > 0 ? [teamMembers[0].id] : [];
+        const preferredMember =
+          teamMembers.find((member) => String(member.id || '').trim() === String(currentUserId || '').trim()) ||
+          teamMembers[0] ||
+          null;
+        const defaultAssigneeIds = preferredMember ? [preferredMember.id] : [];
         setTitle('');
         setStatus('To Do');
         setDepartment(resolveDepartmentForAssignees(defaultAssigneeIds, 'Unassigned'));
@@ -9707,7 +10130,7 @@ function TaskDetailPane({
       }
       setIsAssigneePickerOpen(false);
     }
-  }, [task, isOpen, teamMembers]);
+  }, [task, isOpen, teamMembers, currentUserId]);
   useEffect(() => {
     if (!isOpen) return;
     const linkedDepartment = resolveDepartmentForAssignees(assigneeIds, department);
@@ -9762,8 +10185,11 @@ function TaskDetailPane({
       ></div>
 
       {/* Slide-over Panel */}
-      <div className="fixed inset-y-0 right-0 z-50 w-full flex justify-end pointer-events-none">
-        <div className="pointer-events-auto h-screen max-h-screen w-[min(540px,100vw)] max-w-full bg-white shadow-2xl transition-transform duration-300 flex flex-col border-l border-slate-200 rounded-none md:rounded-l-2xl overflow-hidden relative">
+      <div
+        className="fixed inset-y-0 right-0 z-50 w-full flex justify-end pointer-events-none"
+        style={{ direction: 'ltr' }}
+      >
+        <div className="pointer-events-auto h-[100dvh] max-h-[100dvh] w-[min(540px,100vw)] max-w-full bg-white shadow-2xl transition-transform duration-300 flex flex-col border-l border-slate-200 rounded-none overflow-hidden relative">
         
         {/* Header Options */}
         <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/50">
@@ -9941,8 +10367,22 @@ function TaskDetailPane({
 
                 <div className="text-gray-500 flex items-center gap-2"><Layers className="w-4 h-4" /> ฝ่าย</div>
                 <div>
-                  <div className="w-full border-gray-300 rounded-lg p-2 bg-gray-100 text-gray-700 border text-sm">
-                    {relatedDepartments.join(', ')}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {relatedDepartments.length > 0 ? (
+                      relatedDepartments.map((departmentName) => (
+                        <span
+                          key={`task-related-edit-dept-${departmentName}`}
+                          className="inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-semibold"
+                          style={getDepartmentBadgeStyle(departmentName)}
+                        >
+                          {departmentName}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="inline-flex h-8 items-center rounded-md border border-slate-200 bg-slate-50 px-2.5 text-xs font-medium text-slate-500">
+                        Unassigned
+                      </span>
+                    )}
                   </div>
                   <p className="text-[11px] text-gray-400 mt-1">Linked from selected assignees</p>
                 </div>
@@ -10018,7 +10458,8 @@ function TaskDetailPane({
                     {relatedDepartments.map((departmentName) => (
                       <span
                         key={`task-related-view-dept-${departmentName}`}
-                        className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-md text-xs font-medium border border-gray-200"
+                        className="px-2.5 py-1 rounded-md text-xs font-semibold border"
+                        style={getDepartmentBadgeStyle(departmentName)}
                       >
                         {departmentName}
                       </span>
@@ -15620,7 +16061,7 @@ function NoteEditor({
       }`}
     >
       <div
-        className="bg-gray-50 border-b border-gray-200 p-3 space-y-2"
+        className="relative z-30 bg-gray-50 border-b border-gray-200 p-3 space-y-2"
         data-note-editor-full-header={isFullScreen ? 'true' : undefined}
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -16548,7 +16989,7 @@ function NoteEditor({
         )}
 
         {isFullScreen && !isMobileNoteViewport && (
-          <div className="note-editor-toolbar-row flex flex-nowrap items-center gap-1.5 p-1.5 bg-white border border-gray-200 rounded-md shadow-sm overflow-x-auto [&>*]:shrink-0">
+          <div className="note-editor-toolbar-row relative z-[70] flex flex-nowrap items-center gap-1.5 p-1.5 bg-white border border-gray-200 rounded-md shadow-sm overflow-visible [&>*]:shrink-0">
             <button
               type="button"
               onMouseDown={handleFormatMouseDown}
@@ -17077,7 +17518,7 @@ function NoteEditor({
                         Fill
                       </button>
                       {isDocTableFillColorPickerOpen && (
-                        <div className="absolute z-40 mt-1 top-full right-0 w-64 max-w-[calc(100vw-32px)] rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
+                        <div className="absolute z-[140] mt-1 top-full right-0 w-64 max-w-[calc(100vw-32px)] rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
                           <button
                             type="button"
                             onMouseDown={handleFormatMouseDown}
@@ -17139,7 +17580,7 @@ function NoteEditor({
                         Border
                       </button>
                       {isDocTableBorderColorPickerOpen && (
-                        <div className="absolute z-40 mt-1 top-full right-0 w-72 max-w-[calc(100vw-32px)] rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
+                        <div className="absolute z-[140] mt-1 top-full right-0 w-72 max-w-[calc(100vw-32px)] rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
                           <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                             Border Design
                           </p>
@@ -17258,7 +17699,7 @@ function NoteEditor({
                         Cell
                       </button>
                       {isDocTableCellAlignMenuOpen && (
-                        <div className="absolute z-40 mt-1 top-full right-0 w-[132px] rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
+                        <div className="absolute z-[140] mt-1 top-full right-0 w-[132px] rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
                           <div className="grid grid-cols-3 gap-1">
                             {DOC_TABLE_CELL_ALIGN_OPTIONS.map((alignOption) => {
                               const isActive =
@@ -17338,7 +17779,7 @@ function NoteEditor({
                         Resize
                       </button>
                       {isDocTableResizeMenuOpen && (
-                        <div className="absolute z-40 mt-1 top-full right-0 w-56 rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
+                        <div className="absolute z-[140] mt-1 top-full right-0 w-56 rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
                           <p className="text-[11px] text-gray-500">
                             Resize whole table (all cells selected)
                           </p>
@@ -17380,7 +17821,7 @@ function NoteEditor({
                         <MoreHorizontal size={14} />
                       </button>
                       {isDocTableExtraToolsMenuOpen && (
-                        <div className="absolute z-40 mt-1 top-full right-0 w-64 rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
+                        <div className="absolute z-[140] mt-1 top-full right-0 w-64 rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
                           <p className="text-[11px] text-gray-500">Align table to page</p>
                           <div className="mt-1 grid grid-cols-3 gap-1">
                             {DOC_TABLE_PAGE_ALIGN_OPTIONS.map((alignOption) => {
@@ -18226,22 +18667,32 @@ function MonthGrid({
 
               const startIdx = coveredIndices[0];
               const endIdx = coveredIndices[coveredIndices.length - 1];
-              const project =
-                projects.find((p) => p.id === event.projectId) ||
-                allProjects.find((p) => p.id === event.projectId) ||
-                projects[0] ||
-                allProjects[0];
-              const color = PROJECT_COLORS[project?.colorIndex ?? 0] || PROJECT_COLORS[0];
+	              const project =
+	                projects.find((p) => p.id === event.projectId) ||
+	                allProjects.find((p) => p.id === event.projectId) ||
+	                projects[0] ||
+	                allProjects[0];
+	              const color = PROJECT_COLORS[project?.colorIndex ?? 0] || PROJECT_COLORS[0];
+                const isTaskEvent = String(event?.recordType || '').trim().toLowerCase() === 'task';
+                const departmentColorHex = isTaskEvent
+                  ? resolveDepartmentColorHex(
+                      project?.departmentColors,
+                      event?.department,
+                      getProjectColorHexByIndex(project?.colorIndex)
+                    )
+                  : '';
 
-              return {
-                event,
-                startIdx,
-                endIdx,
-                startDate: week[startIdx].dateStr,
-                color,
-                hasDisplayTime: shouldShowEventTime(event),
-              };
-            })
+	              return {
+	                event,
+	                startIdx,
+	                endIdx,
+	                startDate: week[startIdx].dateStr,
+	                color,
+	                isTaskEvent,
+	                departmentColorHex,
+	                hasDisplayTime: shouldShowEventTime(event),
+	              };
+	            })
             .filter(Boolean);
 
           const sortSegmentsByPosition = (a, b) =>
@@ -18351,23 +18802,34 @@ function MonthGrid({
                       ? `${segment.event.title} (${segment.event.startTime} - ${segment.event.endTime})`
                       : segment.event.title;
 
-                    return (
-                      <button
-                        key={`${segment.event.id}-${weekIdx}-${segmentIndex}`}
-                        type="button"
+	                    return (
+	                      <button
+	                        key={`${segment.event.id}-${weekIdx}-${segmentIndex}`}
+	                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           onEventClick(segment.event, e);
                         }}
-                        className={`pointer-events-auto absolute text-[10px] md:text-xs truncate px-2 h-5 rounded-md border shadow-sm flex items-center ${segment.color.lightBg} ${segment.color.text} ${segment.color.border} hover:opacity-80 transition-opacity`}
-                        style={{
-                          left: `calc(${leftPercent}% + 2px)`,
-                          width: `calc(${widthPercent}% - 4px)`,
-                          top: `${segment.lane * laneHeight}px`,
-                        }}
-                        title={eventTooltip}
-                      >
-                        {title}
+	                        className={`pointer-events-auto absolute text-[10px] md:text-xs truncate px-2 h-5 rounded-md border shadow-sm flex items-center hover:opacity-80 transition-opacity ${
+                            segment.isTaskEvent
+                              ? 'bg-white border-dashed'
+                              : `${segment.color.lightBg} ${segment.color.text} ${segment.color.border}`
+                          }`}
+	                        style={{
+	                          left: `calc(${leftPercent}% + 2px)`,
+	                          width: `calc(${widthPercent}% - 4px)`,
+	                          top: `${segment.lane * laneHeight}px`,
+                          ...(segment.isTaskEvent
+                            ? {
+                                borderColor: segment.departmentColorHex,
+                                color: segment.departmentColorHex,
+                                backgroundColor: toRgba(segment.departmentColorHex, 0.08),
+                              }
+                            : {}),
+	                        }}
+	                        title={eventTooltip}
+	                      >
+	                        {title}
                       </button>
                     );
                   })}
