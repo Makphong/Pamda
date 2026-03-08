@@ -7441,6 +7441,21 @@ function ProjectDashboard({
           .filter(Boolean)
       )
     );
+  const normalizePinnedPageIdsByNote = (value) => {
+    const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const normalized = {};
+    Object.keys(raw)
+      .map((noteId) => String(noteId || '').trim())
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
+      .forEach((normalizedNoteId) => {
+        const pageIds = normalizePinnedIds(raw[normalizedNoteId]);
+        if (pageIds.length > 0) {
+          normalized[normalizedNoteId] = pageIds;
+        }
+      });
+    return normalized;
+  };
   const arePinnedIdListsEqual = (left, right) => {
     if (left === right) return true;
     if (!Array.isArray(left) || !Array.isArray(right)) return false;
@@ -7469,6 +7484,9 @@ function ProjectDashboard({
   );
   const [pinnedMemberNoteIds, setPinnedMemberNoteIds] = useState(
     normalizePinnedIds(initialNotesPreferences.pinnedMembers)
+  );
+  const [pinnedPageIdsByNote, setPinnedPageIdsByNote] = useState(
+    normalizePinnedPageIdsByNote(initialNotesPreferences.pinnedPagesByNote)
   );
   const notesSidebarBubbleMovedRef = useRef(false);
   const notesFullEditorRootRef = useRef(null);
@@ -7604,6 +7622,9 @@ function ProjectDashboard({
     const nextMemberNoteId = nextNotesPreferences.selectedMemberId || '';
     const nextPinnedDepartments = normalizePinnedIds(nextNotesPreferences.pinnedDepartments);
     const nextPinnedMembers = normalizePinnedIds(nextNotesPreferences.pinnedMembers);
+    const nextPinnedPageIdsByNote = normalizePinnedPageIdsByNote(
+      nextNotesPreferences.pinnedPagesByNote
+    );
     const nextSidebarCollapsed = Boolean(nextNotesPreferences.fullSidebarCollapsed);
     const nextFullEditorOpen = Boolean(nextNotesPreferences.fullEditorOpen);
     const nextTaskView = nextNotesPreferences.taskView === 'table' ? 'table' : 'gallery';
@@ -7616,6 +7637,9 @@ function ProjectDashboard({
     );
     setPinnedMemberNoteIds((prev) =>
       arePinnedIdListsEqual(prev, nextPinnedMembers) ? prev : nextPinnedMembers
+    );
+    setPinnedPageIdsByNote((prev) =>
+      isJsonEqual(prev, nextPinnedPageIdsByNote) ? prev : nextPinnedPageIdsByNote
     );
     setIsNotesFullSidebarCollapsed((prev) => (prev === nextSidebarCollapsed ? prev : nextSidebarCollapsed));
     setIsNotesFullEditorOpen((prev) => (prev === nextFullEditorOpen ? prev : nextFullEditorOpen));
@@ -8197,6 +8221,11 @@ function ProjectDashboard({
       ? ASSIGNABLE_DEPARTMENTS
       : [];
   const activeNoteId = noteSection === 'department' ? selectedDepartmentNoteId : selectedMemberNoteId;
+  const activePinnedPageIds = useMemo(() => {
+    const normalizedNoteId = String(activeNoteId || '').trim();
+    if (!normalizedNoteId) return [];
+    return normalizePinnedIds(pinnedPageIdsByNote[normalizedNoteId] || []);
+  }, [activeNoteId, pinnedPageIdsByNote]);
   const departmentNoteOptions = useMemo(
     () => NOTE_DEPARTMENTS.map((department) => ({ value: department, label: department })),
     [NOTE_DEPARTMENTS]
@@ -8249,6 +8278,27 @@ function ProjectDashboard({
       const exists = prev.includes(normalizedId);
       if (exists) return prev.filter((id) => id !== normalizedId);
       return [normalizedId, ...prev.filter((id) => id !== normalizedId)];
+    });
+  };
+  const togglePinNotePage = (noteIdInput, pageIdInput) => {
+    const normalizedNoteId = String(noteIdInput || '').trim();
+    const normalizedPageId = String(pageIdInput || '').trim();
+    if (!normalizedNoteId || !normalizedPageId) return;
+    setPinnedPageIdsByNote((prev) => {
+      const currentPageIds = normalizePinnedIds(prev[normalizedNoteId] || []);
+      const exists = currentPageIds.includes(normalizedPageId);
+      const nextPageIds = exists
+        ? currentPageIds.filter((id) => id !== normalizedPageId)
+        : [normalizedPageId, ...currentPageIds.filter((id) => id !== normalizedPageId)];
+      const nextMap = {
+        ...prev,
+      };
+      if (nextPageIds.length > 0) {
+        nextMap[normalizedNoteId] = nextPageIds;
+      } else {
+        delete nextMap[normalizedNoteId];
+      }
+      return normalizePinnedPageIdsByNote(nextMap);
     });
   };
   const selectedNoteMember = useMemo(
@@ -8382,6 +8432,9 @@ function ProjectDashboard({
     const currentMemberNoteId = currentNotesPreferences.selectedMemberId || '';
     const currentPinnedDepartments = normalizePinnedIds(currentNotesPreferences.pinnedDepartments);
     const currentPinnedMembers = normalizePinnedIds(currentNotesPreferences.pinnedMembers);
+    const currentPinnedPageIdsByNote = normalizePinnedPageIdsByNote(
+      currentNotesPreferences.pinnedPagesByNote
+    );
     const currentSidebarCollapsed = Boolean(currentNotesPreferences.fullSidebarCollapsed);
     const currentFullEditorOpen = Boolean(currentNotesPreferences.fullEditorOpen);
     const currentTaskView = currentNotesPreferences.taskView === 'table' ? 'table' : 'gallery';
@@ -8392,6 +8445,7 @@ function ProjectDashboard({
       currentMemberNoteId !== selectedMemberNoteId ||
       !arePinnedIdListsEqual(currentPinnedDepartments, pinnedDepartmentNoteIds) ||
       !arePinnedIdListsEqual(currentPinnedMembers, pinnedMemberNoteIds) ||
+      !isJsonEqual(currentPinnedPageIdsByNote, pinnedPageIdsByNote) ||
       currentSidebarCollapsed !== isNotesFullSidebarCollapsed ||
       currentFullEditorOpen !== isNotesFullEditorOpen ||
       currentTaskView !== taskView;
@@ -8405,6 +8459,7 @@ function ProjectDashboard({
         selectedMemberId: selectedMemberNoteId,
         pinnedDepartments: pinnedDepartmentNoteIds,
         pinnedMembers: pinnedMemberNoteIds,
+        pinnedPagesByNote: pinnedPageIdsByNote,
         fullSidebarCollapsed: isNotesFullSidebarCollapsed,
         fullEditorOpen: isNotesFullEditorOpen,
         taskView,
@@ -8417,6 +8472,7 @@ function ProjectDashboard({
     selectedMemberNoteId,
     pinnedDepartmentNoteIds,
     pinnedMemberNoteIds,
+    pinnedPageIdsByNote,
     isNotesFullSidebarCollapsed,
     isNotesFullEditorOpen,
     taskView,
@@ -9975,6 +10031,8 @@ function ProjectDashboard({
                           noteTitle={activeNoteTitle}
                           initialContent={notesContent[activeNoteId] || ''}
                           onSave={handleSaveNoteContent}
+                          pinnedPageIds={activePinnedPageIds}
+                          onTogglePagePin={togglePinNotePage}
                           presenceItems={activeNotePresenceItems}
                           onPresenceUpdate={handleNotePresenceUpdate}
                           isFullScreen={false}
@@ -10198,15 +10256,17 @@ function ProjectDashboard({
               )}
               <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
 	                {activeNoteId ? (
-	                  <NoteEditor
-	                    noteId={activeNoteId}
-	                    noteTitle={activeNoteTitle}
-	                    initialContent={notesContent[activeNoteId] || ''}
-	                    onSave={handleSaveNoteContent}
-	                    presenceItems={activeNotePresenceItems}
-	                    onPresenceUpdate={handleNotePresenceUpdate}
-	                    isFullScreen
-	                    onToggleFullScreen={() => setIsNotesFullEditorOpen(false)}
+		                  <NoteEditor
+		                    noteId={activeNoteId}
+		                    noteTitle={activeNoteTitle}
+		                    initialContent={notesContent[activeNoteId] || ''}
+		                    onSave={handleSaveNoteContent}
+		                    pinnedPageIds={activePinnedPageIds}
+		                    onTogglePagePin={togglePinNotePage}
+		                    presenceItems={activeNotePresenceItems}
+		                    onPresenceUpdate={handleNotePresenceUpdate}
+		                    isFullScreen
+		                    onToggleFullScreen={() => setIsNotesFullEditorOpen(false)}
                       onBackToProject={() => setIsNotesFullEditorOpen(false)}
 	                  />
 	                ) : (
@@ -11162,6 +11222,8 @@ function NoteEditor({
   noteTitle,
   initialContent,
   onSave,
+  pinnedPageIds = [],
+  onTogglePagePin = null,
   presenceItems = [],
   onPresenceUpdate = null,
   isFullScreen = false,
@@ -13339,7 +13401,21 @@ function NoteEditor({
   };
   const handleImageResizeStart = (event, direction, mode = 'resize') => {
     if (!isActiveDocPage) return;
-    if (event.button !== 0) return;
+    const touchPoint =
+      (event.touches && event.touches[0]) ||
+      (event.changedTouches && event.changedTouches[0]) ||
+      null;
+    const pointerClientX =
+      touchPoint && Number.isFinite(Number(touchPoint.clientX))
+        ? Number(touchPoint.clientX)
+        : Number(event.clientX);
+    const pointerClientY =
+      touchPoint && Number.isFinite(Number(touchPoint.clientY))
+        ? Number(touchPoint.clientY)
+        : Number(event.clientY);
+    const isMouseLikeEvent = !touchPoint && typeof event.button === 'number';
+    if (isMouseLikeEvent && event.button !== 0) return;
+    if (!Number.isFinite(pointerClientX) || !Number.isFinite(pointerClientY)) return;
     event.preventDefault();
     event.stopPropagation();
     const imageId = String(imageMenuState?.imageId || '').trim();
@@ -13358,8 +13434,8 @@ function NoteEditor({
       imageId,
       direction,
       mode,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
+      startClientX: pointerClientX,
+      startClientY: pointerClientY,
       startWidth: Math.max(48, rect.width || 48),
       startHeight: Math.max(48, rect.height || 48),
       startPosX: Number.isFinite(startPosX) ? startPosX : 0,
@@ -13776,14 +13852,37 @@ function NoteEditor({
     docTableSelectionState?.endCol,
   ]);
   React.useEffect(() => {
-    const handleMouseMove = (event) => {
+    const resolveMovePoint = (event) => {
+      const touch =
+        (event.touches && event.touches[0]) ||
+        (event.changedTouches && event.changedTouches[0]) ||
+        null;
+      if (touch) {
+        const x = Number(touch.clientX);
+        const y = Number(touch.clientY);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          return { x, y };
+        }
+      }
+      const x = Number(event.clientX);
+      const y = Number(event.clientY);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        return { x, y };
+      }
+      return null;
+    };
+    const handlePointerMove = (event) => {
+      const point = resolveMovePoint(event);
+      if (!point) return;
       const resizeState = docImageResizeRef.current;
       if (resizeState?.imageId && editorRef.current) {
-        event.preventDefault();
+        if (event.cancelable) {
+          event.preventDefault();
+        }
         const imageNode = getImageById(resizeState.imageId);
         if (!imageNode) return;
-        const deltaX = event.clientX - resizeState.startClientX;
-        const deltaY = event.clientY - resizeState.startClientY;
+        const deltaX = point.x - resizeState.startClientX;
+        const deltaY = point.y - resizeState.startClientY;
         const direction = String(resizeState.direction || 'se').toLowerCase();
         if (resizeState.mode === 'crop') {
           const minCropSize = 24;
@@ -13901,8 +14000,8 @@ function NoteEditor({
       const imageNode = getImageById(dragState.imageId);
       if (!imageNode) return;
       const editor = editorRef.current;
-      const deltaX = event.clientX - dragState.startClientX;
-      const deltaY = event.clientY - dragState.startClientY;
+      const deltaX = point.x - dragState.startClientX;
+      const deltaY = point.y - dragState.startClientY;
       const nextX = Math.max(0, dragState.originX + deltaX);
       const nextY = Math.max(0, dragState.originY + deltaY);
       const maxX = Math.max(0, editor.scrollWidth - imageNode.getBoundingClientRect().width);
@@ -13922,7 +14021,7 @@ function NoteEditor({
       syncEditorCanvasMetrics();
       refreshActiveImageFrame(dragState.imageId);
     };
-    const handleMouseUp = () => {
+    const handlePointerUp = () => {
       const resizeState = docImageResizeRef.current;
       if (resizeState?.imageId) {
         const imageNode = getImageById(resizeState.imageId);
@@ -13947,11 +14046,17 @@ function NoteEditor({
         handleInput();
       }
     };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    window.addEventListener('touchmove', handlePointerMove, { passive: false });
+    window.addEventListener('touchend', handlePointerUp);
+    window.addEventListener('touchcancel', handlePointerUp);
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+      window.removeEventListener('touchmove', handlePointerMove);
+      window.removeEventListener('touchend', handlePointerUp);
+      window.removeEventListener('touchcancel', handlePointerUp);
     };
   }, [isActiveDocPage, activePageId]);
 
@@ -15970,6 +16075,10 @@ function NoteEditor({
   const togglePinPage = (pageId) => {
     const normalizedId = String(pageId || '').trim();
     if (!normalizedId) return;
+    if (typeof onTogglePagePin === 'function') {
+      onTogglePagePin(noteId, normalizedId);
+      return;
+    }
     const targetPage = noteDocument.pages.find((page) => page.id === normalizedId);
     if (!targetPage) return;
     const nextPages = noteDocument.pages.map((page) =>
@@ -16776,15 +16885,31 @@ function NoteEditor({
       }
     };
   }, [isActiveDocPage, activePageId, docPresenceItems, refreshDocPresenceCursorFrames]);
-  const sortPagesForPicker = (pages) =>
-    [...pages].sort((left, right) => {
-      const leftPinned = Boolean(left?.pinned) ? 1 : 0;
-      const rightPinned = Boolean(right?.pinned) ? 1 : 0;
-      if (leftPinned !== rightPinned) return rightPinned - leftPinned;
-      return String(left?.title || '').localeCompare(String(right?.title || ''), undefined, {
-        sensitivity: 'base',
-      });
-    });
+  const pinnedPageIdSet = useMemo(
+    () =>
+      new Set(
+        (Array.isArray(pinnedPageIds) ? pinnedPageIds : [])
+          .map((pageId) => String(pageId || '').trim())
+          .filter(Boolean)
+      ),
+    [pinnedPageIds]
+  );
+  const isPagePinned = useCallback(
+    (pageId) => pinnedPageIdSet.has(String(pageId || '').trim()),
+    [pinnedPageIdSet]
+  );
+  const sortPagesForPicker = useCallback(
+    (pages) =>
+      [...pages].sort((left, right) => {
+        const leftPinned = isPagePinned(left?.id) ? 1 : 0;
+        const rightPinned = isPagePinned(right?.id) ? 1 : 0;
+        if (leftPinned !== rightPinned) return rightPinned - leftPinned;
+        return String(left?.title || '').localeCompare(String(right?.title || ''), undefined, {
+          sensitivity: 'base',
+        });
+      }),
+    [isPagePinned]
+  );
   const docPages = sortPagesForPicker(noteDocument.pages.filter((page) => page.type !== 'sheet'));
   const sheetPages = sortPagesForPicker(noteDocument.pages.filter((page) => page.type === 'sheet'));
 
@@ -16868,13 +16993,16 @@ function NoteEditor({
                             type="button"
                             onClick={() => togglePinPage(page.id)}
                             className={`h-8 w-8 rounded-md border ${
-                              page.pinned
+                              isPagePinned(page.id)
                                 ? 'text-amber-600 border-amber-200 bg-amber-50'
                                 : 'text-gray-400 border-gray-200 hover:bg-amber-50 hover:text-amber-600'
                             }`}
-                            title={page.pinned ? 'Unpin page' : 'Pin page'}
+                            title={isPagePinned(page.id) ? 'Unpin page' : 'Pin page'}
                           >
-                            <Flag size={13} className={`mx-auto ${page.pinned ? 'fill-current' : ''}`} />
+                            <Flag
+                              size={13}
+                              className={`mx-auto ${isPagePinned(page.id) ? 'fill-current' : ''}`}
+                            />
                           </button>
                           <button
                             type="button"
@@ -16926,13 +17054,16 @@ function NoteEditor({
                             type="button"
                             onClick={() => togglePinPage(page.id)}
                             className={`h-8 w-8 rounded-md border ${
-                              page.pinned
+                              isPagePinned(page.id)
                                 ? 'text-amber-600 border-amber-200 bg-amber-50'
                                 : 'text-gray-400 border-gray-200 hover:bg-amber-50 hover:text-amber-600'
                             }`}
-                            title={page.pinned ? 'Unpin page' : 'Pin page'}
+                            title={isPagePinned(page.id) ? 'Unpin page' : 'Pin page'}
                           >
-                            <Flag size={13} className={`mx-auto ${page.pinned ? 'fill-current' : ''}`} />
+                            <Flag
+                              size={13}
+                              className={`mx-auto ${isPagePinned(page.id) ? 'fill-current' : ''}`}
+                            />
                           </button>
                           <button
                             type="button"
@@ -18978,6 +19109,10 @@ function NoteEditor({
                 onMouseDown={(event) =>
                   handleImageResizeStart(event, handleItem.key, 'resize')
                 }
+                onTouchStart={(event) =>
+                  handleImageResizeStart(event, handleItem.key, 'resize')
+                }
+                style={{ touchAction: 'none' }}
                 title="Drag to resize image"
               />
             ))}
@@ -19003,6 +19138,8 @@ function NoteEditor({
               type="button"
               className="pointer-events-auto absolute inset-0 cursor-move"
               onMouseDown={(event) => handleImageResizeStart(event, 'move', 'crop')}
+              onTouchStart={(event) => handleImageResizeStart(event, 'move', 'crop')}
+              style={{ touchAction: 'none' }}
               title="Drag to move crop frame"
             />
             {[
@@ -19020,6 +19157,8 @@ function NoteEditor({
                 type="button"
                 className={`pointer-events-auto absolute w-3 h-3 rounded-[2px] border border-slate-800 bg-white ${handleItem.className}`}
                 onMouseDown={(event) => handleImageResizeStart(event, handleItem.key, 'crop')}
+                onTouchStart={(event) => handleImageResizeStart(event, handleItem.key, 'crop')}
+                style={{ touchAction: 'none' }}
                 title="Drag to adjust crop frame"
               />
             ))}
