@@ -13587,6 +13587,11 @@ function NoteEditor({
     }
 
     event.preventDefault();
+    const movingImage = placeImageAtPoint(current.imageId, touch.clientX, touch.clientY);
+    if (movingImage) {
+      movingImage.style.opacity = '0.6';
+      movingImage.style.cursor = 'grabbing';
+    }
   };
 
   const handleEditorTouchEnd = (event) => {
@@ -13623,7 +13628,14 @@ function NoteEditor({
     const parsedDocument = parseStoredNoteDocument(initialContent);
     const isSwitchingNote = previousNoteIdRef.current !== noteId;
     previousNoteIdRef.current = noteId;
-    if (!isSwitchingNote && isImageInteractionActiveRef.current) {
+    const hasActiveImageTool = Boolean(
+      isImageInteractionActiveRef.current ||
+        docImagePointerDragRef.current?.imageId ||
+        docImageResizeRef.current?.imageId ||
+        String(imageMenuState?.imageId || '').trim() ||
+        String(imageCropModeId || '').trim()
+    );
+    if (!isSwitchingNote && hasActiveImageTool) {
       return;
     }
     if (!isSwitchingNote) {
@@ -13706,7 +13718,7 @@ function NoteEditor({
         highlight: false,
       });
     }
-  }, [noteId, initialContent]);
+  }, [noteId, initialContent, imageMenuState?.imageId, imageCropModeId]);
 
   React.useEffect(() => {
     if (!editorRef.current || !isActiveDocPage || !activePage) return;
