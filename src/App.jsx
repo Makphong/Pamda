@@ -825,10 +825,13 @@ const normalizeNoteRevisionEntry = (value) => {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const updatedAtRaw = String(raw.updatedAt || '').trim();
   const updatedAt = toTimestampMs(updatedAtRaw) > 0 ? updatedAtRaw : new Date(0).toISOString();
+  const revisionRaw = Number.parseInt(String(raw.revision ?? raw.version ?? '0'), 10);
+  const revision = Number.isFinite(revisionRaw) && revisionRaw > 0 ? revisionRaw : 0;
   return {
     updatedAt,
     updatedById: String(raw.updatedById || raw.updatedBy || '').trim(),
     updatedByUsername: String(raw.updatedByUsername || '').trim().toLowerCase(),
+    revision,
   };
 };
 const normalizeNoteRevisionMap = (value) => {
@@ -914,10 +917,16 @@ const mergeProjectNotesContentByRevision = (
     const incomingValue = hasIncomingContent ? String(incomingContent[noteId] || '') : '';
     const baseMeta = baseRevision[noteId] || normalizeNoteRevisionEntry({});
     const incomingMeta = incomingRevision[noteId] || normalizeNoteRevisionEntry({});
+    const baseRevisionNumber = Number.parseInt(String(baseMeta.revision || '0'), 10) || 0;
+    const incomingRevisionNumber = Number.parseInt(String(incomingMeta.revision || '0'), 10) || 0;
     const baseMs = toTimestampMs(baseMeta.updatedAt);
     const incomingMs = toTimestampMs(incomingMeta.updatedAt);
     let source = 'base';
-    if (incomingMs > baseMs) {
+    if (incomingRevisionNumber > baseRevisionNumber) {
+      source = 'incoming';
+    } else if (incomingRevisionNumber < baseRevisionNumber) {
+      source = 'base';
+    } else if (incomingMs > baseMs) {
       source = 'incoming';
     } else if (baseMs === incomingMs) {
       if (!hasBaseContent && hasIncomingContent) {
@@ -925,6 +934,14 @@ const mergeProjectNotesContentByRevision = (
       } else if (hasBaseContent && hasIncomingContent && incomingValue !== baseValue) {
         source = 'incoming';
       }
+    } else if (
+      hasBaseContent &&
+      hasIncomingContent &&
+      incomingValue !== baseValue &&
+      String(incomingMeta.updatedById || '').trim() &&
+      String(incomingMeta.updatedById || '').trim() !== String(baseMeta.updatedById || '').trim()
+    ) {
+      source = 'incoming';
     }
     const selectedValue = source === 'incoming' ? incomingValue : baseValue;
     const selectedMeta = source === 'incoming' ? incomingMeta : baseMeta;
@@ -974,7 +991,7 @@ const stripTransientProjectFieldsForAutoSave = (projectInput) => {
   if (!projectInput || typeof projectInput !== 'object' || Array.isArray(projectInput)) {
     return projectInput;
   }
-  const { notesPresence, ...project } = projectInput;
+  const { notesContent, noteRevisionMap, notesPresence, ...project } = projectInput;
   return project;
 };
 const buildAccountAutoSaveComparablePayload = (payloadInput) => {
@@ -982,6 +999,9 @@ const buildAccountAutoSaveComparablePayload = (payloadInput) => {
     payloadInput && typeof payloadInput === 'object' && !Array.isArray(payloadInput)
       ? payloadInput
       : {};
+  if (!AUTH_API_BASE_URL) {
+    return payload;
+  }
   return {
     ...payload,
     projects: (Array.isArray(payload.projects) ? payload.projects : []).map(
@@ -1951,6 +1971,28 @@ const ensureProjectOwnership = (project, owner) => {
     joinCodeSecret,
     changeFeed,
   };
+};
+const getProjectSyncTimestampMs = (project) => {
+  if (!project || typeof project !== 'object' || Array.isArray(project)) return 0;
+  const updatedAtMs = toTimestampMs(project.updatedAt);
+  if (updatedAtMs > 0) return updatedAtMs;
+  const feed = normalizeProjectActivityFeed(project.changeFeed, project);
+  const feedLatestMs = feed.reduce((latestMs, entry) => {
+    const entryMs = toTimestampMs(entry?.createdAt);
+    return entryMs > latestMs ? entryMs : latestMs;
+  }, 0);
+  return feedLatestMs;
+};
+const selectPreferredProjectSnapshot = (remoteProject, localProject) => {
+  if (!remoteProject && !localProject) return null;
+  if (!remoteProject) return localProject;
+  if (!localProject) return remoteProject;
+  const remoteMs = getProjectSyncTimestampMs(remoteProject);
+  const localMs = getProjectSyncTimestampMs(localProject);
+  if (localMs > remoteMs) return localProject;
+  if (remoteMs > localMs) return remoteProject;
+  // Tie-breaker prefers local state to avoid snapping back while save is in-flight.
+  return localProject;
 };
 
 const MEMBER_COLORS = [
@@ -3565,6 +3607,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const projectsRef = useRef(projects);
   const eventsRef = useRef(events);
   const accountAutoSaveComparableRef = useRef('');
+  const ownerNotePatchSyncStateRef = useRef(new Map());
+  const sharedOwnerNotePatchSyncStateRef = useRef(new Map());
   const previousUnseenProjectUpdateIdsRef = useRef([]);
   const projectUpdateToastTimersRef = useRef({ autoHide: null, clear: null });
 
@@ -3578,6 +3622,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
   useEffect(() => {
     accountAutoSaveComparableRef.current = '';
+    ownerNotePatchSyncStateRef.current.forEach((state) => {
+      if (state?.timerId) {
+        window.clearTimeout(state.timerId);
+      }
+    });
+    ownerNotePatchSyncStateRef.current.clear();
+    sharedOwnerNotePatchSyncStateRef.current.forEach((state) => {
+      if (state?.timerId) {
+        window.clearTimeout(state.timerId);
+      }
+    });
+    sharedOwnerNotePatchSyncStateRef.current.clear();
   }, [currentUser.id]);
 
   useEffect(() => {
@@ -4521,32 +4577,33 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           const projectId = String(project?.id || '').trim();
           if (!projectId) return;
 
-          if (project.ownerId === currentUser.id) {
-            const localProject = localProjectById.get(projectId);
-            if (!localProject) {
-              nextProjectsById.set(projectId, project);
-              return;
-            }
-            const mergedNotes = mergeProjectNotesContentByRevision(
-              project.notesContent,
-              project.noteRevisionMap,
-              localProject.notesContent,
-              localProject.noteRevisionMap
+	          if (project.ownerId === currentUser.id) {
+	            const localProject = localProjectById.get(projectId);
+	            if (!localProject) {
+	              nextProjectsById.set(projectId, project);
+	              return;
+	            }
+	            const sourceProject = selectPreferredProjectSnapshot(project, localProject) || project;
+	            const mergedNotes = mergeProjectNotesContentByRevision(
+	              project.notesContent,
+	              project.noteRevisionMap,
+	              localProject.notesContent,
+	              localProject.noteRevisionMap
             );
             const mergedNotesPresence = mergeProjectNotesPresence(
               project.notesPresence,
               localProject.notesPresence
             );
             nextProjectsById.set(
-              projectId,
-              ensureProjectOwnership(
-                {
-                  ...project,
-                  notesContent: mergedNotes.notesContent,
-                  noteRevisionMap: mergedNotes.noteRevisionMap,
-                  notesPresence: mergedNotesPresence,
-                  notesPreferences: resolveAccountScopedNotesPreferences(localProject.notesPreferences, {
-                    currentUserId: currentUser.id,
+	              projectId,
+	              ensureProjectOwnership(
+	                {
+	                  ...sourceProject,
+	                  notesContent: mergedNotes.notesContent,
+	                  noteRevisionMap: mergedNotes.noteRevisionMap,
+	                  notesPresence: mergedNotesPresence,
+	                  notesPreferences: resolveAccountScopedNotesPreferences(localProject.notesPreferences, {
+	                    currentUserId: currentUser.id,
                     projectOwnerId: project.ownerId,
                   }),
                   isVisible: Boolean(localProject.isVisible),
@@ -4558,17 +4615,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           }
 
           const ownerProject = ownerProjectById.get(projectId);
-          if (!ownerProject) {
-            const localProject = localProjectById.get(projectId);
-            if (!localProject) {
-              nextProjectsById.set(projectId, project);
-              return;
-            }
-            const mergedNotes = mergeProjectNotesContentByRevision(
-              project.notesContent,
-              project.noteRevisionMap,
-              localProject.notesContent,
-              localProject.noteRevisionMap
+	          if (!ownerProject) {
+	            const localProject = localProjectById.get(projectId);
+	            if (!localProject) {
+	              nextProjectsById.set(projectId, project);
+	              return;
+	            }
+	            const sourceProject = selectPreferredProjectSnapshot(project, localProject) || project;
+	            const mergedNotes = mergeProjectNotesContentByRevision(
+	              project.notesContent,
+	              project.noteRevisionMap,
+	              localProject.notesContent,
+	              localProject.noteRevisionMap
             );
             const mergedNotesPresence = mergeProjectNotesPresence(
               project.notesPresence,
@@ -4579,15 +4637,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
               ? localNotesPreferencesByProjectId.get(projectId)
               : {};
             nextProjectsById.set(
-              projectId,
-              ensureProjectOwnership(
-                {
-                  ...project,
-                  notesContent: mergedNotes.notesContent,
-                  noteRevisionMap: mergedNotes.noteRevisionMap,
-                  notesPresence: mergedNotesPresence,
-                  notesPreferences: preservedNotesPreferences,
-                  isVisible:
+	              projectId,
+	              ensureProjectOwnership(
+	                {
+	                  ...sourceProject,
+	                  notesContent: mergedNotes.notesContent,
+	                  noteRevisionMap: mergedNotes.noteRevisionMap,
+	                  notesPresence: mergedNotesPresence,
+	                  notesPreferences: preservedNotesPreferences,
+	                  isVisible:
                     typeof preservedVisibility === 'boolean'
                       ? preservedVisibility
                       : Boolean(project.isVisible),
@@ -4598,12 +4656,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             return;
           }
 
-          const localProject = localProjectById.get(projectId);
-          const mergedNotes = mergeProjectNotesContentByRevision(
-            ownerProject.notesContent,
-            ownerProject.noteRevisionMap,
-            localProject?.notesContent,
-            localProject?.noteRevisionMap
+	          const localProject = localProjectById.get(projectId);
+	          const sourceProject = selectPreferredProjectSnapshot(ownerProject, localProject) || ownerProject;
+	          const mergedNotes = mergeProjectNotesContentByRevision(
+	            ownerProject.notesContent,
+	            ownerProject.noteRevisionMap,
+	            localProject?.notesContent,
+	            localProject?.noteRevisionMap
           );
           const mergedNotesPresence = mergeProjectNotesPresence(
             ownerProject.notesPresence,
@@ -4614,14 +4673,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             ? localNotesPreferencesByProjectId.get(projectId)
             : {};
           nextProjectsById.set(
-            projectId,
-            ensureProjectOwnership(
-              {
-                ...ownerProject,
-                notesContent: mergedNotes.notesContent,
-                noteRevisionMap: mergedNotes.noteRevisionMap,
-                notesPresence: mergedNotesPresence,
-                notesPreferences: preservedNotesPreferences,
+	            projectId,
+	            ensureProjectOwnership(
+	              {
+	                ...sourceProject,
+	                notesContent: mergedNotes.notesContent,
+	                noteRevisionMap: mergedNotes.noteRevisionMap,
+	                notesPresence: mergedNotesPresence,
+	                notesPreferences: preservedNotesPreferences,
                 isVisible:
                   typeof preservedVisibility === 'boolean'
                     ? preservedVisibility
@@ -4646,11 +4705,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           if (normalizedOwnerProject.ownerId === currentUser.id) return;
           if (!isProjectAccessibleByUser(normalizedOwnerProject, currentUser)) return;
 
-          const localProject = localProjectById.get(projectId);
-          const mergedNotes = mergeProjectNotesContentByRevision(
-            normalizedOwnerProject.notesContent,
-            normalizedOwnerProject.noteRevisionMap,
-            localProject?.notesContent,
+	          const localProject = localProjectById.get(projectId);
+	          const sourceProject =
+	            selectPreferredProjectSnapshot(normalizedOwnerProject, localProject) ||
+	            normalizedOwnerProject;
+	          const mergedNotes = mergeProjectNotesContentByRevision(
+	            normalizedOwnerProject.notesContent,
+	            normalizedOwnerProject.noteRevisionMap,
+	            localProject?.notesContent,
             localProject?.noteRevisionMap
           );
           const mergedNotesPresence = mergeProjectNotesPresence(
@@ -4662,14 +4724,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             ? localNotesPreferencesByProjectId.get(projectId)
             : {};
           nextProjectsById.set(
-            projectId,
-            ensureProjectOwnership(
-              {
-                ...normalizedOwnerProject,
-                notesContent: mergedNotes.notesContent,
-                noteRevisionMap: mergedNotes.noteRevisionMap,
-                notesPresence: mergedNotesPresence,
-                notesPreferences: preservedNotesPreferences,
+	            projectId,
+	            ensureProjectOwnership(
+	              {
+	                ...sourceProject,
+	                notesContent: mergedNotes.notesContent,
+	                noteRevisionMap: mergedNotes.noteRevisionMap,
+	                notesPresence: mergedNotesPresence,
+	                notesPreferences: preservedNotesPreferences,
                 isVisible:
                   typeof preservedVisibility === 'boolean'
                     ? preservedVisibility
@@ -4734,7 +4796,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     const collaborativeRefreshIntervalMs = activeDashboardProjectId
       ? activeDashboardTab === 'notes'
-        ? 800
+        ? 420
         : 1400
       : COLLABORATIVE_REFRESH_INTERVAL_MS;
     const refreshInterval = window.setInterval(() => {
@@ -5111,7 +5173,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     }
   };
 
-  const syncSharedProjectDetailsToOwner = async (projectId, nextProjectsSnapshot = projects) => {
+	  const syncSharedProjectDetailsToOwner = async (projectId, nextProjectsSnapshot = projects) => {
     if (!AUTH_API_BASE_URL) return;
 
     const normalizedProjectId = String(projectId || '').trim();
@@ -5133,12 +5195,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       );
       if (ownerProjectIndex < 0) return;
 
-      const ownerProject = ownerProjects[ownerProjectIndex];
-      const ownerReference = {
-        id: ownerId,
-        username:
-          String(ownerProject?.ownerUsername || '').trim().toLowerCase() ||
-          String(targetProject.ownerUsername || '').trim().toLowerCase() ||
+	      const ownerProject = ownerProjects[ownerProjectIndex];
+	      const strippedTargetProject = stripLocalOnlyProjectFields(targetProject);
+	      const preferredProjectSnapshot =
+	        selectPreferredProjectSnapshot(ownerProject, strippedTargetProject) || ownerProject;
+	      const ownerReference = {
+	        id: ownerId,
+	        username:
+	          String(ownerProject?.ownerUsername || '').trim().toLowerCase() ||
+	          String(targetProject.ownerUsername || '').trim().toLowerCase() ||
           currentUser.username,
       };
       const mergedNotesState = mergeProjectNotesContentByRevision(
@@ -5151,14 +5216,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         ownerProject?.notesPresence,
         targetProject?.notesPresence
       );
-      const mergedOwnerProject = ensureProjectOwnership(
-        {
-          ...ownerProject,
-          ...stripLocalOnlyProjectFields(targetProject),
-          isVisible: Boolean(ownerProject?.isVisible),
-          notesPreferences: ownerProject?.notesPreferences || {},
-          notesContent: mergedNotesState.notesContent,
-          noteRevisionMap: mergedNotesState.noteRevisionMap,
+	      const mergedOwnerProject = ensureProjectOwnership(
+	        {
+	          ...ownerProject,
+	          ...preferredProjectSnapshot,
+	          isVisible: Boolean(ownerProject?.isVisible),
+	          notesPreferences: ownerProject?.notesPreferences || {},
+	          notesContent: mergedNotesState.notesContent,
+	          noteRevisionMap: mergedNotesState.noteRevisionMap,
           notesPresence: mergedNotesPresence,
         },
         ownerReference
@@ -5178,23 +5243,59 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       console.warn('Failed to sync shared project details to owner payload:', error.message);
     }
   };
-  const syncOwnerProjectPresencePatchToCloud = async (
+  const normalizeNotePatchPayload = (patchInput) => {
+    const safePatch =
+      patchInput && typeof patchInput === 'object' && !Array.isArray(patchInput)
+        ? patchInput
+        : {};
+    return {
+      noteContentPatch: normalizeNoteContentMap(safePatch.noteContentPatch),
+      noteRevisionPatch: normalizeNoteRevisionMap(safePatch.noteRevisionPatch),
+      notePresencePatch: normalizeProjectNotesPresence(safePatch.notePresencePatch),
+    };
+  };
+  const hasNotePatchPayload = (patchInput) => {
+    const patch = normalizeNotePatchPayload(patchInput);
+    return (
+      Object.keys(patch.noteContentPatch).length > 0 ||
+      Object.keys(patch.noteRevisionPatch).length > 0 ||
+      Object.keys(patch.notePresencePatch).length > 0
+    );
+  };
+  const mergeNotePatchPayload = (basePatchInput, incomingPatchInput) => {
+    const basePatch = normalizeNotePatchPayload(basePatchInput);
+    const incomingPatch = normalizeNotePatchPayload(incomingPatchInput);
+    return {
+      noteContentPatch: {
+        ...basePatch.noteContentPatch,
+        ...incomingPatch.noteContentPatch,
+      },
+      noteRevisionPatch: {
+        ...basePatch.noteRevisionPatch,
+        ...incomingPatch.noteRevisionPatch,
+      },
+      notePresencePatch: mergeProjectNotesPresence(
+        basePatch.notePresencePatch,
+        incomingPatch.notePresencePatch
+      ),
+    };
+  };
+  const syncOwnerProjectNotePatchToCloud = async (
     projectId,
-    notePresencePatchInput,
+    notePatchInput,
     nextProjectsSnapshot = projects
   ) => {
     if (!AUTH_API_BASE_URL) return;
 
     const normalizedProjectId = String(projectId || '').trim();
     if (!normalizedProjectId) return;
+    const notePatch = normalizeNotePatchPayload(notePatchInput);
+    if (!hasNotePatchPayload(notePatch)) return;
     const targetProject = (Array.isArray(nextProjectsSnapshot) ? nextProjectsSnapshot : []).find(
       (project) => String(project?.id || '').trim() === normalizedProjectId
     );
     if (!targetProject) return;
     if (String(targetProject.ownerId || '').trim() !== currentUser.id) return;
-
-    const presencePatch = normalizeProjectNotesPresence(notePresencePatchInput);
-    if (Object.keys(presencePatch).length === 0) return;
 
     try {
       const remotePayload = await loadAccountDbPayload(currentUser.id);
@@ -5204,11 +5305,25 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       );
       if (projectIndex < 0) return;
       const remoteProject = ensureProjectOwnership(remoteProjects[projectIndex], currentUser);
-      const nextPresence = mergeProjectNotesPresence(remoteProject.notesPresence, presencePatch);
-      if (isJsonEqual(remoteProject.notesPresence, nextPresence)) return;
+      const mergedNotesState = mergeProjectNotesContentByRevision(
+        remoteProject.notesContent,
+        remoteProject.noteRevisionMap,
+        notePatch.noteContentPatch,
+        notePatch.noteRevisionPatch
+      );
+      const nextPresence = Object.keys(notePatch.notePresencePatch).length
+        ? mergeProjectNotesPresence(remoteProject.notesPresence, notePatch.notePresencePatch)
+        : normalizeProjectNotesPresence(remoteProject.notesPresence);
+      const hasNoteStateChanged =
+        !isJsonEqual(remoteProject.notesContent, mergedNotesState.notesContent) ||
+        !isJsonEqual(remoteProject.noteRevisionMap, mergedNotesState.noteRevisionMap) ||
+        !isJsonEqual(remoteProject.notesPresence, nextPresence);
+      if (!hasNoteStateChanged) return;
       const nextRemoteProjects = [...remoteProjects];
       nextRemoteProjects[projectIndex] = {
         ...remoteProject,
+        notesContent: mergedNotesState.notesContent,
+        noteRevisionMap: mergedNotesState.noteRevisionMap,
         notesPresence: nextPresence,
       };
       await saveAccountDbPayload(currentUser.id, {
@@ -5216,8 +5331,164 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         projects: nextRemoteProjects,
       });
     } catch (error) {
-      console.warn('Failed to sync owner note presence patch:', error.message);
+      console.warn('Failed to sync owner note patch:', error.message);
     }
+  };
+  const syncSharedProjectNotePatchToOwner = async (projectId, ownerIdInput, notePatchInput) => {
+    if (!AUTH_API_BASE_URL) return;
+
+    const normalizedProjectId = String(projectId || '').trim();
+    const ownerId = String(ownerIdInput || '').trim();
+    if (!normalizedProjectId || !ownerId || ownerId === currentUser.id) return;
+    const notePatch = normalizeNotePatchPayload(notePatchInput);
+    if (!hasNotePatchPayload(notePatch)) return;
+
+    try {
+      const ownerPayload = await loadAccountDbPayload(ownerId);
+      const ownerProjects = Array.isArray(ownerPayload.projects) ? ownerPayload.projects : [];
+      const ownerProjectIndex = ownerProjects.findIndex(
+        (project) => String(project?.id || '').trim() === normalizedProjectId
+      );
+      if (ownerProjectIndex < 0) return;
+      const ownerProject = ownerProjects[ownerProjectIndex];
+      const ownerReference = {
+        id: ownerId,
+        username:
+          String(ownerProject?.ownerUsername || '').trim().toLowerCase() ||
+          String(currentUser.username || '').trim().toLowerCase(),
+      };
+      const normalizedOwnerProject = ensureProjectOwnership(ownerProject, ownerReference);
+      const mergedNotesState = mergeProjectNotesContentByRevision(
+        normalizedOwnerProject.notesContent,
+        normalizedOwnerProject.noteRevisionMap,
+        notePatch.noteContentPatch,
+        notePatch.noteRevisionPatch
+      );
+      const nextPresence = Object.keys(notePatch.notePresencePatch).length
+        ? mergeProjectNotesPresence(normalizedOwnerProject.notesPresence, notePatch.notePresencePatch)
+        : normalizeProjectNotesPresence(normalizedOwnerProject.notesPresence);
+      const hasNoteStateChanged =
+        !isJsonEqual(normalizedOwnerProject.notesContent, mergedNotesState.notesContent) ||
+        !isJsonEqual(normalizedOwnerProject.noteRevisionMap, mergedNotesState.noteRevisionMap) ||
+        !isJsonEqual(normalizedOwnerProject.notesPresence, nextPresence);
+      if (!hasNoteStateChanged) return;
+      const nextOwnerProjects = [...ownerProjects];
+      nextOwnerProjects[ownerProjectIndex] = {
+        ...normalizedOwnerProject,
+        notesContent: mergedNotesState.notesContent,
+        noteRevisionMap: mergedNotesState.noteRevisionMap,
+        notesPresence: nextPresence,
+      };
+      await saveAccountDbPayload(ownerId, {
+        ...ownerPayload,
+        projects: nextOwnerProjects,
+      });
+    } catch (error) {
+      console.warn('Failed to sync shared note patch to owner payload:', error.message);
+    }
+  };
+  const queueOwnerProjectNotePatchSync = (projectId, notePatchInput, delayMs = 220) => {
+    if (!AUTH_API_BASE_URL) return;
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) return;
+    const normalizedPatch = normalizeNotePatchPayload(notePatchInput);
+    if (!hasNotePatchPayload(normalizedPatch)) return;
+    const syncMap = ownerNotePatchSyncStateRef.current;
+    const currentState =
+      syncMap.get(normalizedProjectId) || {
+        timerId: null,
+        inFlight: false,
+        pendingPatch: null,
+      };
+    const runFlush = async () => {
+      if (currentState.inFlight) return;
+      const nextPatch = normalizeNotePatchPayload(currentState.pendingPatch);
+      if (!hasNotePatchPayload(nextPatch)) {
+        if (!currentState.timerId) {
+          syncMap.delete(normalizedProjectId);
+        }
+        return;
+      }
+      currentState.pendingPatch = null;
+      currentState.inFlight = true;
+      try {
+        await syncOwnerProjectNotePatchToCloud(normalizedProjectId, nextPatch, projectsRef.current);
+      } finally {
+        currentState.inFlight = false;
+        if (hasNotePatchPayload(currentState.pendingPatch)) {
+          currentState.timerId = window.setTimeout(() => {
+            currentState.timerId = null;
+            void runFlush();
+          }, 80);
+        } else if (!currentState.timerId) {
+          syncMap.delete(normalizedProjectId);
+        }
+      }
+    };
+    currentState.pendingPatch = mergeNotePatchPayload(currentState.pendingPatch, normalizedPatch);
+    if (currentState.timerId) {
+      window.clearTimeout(currentState.timerId);
+    }
+    currentState.timerId = window.setTimeout(() => {
+      currentState.timerId = null;
+      void runFlush();
+    }, delayMs);
+    syncMap.set(normalizedProjectId, currentState);
+  };
+  const queueSharedProjectNotePatchSyncToOwner = (
+    projectId,
+    ownerIdInput,
+    notePatchInput,
+    delayMs = 220
+  ) => {
+    if (!AUTH_API_BASE_URL) return;
+    const normalizedProjectId = String(projectId || '').trim();
+    const ownerId = String(ownerIdInput || '').trim();
+    if (!normalizedProjectId || !ownerId || ownerId === currentUser.id) return;
+    const normalizedPatch = normalizeNotePatchPayload(notePatchInput);
+    if (!hasNotePatchPayload(normalizedPatch)) return;
+    const queueKey = `${ownerId}:${normalizedProjectId}`;
+    const syncMap = sharedOwnerNotePatchSyncStateRef.current;
+    const currentState =
+      syncMap.get(queueKey) || {
+        timerId: null,
+        inFlight: false,
+        pendingPatch: null,
+      };
+    const runFlush = async () => {
+      if (currentState.inFlight) return;
+      const nextPatch = normalizeNotePatchPayload(currentState.pendingPatch);
+      if (!hasNotePatchPayload(nextPatch)) {
+        if (!currentState.timerId) {
+          syncMap.delete(queueKey);
+        }
+        return;
+      }
+      currentState.pendingPatch = null;
+      currentState.inFlight = true;
+      try {
+        await syncSharedProjectNotePatchToOwner(normalizedProjectId, ownerId, nextPatch);
+      } finally {
+        currentState.inFlight = false;
+        if (hasNotePatchPayload(currentState.pendingPatch)) {
+          currentState.timerId = window.setTimeout(() => {
+            currentState.timerId = null;
+            void runFlush();
+          }, 80);
+        } else if (!currentState.timerId) {
+          syncMap.delete(queueKey);
+        }
+      }
+    };
+    currentState.pendingPatch = mergeNotePatchPayload(currentState.pendingPatch, normalizedPatch);
+    if (currentState.timerId) {
+      window.clearTimeout(currentState.timerId);
+    }
+    currentState.timerId = window.setTimeout(() => {
+      currentState.timerId = null;
+      void runFlush();
+    }, delayMs);
+    syncMap.set(queueKey, currentState);
   };
 
   const syncSharedProjectDetailsForProjects = (projectIds, nextProjectsSnapshot = projects) => {
@@ -5247,23 +5518,27 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       void syncSharedProjectEventsToOwner(projectId, nextEventsSnapshot, projectsSnapshot);
     });
   };
-  const appendProjectActivityLog = (projectId, entryInput, { syncToOwner = true } = {}) => {
+	  const appendProjectActivityLog = (projectId, entryInput, { syncToOwner = true } = {}) => {
     const normalizedProjectId = String(projectId || '').trim();
     if (!normalizedProjectId) return;
 
-    setProjects((prevProjects) => {
-      let didUpdate = false;
-      const nextProjects = prevProjects.map((project) => {
-        if (String(project?.id || '').trim() !== normalizedProjectId) return project;
-        didUpdate = true;
-        return appendProjectActivityEntryToProject(project, {
-          ...entryInput,
-          projectId: project.id,
-          projectName: project.name,
-          actorId: currentUser.id,
-          actorUsername: currentUser.username,
-        });
-      });
+	    setProjects((prevProjects) => {
+	      let didUpdate = false;
+	      const nextProjects = prevProjects.map((project) => {
+	        if (String(project?.id || '').trim() !== normalizedProjectId) return project;
+	        didUpdate = true;
+	        const projectWithEntry = appendProjectActivityEntryToProject(project, {
+	          ...entryInput,
+	          projectId: project.id,
+	          projectName: project.name,
+	          actorId: currentUser.id,
+	          actorUsername: currentUser.username,
+	        });
+	        return {
+	          ...projectWithEntry,
+	          updatedAt: new Date().toISOString(),
+	        };
+	      });
 
       if (didUpdate && syncToOwner) {
         syncSharedProjectDetailsForProjects([normalizedProjectId], nextProjects);
@@ -5634,10 +5909,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       setProjects(
         projects.map((project) => {
           if (project.id !== projectData.id) return project;
-          return ensureProjectOwnership({ ...project, ...projectData }, currentUser);
+          return ensureProjectOwnership(
+            { ...project, ...projectData, updatedAt: new Date().toISOString() },
+            currentUser
+          );
         })
       );
     } else {
+      const nowIso = new Date().toISOString();
       const newProject = { 
         ...projectData, 
         id: generateId(), 
@@ -5655,6 +5934,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         departmentColors: {},
         joinCodeSecret: generateProjectJoinCodeSecret(),
         changeFeed: [],
+        createdAt: nowIso,
+        updatedAt: nowIso,
       };
       setProjects([...projects, newProject]);
     }
@@ -5804,13 +6085,21 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!normalizedProjectId) return;
     const safeUpdatesInput =
       updates && typeof updates === 'object' && !Array.isArray(updates) ? updates : {};
+    const safeUpdateInputKeys = Object.keys(safeUpdatesInput);
+    const isNoteOnlyUpdate =
+      safeUpdateInputKeys.length > 0 &&
+      safeUpdateInputKeys.every((key) =>
+        ['noteContentPatch', 'noteRevisionPatch', 'notePresencePatch'].includes(key)
+      );
 
     setProjects((prevProjects) => {
       let didUpdate = false;
-      let ownerPresencePatchToSync = null;
+      let notePatchToSync = null;
+      let targetProjectOwnerId = '';
       const nextProjects = prevProjects.map((project) => {
         if (project.id !== normalizedProjectId) return project;
         didUpdate = true;
+        targetProjectOwnerId = String(project.ownerId || '').trim();
 
         const isOwner = String(project.ownerId || '').trim() === currentUser.id;
         const safeUpdates = { ...safeUpdatesInput };
@@ -5843,6 +6132,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           delete safeUpdates.ownerUsername;
           delete safeUpdates.joinCodeSecret;
         }
+        if (!isNoteOnlyUpdate) {
+          safeUpdates.updatedAt = new Date().toISOString();
+        }
         if (noteContentPatchInput || noteRevisionPatchInput) {
           const mergedNotes = mergeProjectNotesContentByRevision(
             project.notesContent,
@@ -5858,9 +6150,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             project.notesPresence,
             notePresencePatchInput
           );
-          if (isOwner) {
-            ownerPresencePatchToSync = notePresencePatchInput;
-          }
+        }
+        if (noteContentPatchInput || noteRevisionPatchInput || notePresencePatchInput) {
+          notePatchToSync = mergeNotePatchPayload(notePatchToSync, {
+            noteContentPatch: noteContentPatchInput || {},
+            noteRevisionPatch: noteRevisionPatchInput || {},
+            notePresencePatch: notePresencePatchInput || {},
+          });
         }
         if (Array.isArray(safeUpdates.changeFeed)) {
           const requestedFeed = normalizeProjectActivityFeed(safeUpdates.changeFeed, project);
@@ -5902,13 +6198,20 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       });
 
       if (didUpdate) {
-        syncSharedProjectDetailsForProjects([normalizedProjectId], nextProjects);
-        if (ownerPresencePatchToSync) {
-          void syncOwnerProjectPresencePatchToCloud(
-            normalizedProjectId,
-            ownerPresencePatchToSync,
-            nextProjects
-          );
+        const hasNotePatch = hasNotePatchPayload(notePatchToSync);
+        if (!isNoteOnlyUpdate) {
+          syncSharedProjectDetailsForProjects([normalizedProjectId], nextProjects);
+        }
+        if (hasNotePatch) {
+          if (targetProjectOwnerId === currentUser.id) {
+            queueOwnerProjectNotePatchSync(normalizedProjectId, notePatchToSync);
+          } else {
+            queueSharedProjectNotePatchSyncToOwner(
+              normalizedProjectId,
+              targetProjectOwnerId,
+              notePatchToSync
+            );
+          }
         }
       }
 
@@ -7893,10 +8196,13 @@ function ProjectDashboard({
   const handleSaveNoteContent = (id, content) => {
     const normalizedNoteId = String(id || '').trim();
     if (!normalizedNoteId) return;
+    const currentRevision =
+      Number.parseInt(String(noteRevisionMap?.[normalizedNoteId]?.revision || '0'), 10) || 0;
     const revision = {
       updatedAt: new Date().toISOString(),
       updatedById: currentUser.id,
       updatedByUsername: currentUser.username,
+      revision: currentRevision + 1,
     };
     const nextNotes = { ...notesContent, [normalizedNoteId]: String(content || '') };
     const nextRevisionMap = { ...noteRevisionMap, [normalizedNoteId]: revision };
