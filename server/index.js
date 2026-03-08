@@ -53,6 +53,7 @@ const GOOGLE_CALENDAR_STATE_TTL_MS = 10 * 60 * 1000;
 const GOOGLE_CALENDAR_PROJECT_ID = '__google_calendar__';
 const GOOGLE_CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/userinfo.email',
   'openid',
 ];
@@ -193,6 +194,13 @@ const shiftIsoDateByDays = (dateString, diffDays) => {
   date.setUTCDate(date.getUTCDate() + diffDays);
   return date.toISOString().slice(0, 10);
 };
+
+const normalizeGoogleEventColorId = (value) => {
+  const colorId = String(value || '').trim();
+  return /^(?:[1-9]|1[0-1])$/.test(colorId) ? colorId : '';
+};
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_TIME_PATTERN = /^\d{2}:\d{2}$/;
 
 const normalizeGoogleCalendarEvent = (googleEvent, calendarContext = null) => {
   const googleEventId = String(googleEvent?.id || '').trim();
@@ -1399,6 +1407,197 @@ app.get('/google/calendar/events', async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to fetch Google Calendar events.' });
+  }
+});
+
+app.post('/google/calendar/events', async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.query?.userId || req.body?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
+    }
+
+    const oauthForCalendar = createGoogleCalendarOauthClient(req);
+    if (!oauthForCalendar) {
+      return res.status(503).json({
+        message:
+          'Google Calendar OAuth is not configured. Set GOOGLE_CLIENT_SECRET and GOOGLE_CALENDAR_REDIRECT_URI (or GOOGLE_OAUTH_JSON_PATH).',
+      });
+    }
+
+    const title = String(req.body?.title || '').trim();
+    const description = String(req.body?.description || '').trim();
+    const location = String(req.body?.location || '').trim();
+    const startDate = String(req.body?.startDate || '').trim();
+    const endDate = String(req.body?.endDate || startDate).trim();
+    const showTime = req.body?.showTime !== false;
+    const startTime = String(req.body?.startTime || '09:00').trim();
+    const endTime = String(req.body?.endTime || '10:00').trim();
+    const requestedCalendarId = String(req.body?.calendarId || '').trim();
+    const colorId = normalizeGoogleEventColorId(req.body?.colorId);
+    const timeZone = String(req.body?.timeZone || '').trim() || 'UTC';
+
+    if (!title) {
+      return res.status(400).json({ message: 'title is required.' });
+    }
+    if (!ISO_DATE_PATTERN.test(startDate) || !ISO_DATE_PATTERN.test(endDate)) {
+      return res.status(400).json({ message: 'startDate/endDate must be in YYYY-MM-DD format.' });
+    }
+    if (endDate < startDate) {
+      return res.status(400).json({ message: 'endDate must be on or after startDate.' });
+    }
+    if (showTime && (!ISO_TIME_PATTERN.test(startTime) || !ISO_TIME_PATTERN.test(endTime))) {
+      return res.status(400).json({ message: 'startTime/endTime must be in HH:mm format.' });
+    }
+    if (showTime && endDate === startDate && endTime <= startTime) {
+      return res.status(400).json({ message: 'endTime must be after startTime for same-day events.' });
+    }
+
+    const userDoc = await usersRef.doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const userData = userDoc.data() || {};
+    const googleCalendarIntegration = getGoogleCalendarIntegration(userData);
+    if (!googleCalendarIntegration) {
+      return res.status(404).json({ message: 'Google Calendar is not linked for this user.' });
+    }
+
+    oauthForCalendar.setCredentials({
+      refresh_token: googleCalendarIntegration.refreshToken,
+      access_token: googleCalendarIntegration.accessToken || undefined,
+      expiry_date:
+        Number.isFinite(googleCalendarIntegration.accessTokenExpiresAt) &&
+        googleCalendarIntegration.accessTokenExpiresAt > 0
+          ? googleCalendarIntegration.accessTokenExpiresAt
+          : undefined,
+    });
+
+    const accessToken = String((await oauthForCalendar.getAccessToken())?.token || '').trim();
+    if (!accessToken) {
+      return res.status(401).json({
+        message: 'Unable to refresh Google Calendar access token. Please unlink and link again.',
+      });
+    }
+
+    const calendars = await fetchGoogleCalendarList(accessToken);
+    const availableCalendarIds = new Set(
+      calendars.map((calendar) => String(calendar.id || '').trim()).filter(Boolean)
+    );
+    const selectedCalendarIds = filterGoogleCalendarSelectionByAvailableCalendars(
+      googleCalendarIntegration.selectedCalendarIds,
+      calendars
+    );
+
+    let calendarId = requestedCalendarId;
+    if (calendarId && !availableCalendarIds.has(calendarId)) {
+      return res.status(400).json({ message: 'Selected Google Calendar is not available.' });
+    }
+    if (!calendarId) {
+      calendarId = selectedCalendarIds[0] || calendars[0]?.id || 'primary';
+    }
+
+    const calendarContext =
+      calendars.find((calendar) => calendar.id === calendarId) ||
+      ({ id: calendarId, summary: calendarId === 'primary' ? 'Primary' : calendarId });
+
+    const googlePayload = {
+      summary: title,
+      description: description || undefined,
+      location: location || undefined,
+    };
+    if (colorId) {
+      googlePayload.colorId = colorId;
+    }
+
+    if (showTime) {
+      googlePayload.start = {
+        dateTime: `${startDate}T${startTime}:00`,
+        timeZone,
+      };
+      googlePayload.end = {
+        dateTime: `${endDate}T${endTime}:00`,
+        timeZone,
+      };
+    } else {
+      googlePayload.start = { date: startDate };
+      googlePayload.end = { date: shiftIsoDateByDays(endDate, 1) };
+    }
+
+    const insertResponse = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(googlePayload),
+      }
+    );
+
+    if (!insertResponse.ok) {
+      let googleErrorMessage = '';
+      try {
+        const googleErrorPayload = await insertResponse.json();
+        googleErrorMessage = String(
+          googleErrorPayload?.error?.message || googleErrorPayload?.message || ''
+        ).trim();
+      } catch {
+        googleErrorMessage = '';
+      }
+
+      if (insertResponse.status === 403) {
+        return res.status(403).json({
+          message:
+            googleErrorMessage ||
+            'Google permission denied. Please unlink and link Google Calendar again to grant event write access.',
+        });
+      }
+
+      return res.status(502).json({
+        message:
+          googleErrorMessage ||
+          `Google Calendar event insert failed (${insertResponse.status}).`,
+      });
+    }
+
+    const createdGoogleEvent = await insertResponse.json();
+    const normalizedCreatedEvent = normalizeGoogleCalendarEvent(createdGoogleEvent, calendarContext);
+
+    const refreshedCredentials = oauthForCalendar.credentials || {};
+    const nextRefreshToken =
+      String(refreshedCredentials.refresh_token || '').trim() || googleCalendarIntegration.refreshToken;
+    const nowIso = new Date().toISOString();
+
+    await usersRef.doc(userId).set(
+      {
+        googleCalendarIntegration: {
+          linkedEmail: googleCalendarIntegration.linkedEmail,
+          refreshToken: nextRefreshToken,
+          accessToken,
+          accessTokenExpiresAt: Number(refreshedCredentials.expiry_date || 0),
+          scope: String(refreshedCredentials.scope || googleCalendarIntegration.scope || '').trim(),
+          tokenType: String(refreshedCredentials.token_type || googleCalendarIntegration.tokenType || '').trim(),
+          linkedAt: googleCalendarIntegration.linkedAt || nowIso,
+          updatedAt: nowIso,
+          selectedCalendarIds,
+        },
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+
+    return res.json({
+      ok: true,
+      source: 'google_calendar',
+      calendarId,
+      colorId: colorId || null,
+      event: normalizedCreatedEvent,
+      updatedAt: nowIso,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to create Google Calendar event.' });
   }
 });
 

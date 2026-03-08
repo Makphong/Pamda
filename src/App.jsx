@@ -65,6 +65,9 @@ const PROJECT_COLORS = [
   { bg: 'bg-pink-500', text: 'text-pink-800', lightBg: 'bg-pink-100', border: 'border-pink-200' },
   { bg: 'bg-teal-500', text: 'text-teal-800', lightBg: 'bg-teal-100', border: 'border-teal-200' },
 ];
+const PROJECT_COLOR_HEX = ['#3b82f6', '#ef4444', '#22c55e', '#a855f7', '#f97316', '#ec4899', '#14b8a6'];
+const getProjectColorHexByIndex = (index) =>
+  PROJECT_COLOR_HEX[Number.isFinite(Number(index)) ? Number(index) : 0] || PROJECT_COLOR_HEX[0];
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 const AUTH_USER_KEY = 'pm_calendar_auth_user';
@@ -597,6 +600,50 @@ const toSheetColumnLabel = (columnIndex) => {
   }
   return label;
 };
+const normalizeTaskAssigneeIds = (taskInput) => {
+  const task =
+    taskInput && typeof taskInput === 'object' && !Array.isArray(taskInput)
+      ? taskInput
+      : {};
+  const fromArray = Array.isArray(task.assigneeIds) ? task.assigneeIds : [];
+  const fallbackSingle = String(task.assigneeId || '').trim();
+  const normalizedIds = fromArray
+    .map((id) => String(id || '').trim())
+    .filter(Boolean);
+  if (fallbackSingle && !normalizedIds.includes(fallbackSingle)) {
+    normalizedIds.unshift(fallbackSingle);
+  }
+  return Array.from(new Set(normalizedIds));
+};
+const resolveTaskDepartmentsFromAssignees = (
+  assigneeIdsInput,
+  teamMembers,
+  fallback = 'Unassigned'
+) => {
+  const assigneeIds = Array.isArray(assigneeIdsInput) ? assigneeIdsInput : [];
+  const departments = Array.from(
+    new Set(
+      assigneeIds
+        .map((id) =>
+          String(
+            (Array.isArray(teamMembers)
+              ? teamMembers.find((member) => member.id === id)?.department
+              : '') || ''
+          ).trim()
+        )
+        .filter(Boolean)
+    )
+  );
+  if (departments.length > 0) return departments;
+  const safeFallback = String(fallback || '').trim();
+  return [safeFallback || 'Unassigned'];
+};
+const resolveTaskDepartmentFromAssignees = (assigneeIdsInput, teamMembers, fallback = 'Unassigned') => {
+  const departments = resolveTaskDepartmentsFromAssignees(assigneeIdsInput, teamMembers, fallback);
+  if (departments.length === 1) return departments[0];
+  if (departments.length > 1) return 'Multiple';
+  return 'Unassigned';
+};
 const fromSheetColumnLabel = (labelInput) => {
   const label = String(labelInput || '').trim().toUpperCase();
   if (!/^[A-Z]+$/.test(label)) return -1;
@@ -1047,6 +1094,19 @@ const DEFAULT_GOOGLE_CALENDAR_STATUS = {
   configured: false,
   redirectUri: '',
 };
+const GOOGLE_CALENDAR_EVENT_COLOR_PRESETS = [
+  { id: '1', label: 'Lavender', hex: '#a4bdfc' },
+  { id: '2', label: 'Sage', hex: '#7ae7bf' },
+  { id: '3', label: 'Grape', hex: '#dbadff' },
+  { id: '4', label: 'Flamingo', hex: '#ff887c' },
+  { id: '5', label: 'Banana', hex: '#fbd75b' },
+  { id: '6', label: 'Tangerine', hex: '#ffb878' },
+  { id: '7', label: 'Peacock', hex: '#46d6db' },
+  { id: '8', label: 'Graphite', hex: '#e1e1e1' },
+  { id: '9', label: 'Blueberry', hex: '#5484ed' },
+  { id: '10', label: 'Basil', hex: '#51b749' },
+  { id: '11', label: 'Tomato', hex: '#dc2127' },
+];
 
 const getLocalUsers = () => {
   try {
@@ -3695,7 +3755,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }, [currentUser.id]);
 
   useEffect(() => {
-    if (!showProjectModal || !googleCalendarStatus.linked || !AUTH_API_BASE_URL) {
+    const shouldLoadGoogleCalendars = showProjectModal || showEventModal;
+    if (!shouldLoadGoogleCalendars || !googleCalendarStatus.linked || !AUTH_API_BASE_URL) {
       if (!googleCalendarStatus.linked) {
         setGoogleCalendarCalendars([]);
         setGoogleCalendarSelectedCalendarIds([]);
@@ -3718,7 +3779,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     return () => {
       isCancelled = true;
     };
-  }, [showProjectModal, googleCalendarStatus.linked, currentUser.id]);
+  }, [showProjectModal, showEventModal, googleCalendarStatus.linked, currentUser.id]);
 
   useEffect(() => {
     if (!isAccountDataHydrated) return;
@@ -4304,6 +4365,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             }),
           ])
         );
+        const localProjectById = new Map(
+          localProjectsSnapshot.map((project) => [String(project.id || '').trim(), project])
+        );
         const nextProjectsById = new Map();
 
         baseProjects.forEach((project) => {
@@ -4311,16 +4375,93 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           if (!projectId) return;
 
           if (project.ownerId === currentUser.id) {
-            nextProjectsById.set(projectId, project);
+            const localProject = localProjectById.get(projectId);
+            if (!localProject) {
+              nextProjectsById.set(projectId, project);
+              return;
+            }
+            const mergedNotes = mergeProjectNotesContentByRevision(
+              project.notesContent,
+              project.noteRevisionMap,
+              localProject.notesContent,
+              localProject.noteRevisionMap
+            );
+            const mergedNotesPresence = mergeProjectNotesPresence(
+              project.notesPresence,
+              localProject.notesPresence
+            );
+            nextProjectsById.set(
+              projectId,
+              ensureProjectOwnership(
+                {
+                  ...project,
+                  notesContent: mergedNotes.notesContent,
+                  noteRevisionMap: mergedNotes.noteRevisionMap,
+                  notesPresence: mergedNotesPresence,
+                  notesPreferences: resolveAccountScopedNotesPreferences(localProject.notesPreferences, {
+                    currentUserId: currentUser.id,
+                    projectOwnerId: project.ownerId,
+                  }),
+                  isVisible: Boolean(localProject.isVisible),
+                },
+                currentUser
+              )
+            );
             return;
           }
 
           const ownerProject = ownerProjectById.get(projectId);
           if (!ownerProject) {
-            nextProjectsById.set(projectId, project);
+            const localProject = localProjectById.get(projectId);
+            if (!localProject) {
+              nextProjectsById.set(projectId, project);
+              return;
+            }
+            const mergedNotes = mergeProjectNotesContentByRevision(
+              project.notesContent,
+              project.noteRevisionMap,
+              localProject.notesContent,
+              localProject.noteRevisionMap
+            );
+            const mergedNotesPresence = mergeProjectNotesPresence(
+              project.notesPresence,
+              localProject.notesPresence
+            );
+            const preservedVisibility = localVisibilityByProjectId.get(projectId);
+            const preservedNotesPreferences = localNotesPreferencesByProjectId.has(projectId)
+              ? localNotesPreferencesByProjectId.get(projectId)
+              : {};
+            nextProjectsById.set(
+              projectId,
+              ensureProjectOwnership(
+                {
+                  ...project,
+                  notesContent: mergedNotes.notesContent,
+                  noteRevisionMap: mergedNotes.noteRevisionMap,
+                  notesPresence: mergedNotesPresence,
+                  notesPreferences: preservedNotesPreferences,
+                  isVisible:
+                    typeof preservedVisibility === 'boolean'
+                      ? preservedVisibility
+                      : Boolean(project.isVisible),
+                },
+                currentUser
+              )
+            );
             return;
           }
 
+          const localProject = localProjectById.get(projectId);
+          const mergedNotes = mergeProjectNotesContentByRevision(
+            ownerProject.notesContent,
+            ownerProject.noteRevisionMap,
+            localProject?.notesContent,
+            localProject?.noteRevisionMap
+          );
+          const mergedNotesPresence = mergeProjectNotesPresence(
+            ownerProject.notesPresence,
+            localProject?.notesPresence
+          );
           const preservedVisibility = localVisibilityByProjectId.get(projectId);
           const preservedNotesPreferences = localNotesPreferencesByProjectId.has(projectId)
             ? localNotesPreferencesByProjectId.get(projectId)
@@ -4330,6 +4471,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             ensureProjectOwnership(
               {
                 ...ownerProject,
+                notesContent: mergedNotes.notesContent,
+                noteRevisionMap: mergedNotes.noteRevisionMap,
+                notesPresence: mergedNotesPresence,
                 notesPreferences: preservedNotesPreferences,
                 isVisible:
                   typeof preservedVisibility === 'boolean'
@@ -4355,6 +4499,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           if (normalizedOwnerProject.ownerId === currentUser.id) return;
           if (!isProjectAccessibleByUser(normalizedOwnerProject, currentUser)) return;
 
+          const localProject = localProjectById.get(projectId);
+          const mergedNotes = mergeProjectNotesContentByRevision(
+            normalizedOwnerProject.notesContent,
+            normalizedOwnerProject.noteRevisionMap,
+            localProject?.notesContent,
+            localProject?.noteRevisionMap
+          );
+          const mergedNotesPresence = mergeProjectNotesPresence(
+            normalizedOwnerProject.notesPresence,
+            localProject?.notesPresence
+          );
           const preservedVisibility = localVisibilityByProjectId.get(projectId);
           const preservedNotesPreferences = localNotesPreferencesByProjectId.has(projectId)
             ? localNotesPreferencesByProjectId.get(projectId)
@@ -4364,6 +4519,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             ensureProjectOwnership(
               {
                 ...normalizedOwnerProject,
+                notesContent: mergedNotes.notesContent,
+                noteRevisionMap: mergedNotes.noteRevisionMap,
+                notesPresence: mergedNotesPresence,
                 notesPreferences: preservedNotesPreferences,
                 isVisible:
                   typeof preservedVisibility === 'boolean'
@@ -4597,6 +4755,103 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       setIsGoogleCalendarBusy(false);
     }
   };
+  const handleAddEventToGoogleCalendar = async (eventData, options = {}) => {
+    if (!AUTH_API_BASE_URL) {
+      return {
+        ok: false,
+        message: 'Cloud Auth API is not configured.',
+      };
+    }
+    if (!googleCalendarStatus.linked) {
+      return {
+        ok: false,
+        message: 'Google Calendar is not linked for this account.',
+      };
+    }
+
+    const payload =
+      eventData && typeof eventData === 'object' && !Array.isArray(eventData) ? eventData : {};
+    const title = String(payload.title || '').trim();
+    const startDate = String(payload.startDate || '').trim();
+    const endDate = String(payload.endDate || startDate).trim();
+    if (!title || !endDate) {
+      return {
+        ok: false,
+        message: 'Missing title or date for Google Calendar event.',
+      };
+    }
+
+    const targetCalendarId = String(options.calendarId || '').trim();
+    if (!targetCalendarId) {
+      return {
+        ok: false,
+        message: 'Please select Google Calendar target.',
+      };
+    }
+
+    const eventColorId = String(options.colorId || '').trim();
+    const timeZone =
+      String(
+        (typeof Intl !== 'undefined' &&
+          Intl.DateTimeFormat &&
+          Intl.DateTimeFormat().resolvedOptions().timeZone) ||
+          ''
+      ).trim() || 'UTC';
+
+    try {
+      const result = await requestCloudDataApi(
+        `/google/calendar/events?userId=${encodeURIComponent(currentUser.id)}`,
+        {
+          method: 'POST',
+          body: {
+            title,
+            description: String(payload.description || '').trim(),
+            startDate,
+            endDate,
+            startTime: String(payload.startTime || '').trim(),
+            endTime: String(payload.endTime || '').trim(),
+            showTime: payload.showTime !== false,
+            calendarId: targetCalendarId,
+            colorId: eventColorId,
+            timeZone,
+          },
+        }
+      );
+
+      const createdEvent =
+        result?.event && typeof result.event === 'object' && !Array.isArray(result.event)
+          ? result.event
+          : null;
+      if (createdEvent && createdEvent.source === 'google') {
+        const selectedIds = normalizeGoogleCalendarSelection(googleCalendarSelectedCalendarIds);
+        const shouldDisplayInMerge =
+          selectedIds.length === 0 || selectedIds.includes(String(createdEvent.calendarId || '').trim());
+        if (shouldDisplayInMerge) {
+          setGoogleCalendarEvents((prev) => {
+            const list = Array.isArray(prev) ? prev : [];
+            const dedupe = new Map();
+            [...list, createdEvent].forEach((item) => {
+              const key = String(item?.id || '').trim();
+              if (!key) return;
+              dedupe.set(key, item);
+            });
+            return Array.from(dedupe.values()).sort((left, right) => {
+              const leftKey = `${left.startDate || ''}T${left.startTime || ''}`;
+              const rightKey = `${right.startDate || ''}T${right.startTime || ''}`;
+              return leftKey.localeCompare(rightKey);
+            });
+          });
+        }
+      }
+
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error.message || 'Failed to add event to Google Calendar.',
+      };
+    }
+  };
 
   const syncSharedProjectEventsToOwner = async (
     projectId,
@@ -4757,12 +5012,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const saveTaskForProject = (projectId, taskData) => {
     const normalizedProjectId = String(projectId || '').trim();
     if (!normalizedProjectId) return;
+    const normalizedAssigneeIds = normalizeTaskAssigneeIds(taskData);
+    const normalizedTaskData = {
+      ...(taskData && typeof taskData === 'object' ? taskData : {}),
+      assigneeIds: normalizedAssigneeIds,
+      assigneeId: normalizedAssigneeIds[0] || '',
+    };
     if (taskData.id) {
-      updateEvent(taskData.id, taskData);
+      updateEvent(taskData.id, normalizedTaskData);
       return;
     }
 
-    const createdTask = { ...taskData, id: generateId(), projectId: normalizedProjectId };
+    const createdTask = { ...normalizedTaskData, id: generateId(), projectId: normalizedProjectId };
     const nextEvents = [...events, createdTask];
     setEvents(nextEvents);
     syncSharedEventsForProjects([normalizedProjectId], nextEvents);
@@ -4777,9 +5038,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         endDate: String(createdTask.endDate || '').trim(),
         endTime: String(createdTask.endTime || '').trim(),
         department: String(createdTask.department || '').trim() || 'Unassigned',
-        showTime: !(
-          String(createdTask.startTime || '').trim() === '09:00' &&
-          String(createdTask.endTime || '').trim() === '18:00'
+        showTime: Boolean(
+          String(createdTask.startTime || '').trim() ||
+            String(createdTask.endTime || '').trim()
         ),
       },
     });
@@ -4864,16 +5125,27 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     setShowEventModal(true);
   };
 
-  const saveEvent = (eventData) => {
+  const saveEvent = async (eventData) => {
+    const payload =
+      eventData && typeof eventData === 'object' && !Array.isArray(eventData) ? eventData : {};
+    const googleCalendarOptions =
+      payload.googleCalendarOptions &&
+      typeof payload.googleCalendarOptions === 'object' &&
+      !Array.isArray(payload.googleCalendarOptions)
+        ? payload.googleCalendarOptions
+        : null;
+    const eventPayload = { ...payload };
+    delete eventPayload.googleCalendarOptions;
+
     if (editingEvent) {
       const nextEvents = events.map((event) =>
-        event.id === editingEvent.id ? { ...event, ...eventData } : event
+        event.id === editingEvent.id ? { ...event, ...eventPayload } : event
       );
       setEvents(nextEvents);
-      syncSharedEventsForProjects([editingEvent.projectId, eventData.projectId], nextEvents);
+      syncSharedEventsForProjects([editingEvent.projectId, eventPayload.projectId], nextEvents);
     } else {
       const createdEvent = {
-        ...eventData,
+        ...eventPayload,
         id: generateId(),
         status: 'To Do',
         department: 'Unassigned',
@@ -4897,6 +5169,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       });
     }
     setShowEventModal(false);
+    if (googleCalendarOptions?.enabled) {
+      const googleResult = await handleAddEventToGoogleCalendar(eventPayload, googleCalendarOptions);
+      if (!googleResult.ok) {
+        await popup.alert({
+          title: 'Google Calendar add failed',
+          message: googleResult.message || 'Could not add event to Google Calendar.',
+        });
+      }
+    }
   };
 
   const updateEvent = (eventId, updates) => {
@@ -5138,9 +5419,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           !Array.isArray(safeUpdates.notePresencePatch)
             ? safeUpdates.notePresencePatch
             : null;
+        const replaceChangeFeed = safeUpdates.replaceChangeFeed === true;
         delete safeUpdates.noteContentPatch;
         delete safeUpdates.noteRevisionPatch;
         delete safeUpdates.notePresencePatch;
+        delete safeUpdates.replaceChangeFeed;
         if (!isOwner) {
           delete safeUpdates.name;
           delete safeUpdates.ownerId;
@@ -5165,17 +5448,21 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         }
         if (Array.isArray(safeUpdates.changeFeed)) {
           const requestedFeed = normalizeProjectActivityFeed(safeUpdates.changeFeed, project);
-          const existingFeed = normalizeProjectActivityFeed(project.changeFeed, project);
-          const mergedFeedById = new Map();
-          [...requestedFeed, ...existingFeed].forEach((entry) => {
-            if (!entry?.id) return;
-            if (!mergedFeedById.has(entry.id)) {
-              mergedFeedById.set(entry.id, entry);
-            }
-          });
-          safeUpdates.changeFeed = Array.from(mergedFeedById.values())
-            .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-            .slice(0, MAX_PROJECT_ACTIVITY_FEED);
+          if (replaceChangeFeed) {
+            safeUpdates.changeFeed = requestedFeed.slice(0, MAX_PROJECT_ACTIVITY_FEED);
+          } else {
+            const existingFeed = normalizeProjectActivityFeed(project.changeFeed, project);
+            const mergedFeedById = new Map();
+            [...requestedFeed, ...existingFeed].forEach((entry) => {
+              if (!entry?.id) return;
+              if (!mergedFeedById.has(entry.id)) {
+                mergedFeedById.set(entry.id, entry);
+              }
+            });
+            safeUpdates.changeFeed = Array.from(mergedFeedById.values())
+              .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+              .slice(0, MAX_PROJECT_ACTIVITY_FEED);
+          }
         }
         const previousStatus = String(project.status || '').trim();
         let nextProject = ensureProjectOwnership({ ...project, ...safeUpdates }, currentUser);
@@ -5994,6 +6281,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                             year={year}
                             month={month}
                             projects={mobileCalendarProjects}
+                            allProjects={projects}
                             events={mobileCalendarEvents}
                             showEventTime={false}
                             onDayClick={(dateStr) => handleDayClick(dateStr, selectedMobileProject?.id || null)}
@@ -6009,6 +6297,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                             year={year} 
                             month={month} 
                             projects={mergeViewProjects} 
+                            allProjects={projects}
                             events={mergeViewEvents}
                             showEventTime
                             onDayClick={(dateStr) => handleDayClick(dateStr, null)}
@@ -6025,6 +6314,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                               year={year} 
                               month={month} 
                               projects={[project]} 
+                              allProjects={projects}
                               events={events.filter(e => e.projectId === project.id)}
                               showEventTime={false}
                               onDayClick={(dateStr) => handleDayClick(dateStr, project.id)}
@@ -6094,6 +6384,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           projects={projects} // Show all available projects in dropdown
           defaultDate={selectedDateForNewEvent}
           defaultProjectId={preSelectedProjectId}
+          googleCalendarStatus={googleCalendarStatus}
+          googleCalendarCalendars={googleCalendarCalendars}
+          googleCalendarSelectedCalendarIds={googleCalendarSelectedCalendarIds}
+          isGoogleCalendarCalendarsLoading={isGoogleCalendarCalendarsLoading}
           onClose={() => setShowEventModal(false)}
           onSave={saveEvent}
           onDelete={deleteEvent}
@@ -6331,6 +6625,8 @@ function ProjectDashboard({
     setActiveTabLocal(normalizedTab);
   };
   const projectColor = PROJECT_COLORS[project.colorIndex] || PROJECT_COLORS[0];
+  const isProjectHost =
+    String(project.ownerId || '').trim() === String(currentUser.id || '').trim();
 
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
   
@@ -6364,6 +6660,7 @@ function ProjectDashboard({
     currentUserId: currentUser.id,
     projectOwnerId: project.ownerId,
   });
+  const initialTaskView = initialNotesPreferences.taskView === 'table' ? 'table' : 'gallery';
   const [noteSection, setNoteSection] = useState(
     initialNotesPreferences.section === 'member' ? 'member' : 'department'
   ); // 'department' | 'member'
@@ -6415,6 +6712,7 @@ function ProjectDashboard({
   const [isNotesFullEditorOpen, setIsNotesFullEditorOpen] = useState(
     Boolean(initialNotesPreferences.fullEditorOpen)
   );
+  const [taskView, setTaskView] = useState(initialTaskView);
   const [notesContent, setNotesContent] = useState(normalizeNoteContentMap(project.notesContent));
   const [noteRevisionMap, setNoteRevisionMap] = useState(
     normalizeNoteRevisionMap(project.noteRevisionMap)
@@ -6457,12 +6755,22 @@ function ProjectDashboard({
   const projectChangeFeed = normalizeProjectActivityFeed(project.changeFeed, project);
 
   useEffect(() => {
-    setTeamMembers(normalizeProjectTeamMembers(project));
-    setProjectPositions(normalizeRoles(project.positions || project.roles));
-    setProjectDepartments(normalizeDepartments(project.departments));
-    setNotesContent(normalizeNoteContentMap(project.notesContent));
-    setNoteRevisionMap(normalizeNoteRevisionMap(project.noteRevisionMap));
-    setNotesPresence(normalizeProjectNotesPresence(project.notesPresence));
+    const nextTeamMembers = normalizeProjectTeamMembers(project);
+    const nextProjectPositions = normalizeRoles(project.positions || project.roles);
+    const nextProjectDepartments = normalizeDepartments(project.departments);
+    const nextNotesContent = normalizeNoteContentMap(project.notesContent);
+    const nextNoteRevisionMap = normalizeNoteRevisionMap(project.noteRevisionMap);
+    setTeamMembers((prev) => (isJsonEqual(prev, nextTeamMembers) ? prev : nextTeamMembers));
+    setProjectPositions((prev) =>
+      isJsonEqual(prev, nextProjectPositions) ? prev : nextProjectPositions
+    );
+    setProjectDepartments((prev) =>
+      isJsonEqual(prev, nextProjectDepartments) ? prev : nextProjectDepartments
+    );
+    setNotesContent((prev) => (isJsonEqual(prev, nextNotesContent) ? prev : nextNotesContent));
+    setNoteRevisionMap((prev) =>
+      isJsonEqual(prev, nextNoteRevisionMap) ? prev : nextNoteRevisionMap
+    );
   }, [
     project.id,
     project.teamMembers,
@@ -6471,10 +6779,13 @@ function ProjectDashboard({
     project.departments,
     project.notesContent,
     project.noteRevisionMap,
-    project.notesPresence,
     project.members,
     project.ownerUsername,
   ]);
+  useEffect(() => {
+    const nextNotesPresence = normalizeProjectNotesPresence(project.notesPresence);
+    setNotesPresence((prev) => (isJsonEqual(prev, nextNotesPresence) ? prev : nextNotesPresence));
+  }, [project.id, project.notesPresence]);
 
   useEffect(() => {
     const nextNotesPreferences = resolveAccountScopedNotesPreferences(project.notesPreferences, {
@@ -6488,6 +6799,7 @@ function ProjectDashboard({
     const nextPinnedMembers = normalizePinnedIds(nextNotesPreferences.pinnedMembers);
     const nextSidebarCollapsed = Boolean(nextNotesPreferences.fullSidebarCollapsed);
     const nextFullEditorOpen = Boolean(nextNotesPreferences.fullEditorOpen);
+    const nextTaskView = nextNotesPreferences.taskView === 'table' ? 'table' : 'gallery';
 
     setNoteSection((prev) => (prev === nextNoteSection ? prev : nextNoteSection));
     setSelectedDepartmentNoteId((prev) => (prev === nextDepartmentNoteId ? prev : nextDepartmentNoteId));
@@ -6500,6 +6812,7 @@ function ProjectDashboard({
     );
     setIsNotesFullSidebarCollapsed((prev) => (prev === nextSidebarCollapsed ? prev : nextSidebarCollapsed));
     setIsNotesFullEditorOpen((prev) => (prev === nextFullEditorOpen ? prev : nextFullEditorOpen));
+    setTaskView((prev) => (prev === nextTaskView ? prev : nextTaskView));
   }, [project.id, project.notesPreferences, project.ownerId, currentUser.id]);
   
   const statusConfig = {
@@ -7010,11 +7323,18 @@ function ProjectDashboard({
       ]),
     [projectDepartments, teamMembers]
   );
+  const ASSIGNABLE_DEPARTMENTS = useMemo(
+    () =>
+      DEPARTMENTS.filter(
+        (department) => String(department || '').trim().toLowerCase() !== 'unassigned'
+      ),
+    [DEPARTMENTS]
+  );
   const optionsPopupItems =
     optionsPopupType === 'position'
       ? projectPositions
       : optionsPopupType === 'department'
-      ? projectDepartments
+      ? ASSIGNABLE_DEPARTMENTS
       : [];
   const activeNoteId = noteSection === 'department' ? selectedDepartmentNoteId : selectedMemberNoteId;
   const departmentNoteOptions = useMemo(
@@ -7201,6 +7521,7 @@ function ProjectDashboard({
     const currentPinnedMembers = normalizePinnedIds(currentNotesPreferences.pinnedMembers);
     const currentSidebarCollapsed = Boolean(currentNotesPreferences.fullSidebarCollapsed);
     const currentFullEditorOpen = Boolean(currentNotesPreferences.fullEditorOpen);
+    const currentTaskView = currentNotesPreferences.taskView === 'table' ? 'table' : 'gallery';
 
     const hasChanges =
       currentNoteSection !== noteSection ||
@@ -7209,7 +7530,8 @@ function ProjectDashboard({
       !arePinnedIdListsEqual(currentPinnedDepartments, pinnedDepartmentNoteIds) ||
       !arePinnedIdListsEqual(currentPinnedMembers, pinnedMemberNoteIds) ||
       currentSidebarCollapsed !== isNotesFullSidebarCollapsed ||
-      currentFullEditorOpen !== isNotesFullEditorOpen;
+      currentFullEditorOpen !== isNotesFullEditorOpen ||
+      currentTaskView !== taskView;
 
     if (!hasChanges) return;
 
@@ -7222,6 +7544,7 @@ function ProjectDashboard({
         pinnedMembers: pinnedMemberNoteIds,
         fullSidebarCollapsed: isNotesFullSidebarCollapsed,
         fullEditorOpen: isNotesFullEditorOpen,
+        taskView,
         userId: currentUser.id,
       },
     });
@@ -7233,6 +7556,7 @@ function ProjectDashboard({
     pinnedMemberNoteIds,
     isNotesFullSidebarCollapsed,
     isNotesFullEditorOpen,
+    taskView,
     project.id,
     project.notesPreferences,
     project.ownerId,
@@ -7322,19 +7646,46 @@ function ProjectDashboard({
     [clampNotesSidebarFloatingTop, notesSidebarFloatingTop]
   );
 
-  const [taskView, setTaskView] = useState('table');
   const [statusFilter, setStatusFilter] = useState([]);
   const [deptFilter, setDeptFilter] = useState([]);
+  const defaultTaskAssigneeFilterIds = useMemo(() => {
+    const normalizedCurrentUserId = String(currentUser?.id || '').trim();
+    return normalizedCurrentUserId ? [normalizedCurrentUserId] : [];
+  }, [currentUser?.id]);
+  const [assigneeFilterIds, setAssigneeFilterIds] = useState(defaultTaskAssigneeFilterIds);
   const [showFilterPopup, setShowFilterPopup] = useState(false);
+  const [activeProjectLogMenuEntryId, setActiveProjectLogMenuEntryId] = useState('');
   
   // Slide-over Pane State
   const [paneTask, setPaneTask] = useState(null);
   const [isPaneOpen, setIsPaneOpen] = useState(false);
   
+  useEffect(() => {
+    setAssigneeFilterIds(defaultTaskAssigneeFilterIds);
+  }, [project.id, defaultTaskAssigneeFilterIds]);
+
+  const normalizedTaskAssigneeFilters = normalizeTaskAssigneeIds({
+    assigneeIds: assigneeFilterIds,
+  });
+  const normalizedDefaultTaskAssigneeFilters = normalizeTaskAssigneeIds({
+    assigneeIds: defaultTaskAssigneeFilterIds,
+  });
+  const hasCustomizedAssigneeFilter =
+    normalizedTaskAssigneeFilters.length > 0 &&
+    (normalizedTaskAssigneeFilters.length !== normalizedDefaultTaskAssigneeFilters.length ||
+      normalizedTaskAssigneeFilters.some(
+        (assigneeId) => !normalizedDefaultTaskAssigneeFilters.includes(assigneeId)
+      ));
+  const isTaskFilterActive =
+    statusFilter.length > 0 || deptFilter.length > 0 || hasCustomizedAssigneeFilter;
   const filteredTasks = events.filter(ev => {
     const matchStatus = statusFilter.length === 0 || statusFilter.includes(ev.status || 'To Do');
     const matchDept = deptFilter.length === 0 || deptFilter.includes(ev.department || 'Unassigned');
-    return matchStatus && matchDept;
+    const eventAssigneeIds = normalizeTaskAssigneeIds(ev);
+    const matchAssignee =
+      normalizedTaskAssigneeFilters.length === 0 ||
+      normalizedTaskAssigneeFilters.some((assigneeId) => eventAssigneeIds.includes(assigneeId));
+    return matchStatus && matchDept && matchAssignee;
   });
 
   const handleStatusChange = (eventId, newStatus) => {
@@ -7345,12 +7696,39 @@ function ProjectDashboard({
 
   const getAssignee = (id) =>
     teamMembers.find((member) => member.id === id) || {
+      id: '',
       name: 'Unassigned',
       initials: '?',
       color: 'bg-gray-400',
+      avatarUrl: '',
       position: '',
       role: '',
     };
+  const sortedTaskFilterMembers = useMemo(
+    () =>
+      [...teamMembers].sort((left, right) =>
+        String(left.name || '').localeCompare(String(right.name || ''), undefined, {
+          sensitivity: 'base',
+        })
+      ),
+    [teamMembers]
+  );
+  const toggleAssigneeFilter = (memberId) => {
+    const normalizedId = String(memberId || '').trim();
+    if (!normalizedId) return;
+    setAssigneeFilterIds((prev) => {
+      const current = normalizeTaskAssigneeIds({ assigneeIds: prev });
+      if (current.includes(normalizedId)) {
+        return current.filter((id) => id !== normalizedId);
+      }
+      return [...current, normalizedId];
+    });
+  };
+  const getTaskAssignees = (taskInput) => {
+    const assigneeIds = normalizeTaskAssigneeIds(taskInput);
+    if (!assigneeIds.length) return [getAssignee('')];
+    return assigneeIds.map((assigneeId) => getAssignee(assigneeId));
+  };
 
   const openTaskDetail = (task) => {
     setPaneTask(task);
@@ -7361,6 +7739,42 @@ function ProjectDashboard({
     setPaneTask(null);
     setIsPaneOpen(true);
   };
+  const handleDeleteProjectLogEntry = async (entryId) => {
+    const normalizedEntryId = String(entryId || '').trim();
+    if (!normalizedEntryId || !isProjectHost) return;
+    const targetEntry = projectChangeFeed.find((entry) => String(entry.id || '').trim() === normalizedEntryId);
+    if (!targetEntry) return;
+    const shouldDelete = await popup.confirm({
+      title: 'Delete update log',
+      message: 'Delete this project update log entry?',
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!shouldDelete) return;
+    const nextChangeFeed = projectChangeFeed.filter(
+      (entry) => String(entry.id || '').trim() !== normalizedEntryId
+    );
+    onUpdateProject(project.id, {
+      changeFeed: nextChangeFeed,
+      replaceChangeFeed: true,
+    });
+    setActiveProjectLogMenuEntryId('');
+  };
+  useEffect(() => {
+    if (activeTab !== 'announcements') {
+      setActiveProjectLogMenuEntryId('');
+    }
+  }, [activeTab]);
+  useEffect(() => {
+    if (!activeProjectLogMenuEntryId) return undefined;
+    const closeMenuIfClickedOutside = (event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('[data-project-log-menu]')) return;
+      setActiveProjectLogMenuEntryId('');
+    };
+    document.addEventListener('pointerdown', closeMenuIfClickedOutside);
+    return () => document.removeEventListener('pointerdown', closeMenuIfClickedOutside);
+  }, [activeProjectLogMenuEntryId]);
 
   const memberMapById = useMemo(() => {
     const map = {};
@@ -7709,7 +8123,7 @@ function ProjectDashboard({
                                 if (!newMilestoneName || !newMilestoneDate) {
                                   void popup.alert({
                                     title: 'Incomplete form',
-                                    message: 'กรุณากรอกข้อมูลให้ครบถ้วน',
+                                    message: 'Please provide milestone name and date.',
                                   });
                                   return;
                                 }
@@ -7794,7 +8208,7 @@ function ProjectDashboard({
                     >
                       <Filter className="w-4 h-4 text-gray-500" />
                       <span>ฟิลเตอร์</span>
-                      {(statusFilter.length > 0 || deptFilter.length > 0) && (
+                      {isTaskFilterActive && (
                         <span className="absolute top-1.5 right-1.5 md:static md:ml-1 w-2 h-2 rounded-full bg-blue-500"></span>
                       )}
                     </button>
@@ -7851,11 +8265,50 @@ function ProjectDashboard({
                             </div>
                           </div>
                           
+                          <div className="h-px bg-gray-100 w-full"></div>
+
+                          {/* Assignee Filter */}
+                          <div>
+                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">Assignee</label>
+                            <div className="space-y-1">
+                              {sortedTaskFilterMembers.map((member) => {
+                                const checked = normalizedTaskAssigneeFilters.includes(member.id);
+                                return (
+                                  <label
+                                    key={`task-filter-assignee-${member.id}`}
+                                    className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 p-1.5 rounded-md transition-colors"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleAssigneeFilter(member.id)}
+                                      className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 border-gray-300 cursor-pointer"
+                                    />
+                                    <UserAvatar
+                                      user={member}
+                                      sizeClass="w-5 h-5"
+                                      textClass="text-[9px]"
+                                      ringClass="ring-1 ring-white"
+                                    />
+                                    <span className="truncate">{member.name}</span>
+                                  </label>
+                                );
+                              })}
+                              {sortedTaskFilterMembers.length === 0 && (
+                                <p className="text-xs text-gray-400 px-1.5 py-1">No members in project</p>
+                              )}
+                            </div>
+                          </div>
+
                           <div className="pt-3 border-t border-gray-100 flex justify-end">
                             <button 
-                              onClick={() => { setStatusFilter([]); setDeptFilter([]); }}
+                              onClick={() => {
+                                setStatusFilter([]);
+                                setDeptFilter([]);
+                                setAssigneeFilterIds([]);
+                              }}
                               className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={statusFilter.length === 0 && deptFilter.length === 0}
+                              disabled={!isTaskFilterActive}
                             >
                               ล้างฟิลเตอร์ทั้งหมด
                             </button>
@@ -7865,21 +8318,21 @@ function ProjectDashboard({
                     )}
                   </div>
                   
-                  <div className="flex items-center gap-2 md:gap-3 shrink-0 md:ml-auto">
-                    <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm shrink-0">
-                      <button 
-                        onClick={() => setTaskView('table')}
-                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'table' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-                      >
-                        <AlignLeft className="w-4 h-4" /> Table
-                      </button>
-                      <button 
-                        onClick={() => setTaskView('gallery')}
-                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'gallery' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-                      >
-                        <LayoutGrid className="w-4 h-4" /> Gallery
-                      </button>
-                    </div>
+	                  <div className="flex items-center gap-2 md:gap-3 shrink-0 md:ml-auto">
+	                    <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm shrink-0">
+	                      <button 
+	                        onClick={() => setTaskView('gallery')}
+	                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'gallery' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+	                      >
+	                        <LayoutGrid className="w-4 h-4" /> Gallery
+	                      </button>
+	                      <button 
+	                        onClick={() => setTaskView('table')}
+	                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'table' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+	                      >
+	                        <AlignLeft className="w-4 h-4" /> Table
+	                      </button>
+	                    </div>
                     
                     {/* Production Ready "Add Task" Button */}
                     <button 
@@ -7914,18 +8367,39 @@ function ProjectDashboard({
                                 <th className="px-5 py-4 font-medium w-40">สถานะ (Status)</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-100">
-                              {filteredTasks.map(task => {
-                                const assignee = getAssignee(task.assigneeId);
-                                return (
-                                  <tr key={task.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openTaskDetail(task)}>
-                                    <td className="px-5 py-4 font-medium text-gray-800">{task.title}</td>
-                                    <td className="px-5 py-4">
-                                      <div className="flex items-center gap-2.5">
-                                        <div className={`w-8 h-8 rounded-full ${assignee.color} text-white flex items-center justify-center text-xs font-bold shadow-sm`}>{assignee.initials}</div>
-                                        <span className="text-gray-700 font-medium">{assignee.name}</span>
-                                      </div>
-                                    </td>
+	                            <tbody className="divide-y divide-gray-100">
+	                              {filteredTasks.map(task => {
+	                                const taskAssignees = getTaskAssignees(task);
+	                                const extraAssigneeCount = Math.max(0, taskAssignees.length - 2);
+	                                return (
+	                                  <tr key={task.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openTaskDetail(task)}>
+	                                    <td className="px-5 py-4 font-medium text-gray-800">{task.title}</td>
+	                                    <td className="px-5 py-4">
+		                                      <div className="flex items-center gap-2.5 min-w-0">
+		                                        <div className="flex -space-x-2 shrink-0">
+		                                          {taskAssignees.slice(0, 2).map((assignee, index) => (
+		                                            <span
+		                                              key={`${task.id}-assignee-${assignee.id || assignee.name}-${index}`}
+		                                            >
+		                                              <UserAvatar
+		                                                user={assignee}
+		                                                sizeClass="w-8 h-8"
+		                                                textClass="text-[10px]"
+		                                                ringClass="ring-2 ring-white shadow-sm"
+		                                              />
+		                                            </span>
+		                                          ))}
+		                                        </div>
+	                                        <div className="min-w-0">
+	                                          <span className="text-gray-700 font-medium block truncate">
+	                                            {taskAssignees.slice(0, 2).map((assignee) => assignee.name).join(', ')}
+	                                          </span>
+	                                          {extraAssigneeCount > 0 && (
+	                                            <span className="text-[11px] text-gray-500">+{extraAssigneeCount} more</span>
+	                                          )}
+	                                        </div>
+	                                      </div>
+	                                    </td>
                                     <td className="px-5 py-4">
                                       <span className="bg-gray-100 text-gray-600 px-2.5 py-1 rounded-md text-xs font-medium border border-gray-200">{task.department || 'Unassigned'}</span>
                                     </td>
@@ -7933,7 +8407,11 @@ function ProjectDashboard({
                                       <div className="flex items-center gap-2">
                                         <Clock className="w-4 h-4 text-gray-400" />
                                         <span>{task.endDate}</span>
-                                        <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{task.endTime}</span>
+                                        {String(task.endTime || '').trim() ? (
+                                          <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                                            {task.endTime}
+                                          </span>
+                                        ) : null}
                                       </div>
                                     </td>
                                     <td className="px-5 py-4" onClick={(e) => e.stopPropagation()}>
@@ -7963,12 +8441,14 @@ function ProjectDashboard({
                     )}
 
                     {/* --- Gallery View --- */}
-                    {taskView === 'gallery' && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                        {filteredTasks.map(task => {
-                          const assignee = getAssignee(task.assigneeId);
-                          return (
-                            <div key={task.id} className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col group cursor-pointer" onClick={() => openTaskDetail(task)}>
+	                    {taskView === 'gallery' && (
+	                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+	                        {filteredTasks.map(task => {
+	                          const taskAssignees = getTaskAssignees(task);
+	                          const primaryAssignee = taskAssignees[0] || getAssignee('');
+	                          const extraAssigneeCount = Math.max(0, taskAssignees.length - 1);
+	                          return (
+	                            <div key={task.id} className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col group cursor-pointer" onClick={() => openTaskDetail(task)}>
                               <div className="flex justify-between items-start mb-4">
                                 <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-[11px] font-medium border border-gray-200 truncate max-w-[100px]">{task.department || 'Unassigned'}</span>
                                 <div className="relative" onClick={(e) => e.stopPropagation()}>
@@ -7989,16 +8469,29 @@ function ProjectDashboard({
                               </div>
                               <h4 className="font-semibold text-gray-800 mb-2 leading-tight group-hover:text-blue-600 transition-colors">{task.title}</h4>
                               <p className="text-xs text-gray-500 mb-5 flex items-center gap-1.5">
-                                <Clock className="w-3.5 h-3.5" /> {task.endDate} <span className="bg-gray-100 px-1.5 rounded">{task.endTime}</span>
+                                <Clock className="w-3.5 h-3.5" /> {task.endDate}
+                                {String(task.endTime || '').trim() ? (
+                                  <span className="bg-gray-100 px-1.5 rounded">{task.endTime}</span>
+                                ) : null}
                               </p>
-                              <div className="flex items-center gap-2.5 mt-auto pt-4 border-t border-gray-100">
-                                <div className={`w-7 h-7 rounded-full ${assignee.color} text-white flex items-center justify-center text-[10px] font-bold shadow-sm`}>{assignee.initials}</div>
-                                <div className="flex-1 overflow-hidden">
-                                  <span className="text-sm text-gray-700 font-medium block truncate">{assignee.name}</span>
-                                  <span className="text-[10px] text-gray-400 block truncate">{assignee.position || assignee.role || 'Team Member'}</span>
-                                </div>
-                              </div>
-                            </div>
+		                              <div className="flex items-center gap-2.5 mt-auto pt-4 border-t border-gray-100">
+		                                <UserAvatar
+		                                  user={primaryAssignee}
+		                                  sizeClass="w-7 h-7"
+		                                  textClass="text-[10px]"
+		                                  ringClass="ring-1 ring-white shadow-sm"
+		                                />
+		                                <div className="flex-1 overflow-hidden">
+	                                  <span className="text-sm text-gray-700 font-medium block truncate">
+	                                    {primaryAssignee.name}
+	                                    {extraAssigneeCount > 0 ? ` +${extraAssigneeCount}` : ''}
+	                                  </span>
+	                                  <span className="text-[10px] text-gray-400 block truncate">
+	                                    {primaryAssignee.position || primaryAssignee.role || 'Team Member'}
+	                                  </span>
+	                                </div>
+	                              </div>
+	                            </div>
                           );
                         })}
                       </div>
@@ -8119,7 +8612,7 @@ function ProjectDashboard({
                               )}
                             </td>
                             <td className="px-6 py-4">
-                              {projectDepartments.length === 0 ? (
+                              {ASSIGNABLE_DEPARTMENTS.length === 0 ? (
                                 <button
                                   onClick={() => {
                                     void handleCreateDepartment();
@@ -8131,14 +8624,15 @@ function ProjectDashboard({
                                 </button>
                               ) : (
                                 <select
-                                  value={member.department || 'Unassigned'}
+                                  value={ASSIGNABLE_DEPARTMENTS.includes(member.department) ? member.department : ''}
                                   onChange={(e) => {
                                     void handleAssignDepartment(member.id, e.target.value);
                                   }}
                                   disabled={!canManageMembers}
                                   className="w-full border border-gray-300 rounded-md px-2 py-1.5 text-xs bg-white outline-none focus:ring-2 focus:ring-blue-500"
                                 >
-                                  {DEPARTMENTS.map((department) => (
+                                  <option value="">Select department</option>
+                                  {ASSIGNABLE_DEPARTMENTS.map((department) => (
                                     <option key={department} value={department}>
                                       {department}
                                     </option>
@@ -8401,11 +8895,11 @@ function ProjectDashboard({
 	                        const toneStyles = detail.isStatusUpdate
 	                          ? getProjectStatusToneStyles(detail.statusTone)
 	                          : getProjectStatusToneStyles('neutral');
-	                        return (
-	                          <div key={entry.id} className={`rounded-lg border px-3 py-2.5 ${toneStyles.logCard}`}>
-	                            <div className="flex items-start justify-between gap-2">
-	                              <div className="min-w-0 flex-1">
-	                                <div className="flex flex-wrap items-center gap-1.5">
+		                        return (
+		                          <div key={entry.id} className={`rounded-lg border px-3 py-2.5 ${toneStyles.logCard}`}>
+		                            <div className="flex items-start justify-between gap-2">
+		                              <div className="min-w-0 flex-1">
+		                                <div className="flex flex-wrap items-center gap-1.5">
 	                                  <p className={`text-sm font-semibold ${toneStyles.logTitle}`}>{detail.title}</p>
 	                                  {detail.isStatusUpdate && detail.statusPriorityLabel && (
 	                                    <span className={`px-1.5 py-0.5 rounded-full border text-[10px] font-semibold ${toneStyles.badge}`}>
@@ -8413,17 +8907,46 @@ function ProjectDashboard({
 	                                    </span>
 	                                  )}
 	                                </div>
-	                                {detail.isStatusUpdate && detail.statusPrompt && (
-	                                  <p className={`text-[11px] mt-0.5 ${toneStyles.logSubtitle}`}>{detail.statusPrompt}</p>
-	                                )}
-	                              </div>
-	                              <span className={`text-[11px] shrink-0 ${toneStyles.seenTime}`}>
-	                                {new Date(entry.createdAt).toLocaleString()}
-	                              </span>
-	                            </div>
-	                            {detail.subtitle && (
-	                              <p className={`text-xs mt-1 ${toneStyles.logSubtitle}`}>{detail.subtitle}</p>
-	                            )}
+		                                {detail.isStatusUpdate && detail.statusPrompt && (
+		                                  <p className={`text-[11px] mt-0.5 ${toneStyles.logSubtitle}`}>{detail.statusPrompt}</p>
+		                                )}
+		                              </div>
+		                              <div className="flex items-start gap-1.5 shrink-0">
+		                                <span className={`text-[11px] shrink-0 pt-1 ${toneStyles.seenTime}`}>
+		                                  {new Date(entry.createdAt).toLocaleString()}
+		                                </span>
+		                                {isProjectHost && (
+		                                  <div className="relative" data-project-log-menu>
+		                                    <button
+		                                      type="button"
+		                                      onClick={() =>
+		                                        setActiveProjectLogMenuEntryId((prev) =>
+		                                          prev === entry.id ? '' : entry.id
+		                                        )
+		                                      }
+			                                      className="h-7 w-7 rounded-md border border-gray-200 bg-white text-gray-300 hover:text-red-600 hover:border-red-200 hover:bg-red-50"
+			                                      title="Delete log options"
+			                                    >
+			                                      <Trash2 className="w-3.5 h-3.5 mx-auto" />
+			                                    </button>
+		                                    {activeProjectLogMenuEntryId === entry.id && (
+		                                      <div className="absolute right-0 mt-1 w-32 rounded-lg border border-gray-200 bg-white shadow-lg overflow-hidden z-20">
+		                                        <button
+		                                          type="button"
+		                                          onClick={() => void handleDeleteProjectLogEntry(entry.id)}
+		                                          className="w-full text-left px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50"
+		                                        >
+		                                          Delete
+		                                        </button>
+		                                      </div>
+		                                    )}
+		                                  </div>
+		                                )}
+		                              </div>
+		                            </div>
+		                            {detail.subtitle && (
+		                              <p className={`text-xs mt-1 ${toneStyles.logSubtitle}`}>{detail.subtitle}</p>
+		                            )}
 	                          </div>
 	                        );
 	                      })}
@@ -8972,7 +9495,16 @@ function ProjectDashboard({
 }
 
 // --- Task Detail & Edit Slide-over Pane ---
-function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, TASK_STATUSES }) {
+function TaskDetailPane({
+  isOpen,
+  onClose,
+  task,
+  onSave,
+  onDelete,
+  teamMembers,
+  TASK_STATUSES,
+  DEPARTMENTS = [],
+}) {
   const popup = usePopup();
   const [isEditing, setIsEditing] = useState(false);
 
@@ -8980,18 +9512,83 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('To Do');
   const [department, setDepartment] = useState('Unassigned');
-  const [assigneeId, setAssigneeId] = useState('');
+  const [assigneeIds, setAssigneeIds] = useState([]);
+  const [isAssigneePickerOpen, setIsAssigneePickerOpen] = useState(false);
   const [startDate, setStartDate] = useState('');
+  const [hasStartDate, setHasStartDate] = useState(false);
   const [endDate, setEndDate] = useState('');
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('18:00');
+  const [startTime, setStartTime] = useState('');
+  const [hasStartTime, setHasStartTime] = useState(false);
+  const [endTime, setEndTime] = useState('');
   const [description, setDescription] = useState('');
-  const resolveDepartmentForAssignee = (memberId, fallback = 'Unassigned') => {
-    const member = teamMembers.find((candidate) => candidate.id === memberId);
-    const mappedDepartment = String(member?.department || '').trim();
-    if (mappedDepartment) return mappedDepartment;
-    const safeFallback = String(fallback || '').trim();
-    return safeFallback || 'Unassigned';
+  const resolveDepartmentForAssignees = (memberIds, fallback = 'Unassigned') =>
+    resolveTaskDepartmentFromAssignees(memberIds, teamMembers, fallback);
+  const getAssigneeById = (memberId) =>
+    teamMembers.find((candidate) => candidate.id === memberId) || {
+      id: memberId || '',
+      name: memberId ? 'Unknown member' : 'Unassigned',
+      initials: memberId ? String(memberId).slice(0, 1).toUpperCase() : '?',
+      color: 'bg-gray-400',
+      avatarUrl: '',
+      position: '',
+      role: '',
+      department: 'Unassigned',
+    };
+  const assigneeGroups = useMemo(() => {
+    const grouped = {};
+    teamMembers.forEach((member) => {
+      const departmentName = String(member.department || '').trim() || 'Unassigned';
+      if (!grouped[departmentName]) grouped[departmentName] = [];
+      grouped[departmentName].push(member);
+    });
+    const order = Array.from(
+      new Set(
+        [...(Array.isArray(DEPARTMENTS) ? DEPARTMENTS : []), ...Object.keys(grouped)]
+          .map((department) => String(department || '').trim())
+          .filter(Boolean)
+      )
+    );
+    return order
+      .filter((department) => Array.isArray(grouped[department]) && grouped[department].length > 0)
+      .map((department) => ({
+        department,
+        members: [...grouped[department]].sort((left, right) =>
+          String(left.name || '').localeCompare(String(right.name || ''), undefined, {
+            sensitivity: 'base',
+          })
+        ),
+      }));
+  }, [teamMembers, DEPARTMENTS]);
+  const selectedAssignees = useMemo(() => {
+    const selected = normalizeTaskAssigneeIds({ assigneeIds }).map((id) => getAssigneeById(id));
+    return selected.length > 0 ? selected : [getAssigneeById('')];
+  }, [assigneeIds, teamMembers]);
+  const assigneeSummaryText = useMemo(() => {
+    const validIds = normalizeTaskAssigneeIds({ assigneeIds });
+    if (!validIds.length) return 'Select assignees...';
+    const names = validIds.map((id) => getAssigneeById(id).name);
+    if (names.length <= 2) return names.join(', ');
+    return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+  }, [assigneeIds, teamMembers]);
+  const relatedDepartments = useMemo(
+    () =>
+      resolveTaskDepartmentsFromAssignees(
+        normalizeTaskAssigneeIds({ assigneeIds }),
+        teamMembers,
+        'Unassigned'
+      ),
+    [assigneeIds, teamMembers]
+  );
+  const toggleAssigneeSelection = (memberId) => {
+    const normalizedId = String(memberId || '').trim();
+    if (!normalizedId) return;
+    setAssigneeIds((prev) => {
+      const current = normalizeTaskAssigneeIds({ assigneeIds: prev });
+      if (current.includes(normalizedId)) {
+        return current.filter((id) => id !== normalizedId);
+      }
+      return [...current, normalizedId];
+    });
   };
 
   // Update form when task changes or panel opens
@@ -8999,73 +9596,96 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
     if (isOpen) {
       if (task) {
         setIsEditing(false); // Default to view mode if opening existing task
-        const mappedAssigneeId = task.assigneeId || '';
-        const mappedDepartment = resolveDepartmentForAssignee(
-          mappedAssigneeId,
+        const mappedAssigneeIds = normalizeTaskAssigneeIds(task);
+        const mappedDepartment = resolveDepartmentForAssignees(
+          mappedAssigneeIds,
           task.department || 'Unassigned'
         );
+        const taskStartDate = String(task.startDate || '').trim();
+        const taskStartTime = String(task.startTime || '').trim();
+        const hasTaskStartDate =
+          typeof task.hasExplicitStartDate === 'boolean'
+            ? task.hasExplicitStartDate
+            : Boolean(taskStartDate);
+        const hasTaskStartTime =
+          typeof task.hasExplicitStartTime === 'boolean'
+            ? task.hasExplicitStartTime
+            : Boolean(taskStartTime);
         setTitle(task.title || '');
         setStatus(task.status || 'To Do');
         setDepartment(mappedDepartment);
-        setAssigneeId(mappedAssigneeId);
-        setStartDate(task.startDate || '');
+        setAssigneeIds(mappedAssigneeIds);
+        setHasStartDate(hasTaskStartDate);
+        setStartDate(hasTaskStartDate ? taskStartDate : '');
         setEndDate(task.endDate || '');
-        setStartTime(task.startTime || '09:00');
-        setEndTime(task.endTime || '18:00');
+        setHasStartTime(hasTaskStartTime);
+        setStartTime(hasTaskStartTime ? taskStartTime : '');
+        setEndTime(String(task.endTime || '').trim());
         setDescription(task.description || '');
       } else {
         setIsEditing(true); // Force edit mode for new task
         const now = new Date();
         const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-        const defaultAssigneeId = teamMembers.length > 0 ? teamMembers[0].id : '';
+        const defaultAssigneeIds = teamMembers.length > 0 ? [teamMembers[0].id] : [];
         setTitle('');
         setStatus('To Do');
-        setDepartment(resolveDepartmentForAssignee(defaultAssigneeId, 'Unassigned'));
-        setAssigneeId(defaultAssigneeId);
-        setStartDate(todayStr);
+        setDepartment(resolveDepartmentForAssignees(defaultAssigneeIds, 'Unassigned'));
+        setAssigneeIds(defaultAssigneeIds);
+        setHasStartDate(false);
+        setStartDate('');
         setEndDate(todayStr);
-        setStartTime('09:00');
-        setEndTime('18:00');
+        setHasStartTime(false);
+        setStartTime('');
+        setEndTime('');
         setDescription('');
       }
+      setIsAssigneePickerOpen(false);
     }
   }, [task, isOpen, teamMembers]);
   useEffect(() => {
     if (!isOpen) return;
-    const linkedDepartment = resolveDepartmentForAssignee(assigneeId, department);
+    const linkedDepartment = resolveDepartmentForAssignees(assigneeIds, department);
     if (linkedDepartment !== department) {
       setDepartment(linkedDepartment);
     }
-  }, [assigneeId, teamMembers, isOpen, department]);
+  }, [assigneeIds, teamMembers, isOpen, department]);
 
   // Handle Save
   const handleSave = (e) => {
     e.preventDefault();
-    if (!title || !startDate || (hasEndDate && !endDate)) {
+    if (!title || !endDate) {
       void popup.alert({
         title: 'Incomplete form',
-        message: 'กรุณากรอกข้อมูลที่จำเป็นให้ครบถ้วน',
+        message: 'Please provide task name and due date.',
       });
       return;
     }
-    
+    const normalizedAssigneeIds = normalizeTaskAssigneeIds({ assigneeIds });
+    const normalizedStartDate =
+      hasStartDate && String(startDate || '').trim() ? String(startDate || '').trim() : String(endDate || '').trim();
+    const normalizedStartTime =
+      hasStartTime && String(startTime || '').trim() ? String(startTime || '').trim() : '';
+
     onSave({
       id: task?.id,
       title,
       status,
-      department: resolveDepartmentForAssignee(assigneeId, department),
-      assigneeId,
-      startDate,
-      endDate: hasEndDate ? endDate : startDate,
-      startTime,
-      endTime,
+      department: resolveDepartmentForAssignees(normalizedAssigneeIds, department),
+      assigneeId: normalizedAssigneeIds[0] || '',
+      assigneeIds: normalizedAssigneeIds,
+      startDate: normalizedStartDate,
+      endDate: String(endDate || '').trim() || normalizedStartDate,
+      startTime: normalizedStartTime,
+      endTime: String(endTime || '').trim(),
+      hasExplicitStartDate: Boolean(hasStartDate && String(startDate || '').trim()),
+      hasExplicitStartTime: Boolean(hasStartTime && String(startTime || '').trim()),
       description,
     });
   };
 
   if (!isOpen) return null;
 
-  const currentAssignee = teamMembers.find(m => m.id === assigneeId) || { name: 'Unassigned', initials: '?', color: 'bg-gray-400' };
+  const currentAssignees = selectedAssignees;
 
   return (
     <>
@@ -9076,7 +9696,7 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
       ></div>
 
       {/* Slide-over Panel */}
-      <div className="fixed inset-y-0 right-0 w-full max-w-[500px] bg-white shadow-2xl z-50 transform transition-transform duration-300 flex flex-col border-l">
+      <div className="fixed top-0 bottom-0 right-0 left-auto w-[min(540px,100vw)] max-w-full bg-white shadow-2xl z-50 transition-transform duration-300 flex flex-col border-l border-slate-200 rounded-l-2xl overflow-hidden relative">
         
         {/* Header Options */}
         <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/50">
@@ -9138,22 +9758,110 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
 
               <div className="grid grid-cols-[120px_1fr] items-center gap-y-5 gap-x-2 text-sm">
                 <div className="text-gray-500 flex items-center gap-2"><Users className="w-4 h-4" /> ผู้รับผิดชอบ</div>
-                <div>
-                  <select value={assigneeId} onChange={e => setAssigneeId(e.target.value)} className="w-full border-gray-300 rounded-lg p-2 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 border">
-                    <option value="" disabled>เลือกผู้รับผิดชอบ...</option>
-                    {teamMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsAssigneePickerOpen(true)}
+                    className="w-full border border-gray-300 rounded-lg p-2 bg-gray-50 text-left text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 hover:bg-gray-100 transition-colors"
+                  >
+                    {assigneeSummaryText}
+                  </button>
+                  {normalizeTaskAssigneeIds({ assigneeIds }).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {normalizeTaskAssigneeIds({ assigneeIds }).map((assigneeId) => {
+                        const assignee = getAssigneeById(assigneeId);
+	                        return (
+	                          <span
+	                            key={`task-pane-selected-assignee-${assigneeId}`}
+	                            className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700"
+	                          >
+	                            <UserAvatar
+	                              user={assignee}
+	                              sizeClass="w-4 h-4"
+	                              textClass="text-[8px]"
+	                              ringClass="ring-1 ring-white"
+	                            />
+	                            {assignee.name}
+	                          </span>
+	                        );
+	                      })}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-gray-400">You can select multiple assignees.</p>
                 </div>
 
-                <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> วันที่เริ่มต้น</div>
-                <div className="flex items-center gap-2">
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1" />
-                  <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 w-28" />
+                <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> Start</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {hasStartDate ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHasStartDate(false);
+                          setStartDate('');
+                        }}
+                        className="px-2.5 py-2 text-xs rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2">
+                      <span className="text-sm text-gray-500">No start date</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHasStartDate(true);
+                          if (!startDate) setStartDate(endDate || '');
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        Set
+                      </button>
+                    </div>
+                  )}
+                  {hasStartTime ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={startTime}
+                        onChange={(e) => setStartTime(e.target.value)}
+                        className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHasStartTime(false);
+                          setStartTime('');
+                        }}
+                        className="px-2.5 py-2 text-xs rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2">
+                      <span className="text-sm text-gray-500">No start time</span>
+                      <button
+                        type="button"
+                        onClick={() => setHasStartTime(true)}
+                        className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        Set
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> วันที่สิ้นสุด</div>
                 <div className="flex items-center gap-2">
-                  <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1" />
+                  <input type="date" value={endDate} min={hasStartDate ? startDate : ''} onChange={e => setEndDate(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1" />
                   <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 w-28" />
                 </div>
 
@@ -9166,10 +9874,10 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
 
                 <div className="text-gray-500 flex items-center gap-2"><Layers className="w-4 h-4" /> ฝ่าย</div>
                 <div>
-                  <div className="w-full border-gray-300 rounded-lg p-2 bg-gray-100 text-gray-700 border">
-                    {department || 'Unassigned'}
+                  <div className="w-full border-gray-300 rounded-lg p-2 bg-gray-100 text-gray-700 border text-sm">
+                    {relatedDepartments.join(', ')}
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-1">Linked from assignee profile</p>
+                  <p className="text-[11px] text-gray-400 mt-1">Linked from selected assignees</p>
                 </div>
               </div>
 
@@ -9192,19 +9900,37 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
 
               <div className="grid grid-cols-[130px_1fr] items-center gap-y-6 text-sm">
                 <div className="text-gray-500">ผู้รับผิดชอบ</div>
-                <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full ${currentAssignee.color} text-white flex items-center justify-center text-xs font-bold shadow-sm`}>{currentAssignee.initials}</div>
-                  <span className="font-medium text-gray-800">{currentAssignee.name}</span>
+                                <div className="flex flex-wrap items-center gap-2.5">
+	                  {currentAssignees.map((assignee, index) => (
+	                    <div
+	                      key={`task-pane-view-assignee-${assignee.id || assignee.name}-${index}`}
+	                      className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1"
+	                    >
+	                      <UserAvatar
+	                        user={assignee}
+	                        sizeClass="w-7 h-7"
+	                        textClass="text-[10px]"
+	                        ringClass="ring-1 ring-white shadow-sm"
+	                      />
+	                      <span className="font-medium text-gray-800 text-sm">{assignee.name}</span>
+	                    </div>
+	                  ))}
                 </div>
 
                 <div className="text-gray-500">วันที่เริ่มต้น</div>
                 <div className="text-gray-800 font-medium flex items-center gap-2">
-                  {startDate} <span className="text-gray-500 text-xs bg-gray-100 px-1.5 py-0.5 rounded">{startTime}</span>
+                  {hasStartDate ? startDate : 'No start date'}
+                  {hasStartTime && startTime ? (
+                    <span className="text-gray-500 text-xs bg-gray-100 px-1.5 py-0.5 rounded">{startTime}</span>
+                  ) : null}
                 </div>
 
                 <div className="text-gray-500">กำหนดส่ง</div>
                 <div className="text-gray-800 font-medium flex items-center gap-2">
-                  {endDate} <span className="text-gray-500 text-xs bg-gray-100 px-1.5 py-0.5 rounded">{endTime}</span>
+                  {endDate}
+                  {endTime ? (
+                    <span className="text-gray-500 text-xs bg-gray-100 px-1.5 py-0.5 rounded">{endTime}</span>
+                  ) : null}
                 </div>
 
                 <div className="text-gray-500">สถานะ</div>
@@ -9221,7 +9947,16 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
 
                 <div className="text-gray-500">ฝ่าย (Department)</div>
                 <div>
-                  <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-md text-xs font-medium border border-gray-200">{department}</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {relatedDepartments.map((departmentName) => (
+                      <span
+                        key={`task-related-view-dept-${departmentName}`}
+                        className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-md text-xs font-medium border border-gray-200"
+                      >
+                        {departmentName}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -9238,6 +9973,91 @@ function TaskDetailPane({ isOpen, onClose, task, onSave, onDelete, teamMembers, 
             </div>
           )}
         </div>
+
+        {isEditing && isAssigneePickerOpen && (
+          <div className="absolute inset-0 z-[5] bg-white/80 backdrop-blur-[1px] p-3 md:p-4">
+            <div className="h-full rounded-xl border border-gray-200 bg-white shadow-lg flex flex-col overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">Select assignees</p>
+                  <p className="text-[11px] text-gray-500">Grouped by department</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAssigneePickerOpen(false)}
+                  className="h-8 w-8 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50"
+                  title="Close"
+                >
+                  <X className="w-4 h-4 mx-auto" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                {assigneeGroups.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-sm text-gray-400">
+                    No members available
+                  </div>
+                ) : (
+                  assigneeGroups.map((group) => (
+                    <div
+                      key={`task-assignee-group-${group.department}`}
+                      className="rounded-lg border border-gray-200 overflow-hidden"
+                    >
+                      <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                        {group.department}
+                      </div>
+                      <div className="divide-y divide-gray-100">
+                        {group.members.map((member) => {
+                          const checked = normalizeTaskAssigneeIds({ assigneeIds }).includes(member.id);
+                          return (
+	                            <label
+	                              key={`task-assignee-option-${member.id}`}
+	                              className="flex items-center gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-gray-50"
+	                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleAssigneeSelection(member.id)}
+                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+	                              <UserAvatar
+	                                user={member}
+	                                sizeClass="w-6 h-6"
+	                                textClass="text-[10px]"
+	                                ringClass="ring-1 ring-white"
+	                              />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm text-gray-700 font-medium truncate">{member.name}</p>
+                                <p className="text-[10px] text-gray-400 truncate">
+                                  {member.position || member.role || 'Team Member'}
+                                </p>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="px-3 py-2.5 border-t border-gray-100 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAssigneeIds([])}
+                  className="px-3 py-1.5 text-xs rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"
+                >
+                  Clear all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAssigneePickerOpen(false)}
+                  className="px-3 py-1.5 text-xs rounded-md bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer Actions (Only show when editing) */}
         {isEditing && (
@@ -13851,7 +14671,7 @@ function NoteEditor({
     }
     presenceTimerRef.current = window.setTimeout(() => {
       emitPresenceUpdate(typingText);
-    }, 140);
+    }, 220);
   };
   const switchActivePage = (nextPageId) => {
     const normalizedId = String(nextPageId || '').trim();
@@ -14602,6 +15422,7 @@ function NoteEditor({
           const userKey = String(entry.userId || entry.username || '').trim();
           return {
             ...entry,
+            presenceKey: userKey || `${entry.pageId}-${entry.pageType}-${entry.line}`,
             label: getPresenceDisplayName(entry),
             cursorColor: getPresenceCursorColor(userKey || entry.updatedAt),
           };
@@ -14621,6 +15442,7 @@ function NoteEditor({
       const currentItems = nextMap.get(key) || [];
       currentItems.push({
         ...entry,
+        presenceKey: userKey || `${key}-${entry.line}`,
         label: getPresenceDisplayName(entry),
         cursorColor: getPresenceCursorColor(userKey || key),
       });
@@ -14655,21 +15477,21 @@ function NoteEditor({
     const availableTrack = Math.max(0, contentHeight - 20);
     const baseX = editorRect.left - viewportRect.left + viewportScrollLeft + 10;
     const baseY = editorRect.top - viewportRect.top + viewportScrollTop;
-    const nextFrames = docPresenceItems.map((entry, index) => {
+    const nextFrames = docPresenceItems.map((entry) => {
       const parsedLine = Number.parseInt(String(entry.line || '1'), 10);
       const lineNumber = Number.isFinite(parsedLine)
         ? Math.min(totalLines, Math.max(1, parsedLine))
         : 1;
       const ratio = totalLines <= 1 ? 0 : (lineNumber - 1) / (totalLines - 1);
       return {
-        key: `${entry.userId}-${entry.pageId}-${entry.updatedAt}-${index}`,
+        key: entry.presenceKey,
         label: entry.label,
         cursorColor: entry.cursorColor,
         x: baseX,
         y: baseY + Math.round(ratio * availableTrack) + 6,
       };
     });
-    setDocPresenceCursorFrames(nextFrames);
+    setDocPresenceCursorFrames((prev) => (isJsonEqual(prev, nextFrames) ? prev : nextFrames));
   }, [isActiveDocPage, docPresenceItems]);
   React.useEffect(() => {
     if (!isActiveDocPage || !docPresenceItems.length) {
@@ -14709,7 +15531,7 @@ function NoteEditor({
         resizeObserver.disconnect();
       }
     };
-  }, [isActiveDocPage, activePageId, activePage?.content, docPresenceItems, refreshDocPresenceCursorFrames]);
+  }, [isActiveDocPage, activePageId, docPresenceItems, refreshDocPresenceCursorFrames]);
   const sortPagesForPicker = (pages) =>
     [...pages].sort((left, right) => {
       const leftPinned = Boolean(left?.pinned) ? 1 : 0;
@@ -15658,7 +16480,7 @@ function NoteEditor({
         )}
 
         {isFullScreen && !isMobileNoteViewport && (
-          <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-white border border-gray-200 rounded-md shadow-sm">
+          <div className="note-editor-toolbar-row flex flex-nowrap items-center gap-1.5 p-1.5 bg-white border border-gray-200 rounded-md shadow-sm overflow-x-auto [&>*]:shrink-0">
             <button
               type="button"
               onMouseDown={handleFormatMouseDown}
@@ -15746,7 +16568,7 @@ function NoteEditor({
               value={isActiveSheetPage ? '' : docFontFamilyValue}
               onChange={handleApplyFontFamily}
               disabled={isActiveSheetPage}
-              className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700 disabled:bg-gray-100 disabled:text-gray-400"
+              className="w-24 lg:w-28 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700 disabled:bg-gray-100 disabled:text-gray-400"
             >
               <option value="">Font</option>
               {DOC_FONT_FAMILY_GROUPS.map((group) => (
@@ -16767,26 +17589,20 @@ function NoteEditor({
                               {cell.text || '\u00A0'}
                             </div>
                           )}
-                          {presenceCellEntries.slice(0, 2).map((presenceEntry, presenceIndex) => (
+                          {presenceCellEntries.map((presenceEntry, presenceIndex) => (
                             <span
-                              key={`${presenceEntry.userId}-${presenceEntry.updatedAt}-${presenceIndex}`}
+                              key={`${presenceEntry.presenceKey}-${presenceIndex}`}
                               className="pointer-events-none absolute z-[12] note-sheet-collab-cursor"
                               style={{
                                 top: `${3 + presenceIndex * 16}px`,
                                 left: `${4 + presenceIndex * 6}px`,
                                 '--presence-cursor-color': presenceEntry.cursorColor,
                               }}
-                              title={`${presenceEntry.label} at ${presenceEntry.line}`}
                             >
                               <span className="note-sheet-collab-cursor-line" />
                               <span className="note-sheet-collab-cursor-label">{presenceEntry.label}</span>
                             </span>
                           ))}
-                          {presenceCellEntries.length > 2 && (
-                            <span className="pointer-events-none absolute z-[12] right-1 top-1 rounded bg-white/90 px-1 text-[10px] font-medium text-slate-500 shadow-sm">
-                              +{presenceCellEntries.length - 2}
-                            </span>
-                          )}
                           {isRangeBottomRightCorner && (
                             <span className="pointer-events-none absolute z-20 right-0.5 bottom-0.5 w-2 h-2 rounded-full bg-blue-600 border border-white" />
                           )}
@@ -16853,7 +17669,6 @@ function NoteEditor({
                 top: `${frame.y}px`,
                 '--presence-cursor-color': frame.cursorColor,
               }}
-              title={frame.label}
             >
               <span className="note-doc-collab-cursor-line" />
               <span className="note-doc-collab-cursor-label">{frame.label}</span>
@@ -17082,6 +17897,15 @@ function NoteEditor({
         <span>Auto-saved · Live collaboration</span>
       </div>
       <style>{`
+        .note-editor-toolbar-row {
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+        }
+        .note-editor-toolbar-row::-webkit-scrollbar {
+          width: 0;
+          height: 0;
+          display: none;
+        }
         .note-doc-viewport::-webkit-scrollbar {
           width: 0 !important;
           height: 0 !important;
@@ -17221,6 +18045,7 @@ function MonthGrid({
   year,
   month,
   projects,
+  allProjects = [],
   events,
   showEventTime = false,
   onDayClick,
@@ -17333,7 +18158,11 @@ function MonthGrid({
 
               const startIdx = coveredIndices[0];
               const endIdx = coveredIndices[coveredIndices.length - 1];
-              const project = projects.find((p) => p.id === event.projectId) || projects[0];
+              const project =
+                projects.find((p) => p.id === event.projectId) ||
+                allProjects.find((p) => p.id === event.projectId) ||
+                projects[0] ||
+                allProjects[0];
               const color = PROJECT_COLORS[project?.colorIndex ?? 0] || PROJECT_COLORS[0];
 
               return {
@@ -18775,7 +19604,19 @@ function ProjectManagerModal({
   );
 }
 // --- Event Form Modal ---
-function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, onSave, onDelete }) {
+function EventModal({
+  event,
+  projects,
+  defaultDate,
+  defaultProjectId,
+  googleCalendarStatus,
+  googleCalendarCalendars,
+  googleCalendarSelectedCalendarIds,
+  isGoogleCalendarCalendarsLoading,
+  onClose,
+  onSave,
+  onDelete,
+}) {
   const popup = usePopup();
   const [title, setTitle] = useState(event?.title || '');
   const [projectId, setProjectId] = useState(event?.projectId || defaultProjectId || (projects[0]?.id || ''));
@@ -18788,8 +19629,30 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
   });
   const [startTime, setStartTime] = useState(event?.startTime || '09:00');
   const [endTime, setEndTime] = useState(event?.endTime || '10:00');
-  const [hasTime, setHasTime] = useState(event?.showTime !== false);
+  const [hasTime, setHasTime] = useState(() => {
+    if (!event) return false; // New event: time is off by default
+    if (typeof event.showTime === 'boolean') return event.showTime;
+    const start = String(event.startTime || '').trim();
+    const end = String(event.endTime || '').trim();
+    return Boolean(start || end);
+  });
   const [description, setDescription] = useState(event?.description || '');
+  const selectedProject = projects.find((project) => project.id === projectId) || projects[0] || null;
+  const selectedProjectColor = PROJECT_COLORS[selectedProject?.colorIndex ?? 0] || PROJECT_COLORS[0];
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const googleLinked = Boolean(googleCalendarStatus?.linked);
+  const availableGoogleCalendars = Array.isArray(googleCalendarCalendars)
+    ? googleCalendarCalendars
+    : [];
+  const preferredGoogleCalendarId =
+    normalizeGoogleCalendarSelection(googleCalendarSelectedCalendarIds).find((calendarId) =>
+      availableGoogleCalendars.some((calendar) => calendar.id === calendarId)
+    ) ||
+    availableGoogleCalendars[0]?.id ||
+    'primary';
+  const [addToGoogleCalendar, setAddToGoogleCalendar] = useState(false);
+  const [googleCalendarId, setGoogleCalendarId] = useState(preferredGoogleCalendarId);
+  const [googleEventColorId, setGoogleEventColorId] = useState('');
 
   useEffect(() => {
     if (!hasEndDate) return;
@@ -18798,26 +19661,64 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
     }
   }, [startDate, endDate, hasEndDate]);
 
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    if (!addToGoogleCalendar) return;
+    const hasCurrent = availableGoogleCalendars.some((calendar) => calendar.id === googleCalendarId);
+    if (hasCurrent) return;
+    setGoogleCalendarId(preferredGoogleCalendarId);
+  }, [addToGoogleCalendar, availableGoogleCalendars, googleCalendarId, preferredGoogleCalendarId]);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!title || !startDate || (hasEndDate && !endDate)) {
       void popup.alert({
         title: 'Incomplete form',
-        message: 'Please complete required fields.',
+        message: 'Please provide event title and start date.',
+      });
+      return;
+    }
+    if (addToGoogleCalendar && !googleLinked) {
+      await popup.alert({
+        title: 'Google Calendar not linked',
+        message: 'Please link Google Calendar first in Manage Projects.',
       });
       return;
     }
 
-    onSave({
-      title,
-      projectId,
-      startDate,
-      endDate: hasEndDate ? endDate : startDate,
-      startTime: hasTime ? startTime : '00:00',
-      endTime: hasTime ? endTime : '23:59',
-      description,
-      showTime: hasTime,
-    });
+    const effectiveGoogleCalendarId = String(googleCalendarId || preferredGoogleCalendarId || '').trim();
+    if (addToGoogleCalendar && !effectiveGoogleCalendarId) {
+      await popup.alert({
+        title: 'Missing Google Calendar',
+        message: 'Please choose a Google Calendar.',
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await Promise.resolve(
+        onSave({
+          title,
+          projectId,
+          startDate,
+          endDate: hasEndDate ? endDate : startDate,
+          startTime: hasTime ? startTime : '00:00',
+          endTime: hasTime ? endTime : '23:59',
+          description,
+          showTime: hasTime,
+          googleCalendarOptions: addToGoogleCalendar
+            ? {
+                enabled: true,
+                calendarId: effectiveGoogleCalendarId,
+                colorId: String(googleEventColorId || '').trim(),
+              }
+            : null,
+        })
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -18842,20 +19743,29 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
 
           <div className="flex items-center gap-3 text-gray-600">
             <Layers className="w-5 h-5" />
-            <select
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              className="flex-1 border-gray-300 rounded-md p-2 bg-gray-50 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="" disabled>
-                Select Project
-              </option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
+            <div className="relative flex-1">
+              <span
+                className={`pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full ${selectedProjectColor.bg}`}
+              ></span>
+              <select
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="w-full border-gray-300 rounded-md p-2 pl-8 bg-gray-50 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="" disabled>
+                  Select Project
                 </option>
-              ))}
-            </select>
+                {projects.map((p) => (
+                  <option
+                    key={p.id}
+                    value={p.id}
+                    style={{ color: getProjectColorHexByIndex(p.colorIndex) }}
+                  >
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="flex items-start gap-3 text-gray-600 mt-2">
@@ -18935,6 +19845,86 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
             </div>
           </div>
 
+          <div className="flex items-start gap-3 text-gray-600 mt-1">
+            <LinkIcon className="w-5 h-5 mt-2 shrink-0" />
+            <div className="flex-1 rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2.5 space-y-2">
+              <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={addToGoogleCalendar}
+                  onChange={(e) => setAddToGoogleCalendar(e.target.checked)}
+                  disabled={!googleLinked}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                />
+                <span className="font-medium">Add this event to Google Calendar</span>
+              </label>
+              {!googleLinked && (
+                <p className="text-xs text-gray-500">
+                  Link Google Calendar in Manage Projects to enable this option.
+                </p>
+              )}
+              {googleLinked && addToGoogleCalendar && (
+                <div className="pt-2 border-t border-gray-200 space-y-2.5">
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                      Google Calendar
+                    </p>
+                    {isGoogleCalendarCalendarsLoading ? (
+                      <div className="text-xs text-gray-500">Loading calendars...</div>
+                    ) : (
+                      <select
+                        value={googleCalendarId}
+                        onChange={(e) => setGoogleCalendarId(e.target.value)}
+                        className="w-full border-gray-300 rounded-md p-2 bg-white text-sm focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        {(availableGoogleCalendars.length > 0
+                          ? availableGoogleCalendars
+                          : [{ id: 'primary', summary: 'Primary' }]
+                        ).map((calendar) => (
+                          <option key={`google-calendar-target-${calendar.id}`} value={calendar.id}>
+                            {calendar.summary || calendar.id}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                      Google Color
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setGoogleEventColorId('')}
+                        className={`px-2 py-1 text-[11px] rounded-md border transition-colors ${
+                          googleEventColorId
+                            ? 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                            : 'bg-blue-50 border-blue-200 text-blue-700'
+                        }`}
+                      >
+                        Default
+                      </button>
+                      {GOOGLE_CALENDAR_EVENT_COLOR_PRESETS.map((color) => (
+                        <button
+                          key={`google-event-color-${color.id}`}
+                          type="button"
+                          onClick={() => setGoogleEventColorId(color.id)}
+                          title={color.label}
+                          className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-105 ${
+                            googleEventColorId === color.id
+                              ? 'border-gray-700'
+                              : 'border-white shadow-sm ring-1 ring-gray-300'
+                          }`}
+                          style={{ backgroundColor: color.hex }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="flex items-start gap-3 text-gray-600 mt-2">
             <AlignLeft className="w-5 h-5 mt-2" />
             <textarea
@@ -18972,9 +19962,10 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
             </button>
             <button
               type="submit"
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors shadow-sm"
+              disabled={isSubmitting}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white px-6 py-2 rounded-lg font-medium transition-colors shadow-sm"
             >
-              Save
+              {isSubmitting ? 'Saving...' : 'Save'}
             </button>
           </div>
         </form>
@@ -18982,5 +19973,3 @@ function EventModal({ event, projects, defaultDate, defaultProjectId, onClose, o
     </div>
   );
 }
-
-
