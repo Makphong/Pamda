@@ -11258,6 +11258,7 @@ function NoteEditor({
   const docImagePointerDragRef = React.useRef(null);
   const docImageResizeRef = React.useRef(null);
   const isImageInteractionActiveRef = React.useRef(false);
+  const imageEditHoldUntilRef = React.useRef(0);
   const docImageClipboardRef = React.useRef(null);
   const previousNoteIdRef = React.useRef(noteId);
   const lastHydratedDocPageRef = React.useRef('');
@@ -11590,6 +11591,10 @@ function NoteEditor({
     };
     isImageInteractionActiveRef.current = false;
     clearLongPressTimer();
+  };
+  const markImageEditHold = (ms = 3500) => {
+    const durationMs = Number.isFinite(Number(ms)) ? Math.max(0, Number(ms)) : 0;
+    imageEditHoldUntilRef.current = Date.now() + durationMs;
   };
 
   const getImageById = (imageId) => {
@@ -13036,6 +13041,7 @@ function NoteEditor({
       openImageMenu(imageNode);
     }
     if (persist) {
+      markImageEditHold(3500);
       handleInput();
     }
     return true;
@@ -13393,6 +13399,7 @@ function NoteEditor({
       moved: false,
     };
     isImageInteractionActiveRef.current = true;
+    markImageEditHold(3500);
     imageNode.style.cursor = 'grabbing';
     openImageMenu(imageNode);
     setDocLinkMenuState(null);
@@ -13495,6 +13502,7 @@ function NoteEditor({
       docImageResizeRef.current = baseResizeState;
     }
     isImageInteractionActiveRef.current = true;
+    markImageEditHold(3500);
     imageNode.style.cursor = mode === 'crop' ? 'crosshair' : 'nwse-resize';
     refreshActiveImageFrame(imageId);
   };
@@ -13619,6 +13627,7 @@ function NoteEditor({
       return;
     }
 
+    markImageEditHold(3500);
     handleInput();
     openImageMenu(movedImage);
     isImageInteractionActiveRef.current = false;
@@ -13635,7 +13644,8 @@ function NoteEditor({
         String(imageMenuState?.imageId || '').trim() ||
         String(imageCropModeId || '').trim()
     );
-    if (!isSwitchingNote && hasActiveImageTool) {
+    const isImageEditHoldActive = imageEditHoldUntilRef.current > Date.now();
+    if (!isSwitchingNote && (hasActiveImageTool || isImageEditHoldActive)) {
       return;
     }
     if (!isSwitchingNote) {
@@ -14115,6 +14125,7 @@ function NoteEditor({
           openImageMenu(imageNode);
         }
         docImageResizeRef.current = null;
+        markImageEditHold(3500);
         handleInput();
         isImageInteractionActiveRef.current = false;
         return;
@@ -14131,6 +14142,7 @@ function NoteEditor({
       }
       docImagePointerDragRef.current = null;
       if (dragState.moved) {
+        markImageEditHold(3500);
         handleInput();
       }
       isImageInteractionActiveRef.current = false;
