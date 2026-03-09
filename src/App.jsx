@@ -51,10 +51,10 @@ import {
 
 // --- Constants & Helpers ---
 const THAI_MONTHS = [
-  'à¸¡à¸à¸£à¸²à¸„à¸¡', 'à¸à¸¸à¸¡à¸ à¸²à¸žà¸±à¸™à¸˜à¹Œ', 'à¸¡à¸µà¸™à¸²à¸„à¸¡', 'à¹€à¸¡à¸©à¸²à¸¢à¸™', 'à¸žà¸¤à¸©à¸ à¸²à¸„à¸¡', 'à¸¡à¸´à¸–à¸¸à¸™à¸²à¸¢à¸™',
-  'à¸à¸£à¸à¸Žà¸²à¸„à¸¡', 'à¸ªà¸´à¸‡à¸«à¸²à¸„à¸¡', 'à¸à¸±à¸™à¸¢à¸²à¸¢à¸™', 'à¸•à¸¸à¸¥à¸²à¸„à¸¡', 'à¸žà¸¤à¸¨à¸ˆà¸´à¸à¸²à¸¢à¸™', 'à¸˜à¸±à¸™à¸§à¸²à¸„à¸¡'
+  'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
 ];
-const DAYS_OF_WEEK = ['à¸­à¸²', 'à¸ˆ', 'à¸­', 'à¸ž', 'à¸žà¸¤', 'à¸¨', 'à¸ª'];
+const DAYS_OF_WEEK = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
 const NOTE_TITLE_OWNER_PREFIX_TH = '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E02\u0E2D\u0E07';
 const NOTE_TITLE_DEPARTMENT_PREFIX_TH =
   '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E02\u0E2D\u0E07\u0E1D\u0E48\u0E32\u0E22';
@@ -166,17 +166,17 @@ const PROJECT_STATUS_HIGHLIGHTS = {
   on_track: {
     tone: 'positive',
     priorityLabel: 'Stable',
-    prompt: '"à¸”à¸µà¸¡à¸²à¸à¹€à¸¥à¸¢ à¸§à¸±à¸™à¸™à¸µà¹‰à¸„à¸·à¸šà¸«à¸™à¹‰à¸²à¸­à¸µà¸à¸™à¸´à¸” à¸žà¸£à¸¸à¹ˆà¸‡à¸™à¸µà¹‰à¸ˆà¸°à¹€à¸šà¸²à¸‚à¸¶à¹‰à¸™à¹€à¸¢à¸­à¸°à¸™à¸°"',
+    prompt: '"ดีมากเลย วันนี้คืบหน้าอีกนิด พรุ่งนี้จะเบาขึ้นเยอะนะ"',
   },
   at_risk: {
     tone: 'warning',
     priorityLabel: 'Needs Attention',
-    prompt: '"à¹„à¸¡à¹ˆà¹€à¸›à¹‡à¸™à¹„à¸£à¸™à¹‰à¸² à¸„à¹ˆà¸­à¸¢à¹† à¹à¸à¹‰à¸—à¸µà¸¥à¸°à¸ˆà¸¸à¸” à¹€à¸”à¸µà¹‹à¸¢à¸§à¸—à¸¸à¸à¸­à¸¢à¹ˆà¸²à¸‡à¸à¸¥à¸±à¸šà¸¡à¸²à¹€à¸‚à¹‰à¸²à¸—à¸µà¹ˆ"',
+    prompt: '"ไม่เป็นไรน้า ค่อยๆ แก้ทีละจุด เดี๋ยวทุกอย่างกลับมาเข้าที่"',
   },
   off_track: {
     tone: 'critical',
     priorityLabel: 'Critical',
-    prompt: '"à¸žà¸±à¸à¸«à¸²à¸¢à¹ƒà¸ˆà¸¥à¸¶à¸à¹† à¹à¸¥à¹‰à¸§à¹€à¸£à¸´à¹ˆà¸¡à¸ˆà¸²à¸à¹€à¸£à¸·à¹ˆà¸­à¸‡à¸ªà¸³à¸„à¸±à¸à¸ªà¸¸à¸”à¸à¹ˆà¸­à¸™à¸™à¸° à¹€à¸£à¸²à¸¢à¸±à¸‡à¸à¸¥à¸±à¸šà¸¡à¸²à¹„à¸”à¹‰à¹€à¸ªà¸¡à¸­"',
+    prompt: '"พักหายใจลึกๆ แล้วเริ่มจากเรื่องสำคัญสุดก่อนนะ เรายังกลับมาได้เสมอ"',
   },
 };
 const PROJECT_STATUS_TONE_STYLES = {
@@ -335,7 +335,7 @@ const formatProjectActivityTimestamp = (value) => {
 };
 const stripWrappingQuotes = (value) => {
   const raw = String(value || '').trim();
-  return raw.replace(/^["'`â€œâ€â€˜â€™]+|["'`â€œâ€â€˜â€™]+$/g, '').trim();
+  return raw.replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, '').trim();
 };
 const formatDateDayMonthYear = (value) => {
   const raw = String(value || '').trim();
@@ -366,6 +366,18 @@ const formatActivityDateWindow = ({ startDate, startTime, endDate, endTime, show
 };
 const NOTE_DOCUMENT_SERIALIZATION_PREFIX = '__PM_NOTE_DOC_V2__';
 const NOTE_IMAGE_CLIPBOARD_PREFIX = '__PM_NOTE_IMAGE__::';
+const NOTE_IMAGE_LAYOUT_INLINE = 'inline';
+const NOTE_IMAGE_LAYOUT_FREE = 'free';
+const NOTE_IMAGE_LAYOUT_VALUES = new Set([NOTE_IMAGE_LAYOUT_INLINE, NOTE_IMAGE_LAYOUT_FREE]);
+const normalizeNoteImageLayout = (value, fallback = NOTE_IMAGE_LAYOUT_INLINE) => {
+  const normalizedFallback = NOTE_IMAGE_LAYOUT_VALUES.has(String(fallback || '').trim())
+    ? String(fallback || '').trim()
+    : NOTE_IMAGE_LAYOUT_INLINE;
+  const normalized = String(value || '').trim().toLowerCase();
+  return NOTE_IMAGE_LAYOUT_VALUES.has(normalized) ? normalized : normalizedFallback;
+};
+const NOTE_IMAGE_DEFAULT_INSERT_WIDTH = 180;
+const NOTE_IMAGE_DEFAULT_CROP_HEIGHT = 120;
 const DEFAULT_NOTE_DOC_PAGE_TITLE = 'Doc 1';
 const DEFAULT_NOTE_SHEET_PAGE_TITLE = 'Sheet 1';
 const DEFAULT_NOTE_SHEET_ROWS = 30;
@@ -402,17 +414,17 @@ const DOC_FONT_FAMILY_GROUPS = [
   {
     label: 'Thai Handwriting',
     options: [
-      { value: 'Mali', label: 'Mali (à¹„à¸—à¸¢à¸¥à¸²à¸¢à¸¡à¸·à¸­)', cssFamily: '"Mali", cursive' },
-      { value: 'Sriracha', label: 'Sriracha (à¹„à¸—à¸¢à¸¥à¸²à¸¢à¸¡à¸·à¸­)', cssFamily: '"Sriracha", cursive' },
-      { value: 'Charm', label: 'Charm (à¹„à¸—à¸¢à¸¥à¸²à¸¢à¸¡à¸·à¸­)', cssFamily: '"Charm", cursive' },
+      { value: 'Mali', label: 'Mali (ไทยลายมือ)', cssFamily: '"Mali", cursive' },
+      { value: 'Sriracha', label: 'Sriracha (ไทยลายมือ)', cssFamily: '"Sriracha", cursive' },
+      { value: 'Charm', label: 'Charm (ไทยลายมือ)', cssFamily: '"Charm", cursive' },
     ],
   },
   {
     label: 'Thai Formal',
     options: [
-      { value: 'Sarabun', label: 'Sarabun (à¹„à¸—à¸¢à¸—à¸²à¸‡à¸à¸²à¸£)', cssFamily: '"Sarabun", sans-serif' },
-      { value: 'Noto Sans Thai', label: 'Noto Sans Thai (à¹„à¸—à¸¢à¸—à¸²à¸‡à¸à¸²à¸£)', cssFamily: '"Noto Sans Thai", sans-serif' },
-      { value: 'Prompt', label: 'Prompt (à¹„à¸—à¸¢à¸—à¸²à¸‡à¸à¸²à¸£)', cssFamily: '"Prompt", sans-serif' },
+      { value: 'Sarabun', label: 'Sarabun (ไทยทางการ)', cssFamily: '"Sarabun", sans-serif' },
+      { value: 'Noto Sans Thai', label: 'Noto Sans Thai (ไทยทางการ)', cssFamily: '"Noto Sans Thai", sans-serif' },
+      { value: 'Prompt', label: 'Prompt (ไทยทางการ)', cssFamily: '"Prompt", sans-serif' },
     ],
   },
 ];
@@ -1039,7 +1051,7 @@ const describeProjectActivityEntry = (entry) => {
       if (entry.actorUsername) detailParts.push(`By ${entry.actorUsername}`);
       return {
         title: `New Event: ${eventTitle || 'Untitled event'}`,
-        subtitle: detailParts.join(' â€¢ ') || entry.message || 'New calendar event was added.',
+        subtitle: detailParts.join(' • ') || entry.message || 'New calendar event was added.',
       };
     }
     case PROJECT_ACTIVITY_TYPES.TASK_CREATED: {
@@ -1058,7 +1070,7 @@ const describeProjectActivityEntry = (entry) => {
       if (entry.actorUsername) detailParts.push(`By ${entry.actorUsername}`);
       return {
         title: `New Task: ${taskTitle || 'Untitled task'}`,
-        subtitle: detailParts.join(' â€¢ ') || entry.message || 'New task was created.',
+        subtitle: detailParts.join(' • ') || entry.message || 'New task was created.',
       };
     }
     case PROJECT_ACTIVITY_TYPES.MEMBER_JOINED: {
@@ -1075,7 +1087,7 @@ const describeProjectActivityEntry = (entry) => {
       }
       return {
         title: `New Member: ${memberName}`,
-        subtitle: detailParts.join(' â€¢ ') || entry.message || 'A new member joined the project.',
+        subtitle: detailParts.join(' • ') || entry.message || 'A new member joined the project.',
       };
     }
     case PROJECT_ACTIVITY_TYPES.PROJECT_STATUS_CHANGED: {
@@ -1084,13 +1096,13 @@ const describeProjectActivityEntry = (entry) => {
       const statusHighlight = PROJECT_STATUS_HIGHLIGHTS[toStatusKey] || {
         tone: 'neutral',
         priorityLabel: 'Updated',
-        prompt: '"à¸­à¸±à¸›à¹€à¸”à¸•à¹à¸¥à¹‰à¸§à¸™à¸° à¸¥à¸­à¸‡à¹€à¸Šà¹‡à¸à¸ à¸²à¸žà¸£à¸§à¸¡à¸­à¸µà¸à¸™à¸´à¸” à¹à¸¥à¹‰à¸§à¸„à¹ˆà¸­à¸¢à¹€à¸”à¸´à¸™à¸•à¹ˆà¸­à¹à¸šà¸šà¹ƒà¸ˆà¹€à¸¢à¹‡à¸™à¹†"',
+        prompt: '"อัปเดตแล้วนะ ลองเช็กภาพรวมอีกนิด แล้วค่อยเดินต่อแบบใจเย็นๆ"',
       };
       const detailParts = [];
       if (entry.actorUsername) detailParts.push(`By ${entry.actorUsername}`);
       return {
         title: `Project status changed: ${toStatus}`,
-        subtitle: detailParts.join(' â€¢ ') || 'Status was updated.',
+        subtitle: detailParts.join(' • ') || 'Status was updated.',
         isStatusUpdate: true,
         statusTone: statusHighlight.tone,
         statusPriorityLabel: statusHighlight.priorityLabel,
@@ -1104,7 +1116,7 @@ const describeProjectActivityEntry = (entry) => {
       if (entry.message) detailParts.push(entry.message);
       return {
         title: `Announcement${announcementTitle ? `: ${announcementTitle}` : ''}`,
-        subtitle: detailParts.join(' â€¢ ') || 'New project announcement.',
+        subtitle: detailParts.join(' • ') || 'New project announcement.',
       };
     }
     default:
@@ -5744,7 +5756,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
   const handleNewEventClick = () => {
     setEditingEvent(null);
-    // à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸²à¹€à¸£à¸´à¹ˆà¸¡à¸•à¹‰à¸™à¹€à¸›à¹‡à¸™à¸§à¸±à¸™à¸—à¸µà¹ˆà¸›à¸±à¸ˆà¸ˆà¸¸à¸šà¸±à¸™
+    // ตั้งค่าเริ่มต้นเป็นวันที่ปัจจุบัน
     const now = new Date();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     setSelectedDateForNewEvent(todayStr);
@@ -5962,7 +5974,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         if (!p.isVisible && visibleProjects.length >= 4) {
           void popup.alert({
             title: 'Display limit',
-            message: 'à¸„à¸¸à¸“à¸ªà¸²à¸¡à¸²à¸£à¸–à¹à¸ªà¸”à¸‡à¹„à¸”à¹‰à¸ªà¸¹à¸‡à¸ªà¸¸à¸”à¹€à¸žà¸µà¸¢à¸‡ 4 à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œà¹ƒà¸™à¸«à¸™à¹‰à¸²à¸ˆà¸­à¸«à¸¥à¸±à¸',
+            message: 'คุณสามารถแสดงได้สูงสุดเพียง 4 โปรเจกต์ในหน้าจอหลัก',
           });
           return p;
         }
@@ -7017,7 +7029,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         {visibleProjects.length === 0 ? (
           <div className="flex h-full items-center justify-center flex-col text-gray-400 gap-4">
             <LayoutGrid className="w-16 h-16 opacity-50" />
-            <p className="text-lg">à¸à¸£à¸¸à¸“à¸²à¹€à¸¥à¸·à¸­à¸à¸«à¸£à¸·à¸­à¹€à¸žà¸´à¹ˆà¸¡à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œà¸ˆà¸²à¸à¹€à¸¡à¸™à¸¹ "à¸ˆà¸±à¸”à¸à¸²à¸£ Project"</p>
+            <p className="text-lg">กรุณาเลือกหรือเพิ่มโปรเจกต์จากเมนู "จัดการ Project"</p>
           </div>
         ) : (
           <div className={!isCompactViewport && !effectiveMergeView ? 'min-w-[800px]' : 'w-full'}> {/* Ensure it doesn't squish too much on small screens */}
@@ -7064,7 +7076,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             {/* Months List (Continuous Scroll) */}
             {monthsToRender.length === 0 ? (
               <div className="flex justify-center items-center h-48 text-gray-500">
-                à¹„à¸¡à¹ˆà¸¡à¸µà¸ªà¸±à¸›à¸”à¸²à¸«à¹Œà¸—à¸µà¹ˆà¸ˆà¸°à¹à¸ªà¸”à¸‡à¸œà¸¥à¹ƒà¸™à¸Šà¹ˆà¸§à¸‡à¹€à¸§à¸¥à¸²à¸—à¸µà¹ˆà¹€à¸¥à¸·à¸­à¸
+                ไม่มีสัปดาห์ที่จะแสดงผลในช่วงเวลาที่เลือก
               </div>
             ) : (
               <div className="flex flex-col">
@@ -7252,12 +7264,12 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
             autoFocus
           />
           <div className="flex gap-2 justify-end">
-            <button onClick={handleCancel} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors">à¸¢à¸à¹€à¸¥à¸´à¸</button>
+            <button onClick={handleCancel} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors">ยกเลิก</button>
             <button 
               onClick={handleSave} 
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
             >
-              <Check className="w-4 h-4" /> à¸šà¸±à¸™à¸—à¸¶à¸
+              <Check className="w-4 h-4" /> บันทึก
             </button>
           </div>
         </div>
@@ -7266,7 +7278,7 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
           {value ? (
             <p>{value}</p>
           ) : (
-            <p className="text-gray-400 italic">à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µà¸‚à¹‰à¸­à¸¡à¸¹à¸¥ à¸„à¸¥à¸´à¸à¸›à¸¸à¹ˆà¸¡à¹à¸à¹‰à¹„à¸‚à¹€à¸žà¸·à¹ˆà¸­à¹€à¸žà¸´à¹ˆà¸¡...</p>
+            <p className="text-gray-400 italic">ยังไม่มีข้อมูล คลิกปุ่มแก้ไขเพื่อเพิ่ม...</p>
           )}
         </div>
       )}
@@ -7419,7 +7431,7 @@ function ProjectDashboard({
   onActiveTabChange,
 }) {
   const popup = usePopup();
-  // à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¸„à¹ˆà¸²à¹€à¸£à¸´à¹ˆà¸¡à¸•à¹‰à¸™à¹ƒà¸«à¹‰à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸² Project Organization à¹€à¸›à¹‡à¸™à¸­à¸±à¸™à¸”à¸±à¸šà¹à¸£à¸
+  // เปลี่ยนค่าเริ่มต้นให้เปิดหน้า Project Organization เป็นอันดับแรก
   const [activeTabLocal, setActiveTabLocal] = useState(DEFAULT_PROJECT_DASHBOARD_TAB);
   const activeTab = normalizeProjectDashboardTab(activeTabProp ?? activeTabLocal);
   const setActiveTab = (nextTab) => {
@@ -7659,9 +7671,9 @@ function ProjectDashboard({
   }, [project.id, project.notesPreferences, project.ownerId, currentUser.id]);
   
   const statusConfig = {
-    on_track: { label: 'On Track (à¸•à¸²à¸¡à¹à¸œà¸™)', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
-    at_risk: { label: 'At Risk (à¸¡à¸µà¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡)', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', dot: 'bg-yellow-500' },
-    off_track: { label: 'Off Track (à¸¥à¹ˆà¸²à¸Šà¹‰à¸²)', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', dot: 'bg-red-500' },
+    on_track: { label: 'On Track (ตามแผน)', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
+    at_risk: { label: 'At Risk (มีความเสี่ยง)', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', dot: 'bg-yellow-500' },
+    off_track: { label: 'Off Track (ล่าช้า)', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', dot: 'bg-red-500' },
   };
 
   const TABS = [
@@ -8882,7 +8894,7 @@ function ProjectDashboard({
                         : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >
-                    à¹à¸¢à¸à¸•à¸²à¸¡à¸à¹ˆà¸²à¸¢
+                    แยกตามฝ่าย
                   </button>
                   <button
                     onClick={() => {
@@ -8897,7 +8909,7 @@ function ProjectDashboard({
                         : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >
-                    à¹à¸¢à¸à¸•à¸²à¸¡à¹à¸•à¹ˆà¸¥à¸°à¸„à¸™
+                    แยกตามแต่ละคน
                   </button>
                 </div>
               )}
@@ -8911,19 +8923,19 @@ function ProjectDashboard({
                   
                   {/* Vision Section */}
                   <EditableSection 
-                    title="à¸§à¸´à¸ªà¸±à¸¢à¸—à¸±à¸¨à¸™à¹Œ (Vision)" 
+                    title="วิสัยทัศน์ (Vision)" 
                     icon={Target} 
                     value={project.vision} 
-                    placeholder="à¸à¸£à¸­à¸à¸§à¸´à¸ªà¸±à¸¢à¸—à¸±à¸¨à¸™à¹Œà¸‚à¸­à¸‡à¹‚à¸„à¸£à¸‡à¸à¸²à¸£à¸—à¸µà¹ˆà¸™à¸µà¹ˆ..."
+                    placeholder="กรอกวิสัยทัศน์ของโครงการที่นี่..."
                     onSave={(newVision) => onUpdateProject(project.id, { vision: newVision })}
                   />
 
                   {/* Mission Section */}
                   <EditableSection 
-                    title="à¸žà¸±à¸™à¸˜à¸à¸´à¸ˆ (Mission)" 
+                    title="พันธกิจ (Mission)" 
                     icon={Flag} 
                     value={project.mission} 
-                    placeholder="à¸à¸£à¸­à¸à¸žà¸±à¸™à¸˜à¸à¸´à¸ˆà¸‚à¸­à¸‡à¹‚à¸„à¸£à¸‡à¸à¸²à¸£à¸—à¸µà¹ˆà¸™à¸µà¹ˆ..."
+                    placeholder="กรอกพันธกิจของโครงการที่นี่..."
                     onSave={(newMission) => onUpdateProject(project.id, { mission: newMission })}
                   />
 
@@ -8932,7 +8944,7 @@ function ProjectDashboard({
                     <div className="flex justify-between items-start mb-3 md:mb-4 gap-2">
                       <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <AlignLeft className="w-5 h-5 text-gray-500" />
-                        à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ (Project Description)
+                        รายละเอียดโปรเจกต์ (Project Description)
                       </h3>
                       {!isEditingDesc && (
                         <button 
@@ -8952,12 +8964,12 @@ function ProjectDashboard({
                         <textarea 
                           value={editDescText}
                           onChange={e => setEditDescText(e.target.value)}
-                          placeholder="à¹€à¸žà¸´à¹ˆà¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¹à¸¥à¸°à¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢à¸‚à¸­à¸‡à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œà¸—à¸µà¹ˆà¸™à¸µà¹ˆ..."
+                          placeholder="เพิ่มรายละเอียดและเป้าหมายของโปรเจกต์ที่นี่..."
                           className="w-full border border-gray-300 rounded-lg p-3 text-sm text-gray-700 min-h-[120px] outline-none focus:ring-2 focus:ring-blue-500 resize-y"
                           autoFocus
                         ></textarea>
                         <div className="flex gap-2 justify-end">
-                          <button onClick={() => setIsEditingDesc(false)} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors">à¸¢à¸à¹€à¸¥à¸´à¸</button>
+                          <button onClick={() => setIsEditingDesc(false)} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors">ยกเลิก</button>
                           <button 
                             onClick={() => {
                               onUpdateProject(project.id, { description: editDescText });
@@ -8965,7 +8977,7 @@ function ProjectDashboard({
                             }} 
                             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                           >
-                            à¸šà¸±à¸™à¸—à¸¶à¸
+                            บันทึก
                           </button>
                         </div>
                       </div>
@@ -8974,7 +8986,7 @@ function ProjectDashboard({
                         {project.description ? (
                           <p>{project.description}</p>
                         ) : (
-                          <p className="text-gray-400 italic">à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µà¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ à¸„à¸¥à¸´à¸à¸›à¸¸à¹ˆà¸¡à¹à¸à¹‰à¹„à¸‚à¹€à¸žà¸·à¹ˆà¸­à¹€à¸žà¸´à¹ˆà¸¡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥</p>
+                          <p className="text-gray-400 italic">ยังไม่มีรายละเอียดโปรเจกต์ คลิกปุ่มแก้ไขเพื่อเพิ่มข้อมูล</p>
                         )}
                       </div>
                     )}
@@ -8985,14 +8997,14 @@ function ProjectDashboard({
                     <div className="flex justify-between items-start md:items-center gap-3 mb-3 md:mb-4">
                       <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <Target className="w-5 h-5 text-gray-500" />
-                        à¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢à¸«à¸¥à¸±à¸ & à¸ˆà¸¸à¸”à¸§à¸´à¸à¸¤à¸• (Milestones)
+                        เป้าหมายหลัก & จุดวิกฤต (Milestones)
                       </h3>
                       {!isAddingMilestone && (
                         <button 
                           onClick={() => setIsAddingMilestone(true)}
                           className="text-blue-600 hover:text-blue-800 text-xs md:text-sm font-medium flex items-center gap-1 bg-blue-50 hover:bg-blue-100 px-2.5 md:px-3 py-1.5 rounded-lg transition-colors shrink-0"
                         >
-                          <Plus className="w-4 h-4" /> à¹€à¸žà¸´à¹ˆà¸¡à¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢
+                          <Plus className="w-4 h-4" /> เพิ่มเป้าหมาย
                         </button>
                       )}
                     </div>
@@ -9016,7 +9028,7 @@ function ProjectDashboard({
                                 e.stopPropagation();
                                 const shouldDelete = await popup.confirm({
                                   title: 'Delete milestone',
-                                  message: 'à¸¥à¸šà¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢à¸™à¸µà¹‰?',
+                                  message: 'ลบเป้าหมายนี้?',
                                   confirmText: 'Delete',
                                   tone: 'danger',
                                 });
@@ -9035,7 +9047,7 @@ function ProjectDashboard({
                       
                       {(project.milestones || []).length === 0 && !isAddingMilestone && (
                         <div className="text-center py-6 text-gray-400 text-sm italic bg-gray-50 rounded-lg border border-dashed border-gray-200">
-                          à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µà¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢à¸‚à¸­à¸‡à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ
+                          ยังไม่มีเป้าหมายของโปรเจกต์
                         </div>
                       )}
 
@@ -9044,7 +9056,7 @@ function ProjectDashboard({
                         <div className="p-3 md:p-4 bg-blue-50/50 rounded-lg border border-blue-100 flex flex-col gap-3 mt-4">
                           <input 
                             type="text" 
-                            placeholder="à¸Šà¸·à¹ˆà¸­à¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢ / Milestone..." 
+                            placeholder="ชื่อเป้าหมาย / Milestone..." 
                             value={newMilestoneName}
                             onChange={e => setNewMilestoneName(e.target.value)}
                             className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500"
@@ -9074,13 +9086,13 @@ function ProjectDashboard({
                               }}
                               className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 transition-colors"
                             >
-                              à¹€à¸žà¸´à¹ˆà¸¡
+                              เพิ่ม
                             </button>
                             <button 
                               onClick={() => setIsAddingMilestone(false)}
                               className="text-gray-600 hover:bg-gray-100 border border-gray-300 px-4 py-2 rounded-md text-sm font-medium transition-colors"
                             >
-                              à¸¢à¸à¹€à¸¥à¸´à¸
+                              ยกเลิก
                             </button>
                           </div>
                         </div>
@@ -9096,7 +9108,7 @@ function ProjectDashboard({
                   {/* Status Dropdown */}
                   <div className="bg-white p-4 md:p-5 rounded-xl border border-gray-200 shadow-sm relative">
                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <Activity className="w-4 h-4" /> à¸ªà¸–à¸²à¸™à¸°à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ
+                      <Activity className="w-4 h-4" /> สถานะโปรเจกต์
                     </h3>
                     <div 
                       onClick={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}
@@ -9127,7 +9139,7 @@ function ProjectDashboard({
                       </div>
                     )}
                     <p className="text-[11px] text-gray-400 mt-3 flex items-center justify-between">
-                      <span>à¸„à¸¥à¸´à¸à¹€à¸žà¸·à¹ˆà¸­à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¸ªà¸–à¸²à¸™à¸°</span>
+                      <span>คลิกเพื่อเปลี่ยนสถานะ</span>
                     </p>
                   </div>
 
@@ -9146,7 +9158,7 @@ function ProjectDashboard({
                       className="relative h-10 w-10 md:h-auto md:w-auto flex items-center justify-center md:justify-start gap-2 bg-white border border-gray-300 hover:bg-gray-50 px-0 md:px-4 md:py-2 rounded-lg text-sm font-medium text-gray-700 transition-colors shadow-sm shrink-0 [&>span:first-of-type]:hidden md:[&>span:first-of-type]:inline"
                     >
                       <Filter className="w-4 h-4 text-gray-500" />
-                      <span>à¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œ</span>
+                      <span>ฟิลเตอร์</span>
                       {isTaskFilterActive && (
                         <span className="absolute top-1.5 right-1.5 md:static md:ml-1 w-2 h-2 rounded-full bg-blue-500"></span>
                       )}
@@ -9156,13 +9168,13 @@ function ProjectDashboard({
                     {showFilterPopup && (
                       <div className="absolute top-full left-0 mt-2 w-[min(18rem,calc(100vw-2.5rem))] md:w-72 bg-white border border-gray-200 shadow-xl rounded-xl p-4 z-20">
                         <div className="flex justify-between items-center mb-4">
-                          <h4 className="font-semibold text-gray-800">à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸²à¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œ</h4>
+                          <h4 className="font-semibold text-gray-800">ตั้งค่าฟิลเตอร์</h4>
                           <button onClick={() => setShowFilterPopup(false)} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
                         </div>
                         <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
                           {/* Status Filter */}
                           <div>
-                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">à¸ªà¸–à¸²à¸™à¸° (Status)</label>
+                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">สถานะ (Status)</label>
                             <div className="space-y-1">
                               {TASK_STATUSES.map(s => (
                                 <label key={s} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 p-1.5 rounded-md transition-colors">
@@ -9185,7 +9197,7 @@ function ProjectDashboard({
                           
                           {/* Department Filter */}
                           <div>
-                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">à¸à¹ˆà¸²à¸¢ (Department)</label>
+                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">ฝ่าย (Department)</label>
                             <div className="space-y-1">
                               {DEPARTMENTS.map(d => (
                                 <label key={d} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 p-1.5 rounded-md transition-colors">
@@ -9249,7 +9261,7 @@ function ProjectDashboard({
                               className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                               disabled={!isTaskFilterActive}
                             >
-                              à¸¥à¹‰à¸²à¸‡à¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œà¸—à¸±à¹‰à¸‡à¸«à¸¡à¸”
+                              ล้างฟิลเตอร์ทั้งหมด
                             </button>
                           </div>
                         </div>
@@ -9278,7 +9290,7 @@ function ProjectDashboard({
                       onClick={openAddTask}
                       className="h-10 w-10 md:h-auto md:w-auto bg-blue-600 hover:bg-blue-700 text-white px-0 md:px-4 md:py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors shadow-sm whitespace-nowrap shrink-0"
                     >
-                      <Plus className="w-4 h-4" /> <span className="hidden md:inline">à¹€à¸žà¸´à¹ˆà¸¡ Task</span>
+                      <Plus className="w-4 h-4" /> <span className="hidden md:inline">เพิ่ม Task</span>
                     </button>
                   </div>
                 </div>
@@ -9287,8 +9299,8 @@ function ProjectDashboard({
                 {filteredTasks.length === 0 ? (
                   <div className="text-center py-16 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50/50">
                     <CheckSquare className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                    <p className="font-medium text-lg">à¹„à¸¡à¹ˆà¸¡à¸µà¸‡à¸²à¸™à¸—à¸µà¹ˆà¸•à¸£à¸‡à¸à¸±à¸šà¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œà¸—à¸µà¹ˆà¹€à¸¥à¸·à¸­à¸</p>
-                    <p className="text-sm mt-1">à¸¥à¸­à¸‡à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸²à¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œà¸«à¸£à¸·à¸­à¹€à¸žà¸´à¹ˆà¸¡à¸‡à¸²à¸™à¹ƒà¸«à¸¡à¹ˆà¸šà¸™à¸›à¸à¸´à¸—à¸´à¸™</p>
+                    <p className="font-medium text-lg">ไม่มีงานที่ตรงกับฟิลเตอร์ที่เลือก</p>
+                    <p className="text-sm mt-1">ลองเปลี่ยนการตั้งค่าฟิลเตอร์หรือเพิ่มงานใหม่บนปฏิทิน</p>
                   </div>
                 ) : (
                   <>
@@ -9299,11 +9311,11 @@ function ProjectDashboard({
                           <table className="w-full min-w-[720px] text-left text-sm whitespace-nowrap">
                             <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
                               <tr>
-                                <th className="px-5 py-4 font-medium">à¸Šà¸·à¹ˆà¸­à¸‡à¸²à¸™ (Task)</th>
-                                <th className="px-5 py-4 font-medium">à¸œà¸¹à¹‰à¸£à¸±à¸šà¸œà¸´à¸”à¸Šà¸­à¸š (Assignee)</th>
-                                <th className="px-5 py-4 font-medium">à¸à¹ˆà¸²à¸¢ (Department)</th>
-                                <th className="px-5 py-4 font-medium">à¸à¸³à¸«à¸™à¸”à¸ªà¹ˆà¸‡ (Due Date)</th>
-                                <th className="px-5 py-4 font-medium w-40">à¸ªà¸–à¸²à¸™à¸° (Status)</th>
+                                <th className="px-5 py-4 font-medium">ชื่องาน (Task)</th>
+                                <th className="px-5 py-4 font-medium">ผู้รับผิดชอบ (Assignee)</th>
+                                <th className="px-5 py-4 font-medium">ฝ่าย (Department)</th>
+                                <th className="px-5 py-4 font-medium">กำหนดส่ง (Due Date)</th>
+                                <th className="px-5 py-4 font-medium w-40">สถานะ (Status)</th>
                               </tr>
                             </thead>
 	                            <tbody className="divide-y divide-gray-100">
@@ -9816,7 +9828,7 @@ function ProjectDashboard({
                             <div key={item.id} className="rounded-md border border-gray-200 bg-white px-2.5 py-2">
                               <p className="text-sm text-gray-700">{item.message}</p>
                               <p className="text-[11px] text-gray-400 mt-0.5">
-                                {item.createdBy || 'unknown'} â€¢ {new Date(item.createdAt).toLocaleString()}
+                                {item.createdBy || 'unknown'} • {new Date(item.createdAt).toLocaleString()}
                               </p>
                             </div>
                           ))}
@@ -10053,8 +10065,8 @@ function ProjectDashboard({
                       ) : (
                         <div className="h-full flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl text-gray-400 bg-gray-50/50">
                            <FileText className="w-12 h-12 mb-3 text-gray-300" />
-                           <p className="font-medium text-lg text-gray-500">à¸à¸£à¸¸à¸“à¸²à¹€à¸¥à¸·à¸­à¸à¸£à¸²à¸¢à¸à¸²à¸£à¸—à¸²à¸‡à¸‹à¹‰à¸²à¸¢à¸¡à¸·à¸­</p>
-                           <p className="text-sm mt-1">à¹€à¸žà¸·à¹ˆà¸­à¹€à¸›à¸´à¸”à¸”à¸¹à¸«à¸£à¸·à¸­à¹à¸à¹‰à¹„à¸‚à¸šà¸±à¸™à¸—à¸¶à¸ (Notes)</p>
+                           <p className="font-medium text-lg text-gray-500">กรุณาเลือกรายการทางซ้ายมือ</p>
+                           <p className="text-sm mt-1">เพื่อเปิดดูหรือแก้ไขบันทึก (Notes)</p>
                         </div>
                       )}
                     </div>
@@ -10807,25 +10819,25 @@ function TaskDetailPane({
                 <CheckCircle className="w-4 h-4" /> {task.status === 'Done' ? 'Completed' : 'Mark Complete'}
               </button>
             )}
-            {isEditing && <span className="font-bold text-gray-700">{task ? 'à¹à¸à¹‰à¹„à¸‚ Task' : 'à¸ªà¸£à¹‰à¸²à¸‡ Task à¹ƒà¸«à¸¡à¹ˆ'}</span>}
+            {isEditing && <span className="font-bold text-gray-700">{task ? 'แก้ไข Task' : 'สร้าง Task ใหม่'}</span>}
           </div>
           <div className="flex items-center gap-2">
             {!isEditing && (
               <>
-                <button onClick={() => setIsEditing(true)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="à¹à¸à¹‰à¹„à¸‚">
+                <button onClick={() => setIsEditing(true)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="แก้ไข">
                   <Edit2 className="w-4 h-4" />
                 </button>
                 <button 
                   onClick={async () => {
                     const shouldDelete = await popup.confirm({
                       title: 'Delete task',
-                      message: 'à¸„à¸¸à¸“à¹à¸™à¹ˆà¹ƒà¸ˆà¸«à¸£à¸·à¸­à¹„à¸¡à¹ˆà¸—à¸µà¹ˆà¸ˆà¸°à¸¥à¸š Task à¸™à¸µà¹‰?',
+                      message: 'คุณแน่ใจหรือไม่ที่จะลบ Task นี้?',
                       confirmText: 'Delete',
                       tone: 'danger',
                     });
                     if (shouldDelete) onDelete(task.id);
                   }} 
-                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="à¸¥à¸š"
+                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="ลบ"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -10855,7 +10867,7 @@ function TaskDetailPane({
               </div>
 
               <div className="grid grid-cols-[120px_1fr] items-center gap-y-5 gap-x-2 text-sm">
-                <div className="text-gray-500 flex items-center gap-2"><Users className="w-4 h-4" /> à¸œà¸¹à¹‰à¸£à¸±à¸šà¸œà¸´à¸”à¸Šà¸­à¸š</div>
+                <div className="text-gray-500 flex items-center gap-2"><Users className="w-4 h-4" /> ผู้รับผิดชอบ</div>
                 <div className="space-y-2">
                   <button
                     type="button"
@@ -10957,20 +10969,20 @@ function TaskDetailPane({
                   )}
                 </div>
 
-                <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> à¸§à¸±à¸™à¸—à¸µà¹ˆà¸ªà¸´à¹‰à¸™à¸ªà¸¸à¸”</div>
+                <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> วันที่สิ้นสุด</div>
                 <div className="flex items-center gap-2">
                   <input type="date" value={endDate} min={hasStartDate ? startDate : ''} onChange={e => setEndDate(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1" />
                   <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 w-28" />
                 </div>
 
-                <div className="text-gray-500 flex items-center gap-2"><Activity className="w-4 h-4" /> à¸ªà¸–à¸²à¸™à¸°</div>
+                <div className="text-gray-500 flex items-center gap-2"><Activity className="w-4 h-4" /> สถานะ</div>
                 <div>
                   <select value={status} onChange={e => setStatus(e.target.value)} className="w-full border-gray-300 rounded-lg p-2 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 border">
                     {TASK_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
 
-                <div className="text-gray-500 flex items-center gap-2"><Layers className="w-4 h-4" /> à¸à¹ˆà¸²à¸¢</div>
+                <div className="text-gray-500 flex items-center gap-2"><Layers className="w-4 h-4" /> ฝ่าย</div>
                 <div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {relatedDepartments.length > 0 ? (
@@ -10994,9 +11006,9 @@ function TaskDetailPane({
               </div>
 
               <div className="mt-2 border-t pt-5 border-gray-100">
-                <div className="text-gray-500 flex items-center gap-2 mb-3 text-sm"><AlignLeft className="w-4 h-4" /> à¸„à¸³à¸­à¸˜à¸´à¸šà¸²à¸¢ (Description)</div>
+                <div className="text-gray-500 flex items-center gap-2 mb-3 text-sm"><AlignLeft className="w-4 h-4" /> คำอธิบาย (Description)</div>
                 <textarea 
-                  placeholder="à¹€à¸žà¸´à¹ˆà¸¡à¸„à¸³à¸­à¸˜à¸´à¸šà¸²à¸¢à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸‡à¸²à¸™..."
+                  placeholder="เพิ่มคำอธิบายรายละเอียดงาน..."
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   className="w-full border-gray-300 border rounded-lg p-3 bg-gray-50 min-h-[150px] outline-none focus:ring-2 focus:ring-blue-500 resize-y text-sm"
@@ -11011,7 +11023,7 @@ function TaskDetailPane({
               </div>
 
               <div className="grid grid-cols-[130px_1fr] items-center gap-y-6 text-sm">
-                <div className="text-gray-500">à¸œà¸¹à¹‰à¸£à¸±à¸šà¸œà¸´à¸”à¸Šà¸­à¸š</div>
+                <div className="text-gray-500">ผู้รับผิดชอบ</div>
                                 <div className="flex flex-wrap items-center gap-2.5">
 	                  {currentAssignees.map((assignee, index) => (
 	                    <div
@@ -11029,7 +11041,7 @@ function TaskDetailPane({
 	                  ))}
                 </div>
 
-                <div className="text-gray-500">à¸§à¸±à¸™à¸—à¸µà¹ˆà¹€à¸£à¸´à¹ˆà¸¡à¸•à¹‰à¸™</div>
+                <div className="text-gray-500">วันที่เริ่มต้น</div>
                 <div className="text-gray-800 font-medium flex items-center gap-2">
                   {hasStartDate ? startDate : 'No start date'}
                   {hasStartTime && startTime ? (
@@ -11037,7 +11049,7 @@ function TaskDetailPane({
                   ) : null}
                 </div>
 
-                <div className="text-gray-500">à¸à¸³à¸«à¸™à¸”à¸ªà¹ˆà¸‡</div>
+                <div className="text-gray-500">กำหนดส่ง</div>
                 <div className="text-gray-800 font-medium flex items-center gap-2">
                   {endDate}
                   {endTime ? (
@@ -11045,7 +11057,7 @@ function TaskDetailPane({
                   ) : null}
                 </div>
 
-                <div className="text-gray-500">à¸ªà¸–à¸²à¸™à¸°</div>
+                <div className="text-gray-500">สถานะ</div>
                 <div>
                   <span className={`px-3 py-1 rounded-full text-xs font-bold border 
                     ${status === 'Done' ? 'bg-green-50 text-green-700 border-green-200' : 
@@ -11057,7 +11069,7 @@ function TaskDetailPane({
                   </span>
                 </div>
 
-                <div className="text-gray-500">à¸à¹ˆà¸²à¸¢ (Department)</div>
+                <div className="text-gray-500">ฝ่าย (Department)</div>
                 <div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {relatedDepartments.map((departmentName) => (
@@ -11074,13 +11086,13 @@ function TaskDetailPane({
               </div>
 
               <div className="mt-4 border-t pt-6 border-gray-100">
-                <h4 className="text-sm font-semibold text-gray-800 mb-3">à¸„à¸³à¸­à¸˜à¸´à¸šà¸²à¸¢</h4>
+                <h4 className="text-sm font-semibold text-gray-800 mb-3">คำอธิบาย</h4>
                 {description ? (
                   <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100">
                     {description}
                   </p>
                 ) : (
-                  <p className="text-sm text-gray-400 italic">à¹„à¸¡à¹ˆà¸¡à¸µà¸„à¸³à¸­à¸˜à¸´à¸šà¸²à¸¢à¹€à¸žà¸´à¹ˆà¸¡à¹€à¸•à¸´à¸¡</p>
+                  <p className="text-sm text-gray-400 italic">ไม่มีคำอธิบายเพิ่มเติม</p>
                 )}
               </div>
             </div>
@@ -11181,7 +11193,7 @@ function TaskDetailPane({
                 onClick={() => setIsEditing(false)}
                 className="text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-lg font-medium transition-colors"
               >
-                à¸¢à¸à¹€à¸¥à¸´à¸
+                ยกเลิก
               </button>
             )}
             {!task && (
@@ -11190,7 +11202,7 @@ function TaskDetailPane({
                 onClick={onClose}
                 className="text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-lg font-medium transition-colors"
               >
-                à¸›à¸´à¸”
+                ปิด
               </button>
             )}
             <button 
@@ -11198,7 +11210,7 @@ function TaskDetailPane({
               form="task-form"
               className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors shadow-sm"
             >
-              à¸šà¸±à¸™à¸—à¸¶à¸
+              บันทึก
             </button>
           </div>
         )}
@@ -11276,6 +11288,12 @@ function NoteEditor({
     line: 1,
     cursorXRatio: null,
     cursorYRatio: null,
+  });
+  const lastDocCaretInsertPositionRef = React.useRef({
+    pageId: '',
+    x: null,
+    y: null,
+    at: 0,
   });
   const docTableSelectionRangeRef = React.useRef(null);
   const docTableRangeDragRef = React.useRef({
@@ -11400,8 +11418,8 @@ function NoteEditor({
     const knownPrefixes = [
       NOTE_TITLE_DEPARTMENT_PREFIX_TH,
       NOTE_TITLE_OWNER_PREFIX_TH,
-      'à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¸­à¸‡à¸à¹ˆà¸²à¸¢',
-      'à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¸­à¸‡',
+      'บันทึกของฝ่าย',
+      'บันทึกของ',
     ];
     for (const prefix of knownPrefixes) {
       if (!prefix || !rawTitle.startsWith(prefix)) continue;
@@ -11630,6 +11648,11 @@ function NoteEditor({
     if (!imageId || !editorRef.current) return null;
     return editorRef.current.querySelector(`img[data-note-image-id="${imageId}"]`);
   };
+  const getImageLayoutFromNode = (imageNode, fallback = NOTE_IMAGE_LAYOUT_INLINE) =>
+    normalizeNoteImageLayout(imageNode?.dataset?.layout, fallback);
+  const isImageNodeFreeLayout = (imageNode) =>
+    getImageLayoutFromNode(imageNode, NOTE_IMAGE_LAYOUT_INLINE) === NOTE_IMAGE_LAYOUT_FREE;
+  const isImageIdFreeLayout = (imageId) => isImageNodeFreeLayout(getImageById(imageId));
   const setSelectedImageVisual = (imageId = '') => {
     if (!editorRef.current) return;
     const images = editorRef.current.querySelectorAll('img[data-note-image-id]');
@@ -11734,6 +11757,11 @@ function NoteEditor({
 
   const applyImageLayout = (imgElement, layout) => {
     if (!imgElement) return;
+    const normalizedLayout = normalizeNoteImageLayout(
+      layout || imgElement.dataset.layout,
+      NOTE_IMAGE_LAYOUT_INLINE
+    );
+    const isFreeLayout = normalizedLayout === NOTE_IMAGE_LAYOUT_FREE;
     const parsedX = Number.parseFloat(String(imgElement.dataset.posX || '24'));
     const parsedY = Number.parseFloat(String(imgElement.dataset.posY || '24'));
     const safeX = Number.isFinite(parsedX) ? parsedX : 24;
@@ -11742,37 +11770,47 @@ function NoteEditor({
     const naturalWidth = Number(imgElement.naturalWidth || 0);
     const naturalHeight = Number(imgElement.naturalHeight || 0);
     const aspectRatio = naturalWidth > 0 && naturalHeight > 0 ? naturalWidth / naturalHeight : 0;
-    const linkedUrl = String(imgElement.dataset.linkUrl || '').trim();
-    imgElement.dataset.layout = layout || 'free';
-    imgElement.dataset.posX = String(Math.max(0, safeX));
-    imgElement.dataset.posY = String(Math.max(0, safeY));
-    imgElement.style.maxWidth = 'unset';
-    imgElement.style.maxHeight = 'unset';
-    imgElement.style.borderRadius = '10px';
-    imgElement.style.cursor = 'grab';
-    imgElement.style.position = 'absolute';
-    imgElement.style.left = `${Math.max(0, safeX)}px`;
-    imgElement.style.top = `${Math.max(0, safeY)}px`;
-    imgElement.style.zIndex = '20';
+    imgElement.dataset.layout = normalizedLayout;
+    if (!imgElement.dataset.posX) {
+      imgElement.dataset.posX = String(Math.max(0, safeX));
+    }
+    if (!imgElement.dataset.posY) {
+      imgElement.dataset.posY = String(Math.max(0, safeY));
+    }
+    if (isFreeLayout) {
+      imgElement.dataset.posX = String(Math.max(0, safeX));
+      imgElement.dataset.posY = String(Math.max(0, safeY));
+    }
+    imgElement.style.maxWidth = isFreeLayout ? 'unset' : '100%';
+    imgElement.style.maxHeight = isFreeLayout ? 'unset' : 'none';
+    imgElement.style.borderRadius = '0';
+    imgElement.style.cursor = isFreeLayout ? 'grab' : 'default';
+    imgElement.style.position = isFreeLayout ? 'absolute' : 'static';
+    imgElement.style.left = isFreeLayout ? `${Math.max(0, safeX)}px` : '';
+    imgElement.style.top = isFreeLayout ? `${Math.max(0, safeY)}px` : '';
+    imgElement.style.zIndex = isFreeLayout ? '20' : 'auto';
     imgElement.style.float = 'none';
-    imgElement.style.margin = '0';
-    imgElement.style.touchAction = 'manipulation';
+    imgElement.style.margin = isFreeLayout ? '0' : '0.5rem 0';
+    imgElement.style.touchAction = isFreeLayout ? 'manipulation' : 'auto';
     imgElement.style.resize = 'none';
     imgElement.style.overflow = 'visible';
     imgElement.style.minWidth = '40px';
     imgElement.style.minHeight = '40px';
-    imgElement.style.userSelect = 'none';
+    imgElement.style.userSelect = isFreeLayout ? 'none' : 'auto';
     imgElement.style.pointerEvents = 'auto';
     imgElement.contentEditable = 'false';
-    imgElement.style.display = 'block';
-    imgElement.style.width = imgElement.style.width || '420px';
+    imgElement.style.display = isFreeLayout ? 'block' : 'inline-block';
+    imgElement.style.verticalAlign = isFreeLayout ? '' : 'middle';
+    imgElement.style.width = imgElement.style.width || `${NOTE_IMAGE_DEFAULT_INSERT_WIDTH}px`;
     if (cropMode) {
-      imgElement.style.height = imgElement.style.height || '260px';
+      imgElement.style.height = imgElement.style.height || `${NOTE_IMAGE_DEFAULT_CROP_HEIGHT}px`;
     } else if (aspectRatio > 0) {
       const widthPx = Math.max(
         40,
         Math.round(
-          Number.parseFloat(String(imgElement.style.width || '420')) || imgElement.getBoundingClientRect().width || 420
+          Number.parseFloat(String(imgElement.style.width || `${NOTE_IMAGE_DEFAULT_INSERT_WIDTH}`)) ||
+            imgElement.getBoundingClientRect().width ||
+            NOTE_IMAGE_DEFAULT_INSERT_WIDTH
         )
       );
       const nextHeight = Math.max(40, Math.round(widthPx / aspectRatio));
@@ -11792,15 +11830,11 @@ function NoteEditor({
       imgElement.dataset.cropTop = String(cropRect.top);
       imgElement.dataset.cropWidth = String(cropRect.width);
       imgElement.dataset.cropHeight = String(cropRect.height);
-      imgElement.style.clipPath = `inset(${cropRect.top}px ${cropRight}px ${cropBottom}px ${cropRect.left}px round 10px)`;
+      imgElement.style.clipPath = `inset(${cropRect.top}px ${cropRight}px ${cropBottom}px ${cropRect.left}px)`;
     } else {
       imgElement.style.clipPath = 'none';
     }
-    if (linkedUrl) {
-      imgElement.style.boxShadow = '0 8px 20px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(37, 99, 235, 0.2)';
-    } else {
-      imgElement.style.boxShadow = '0 8px 20px rgba(15, 23, 42, 0.18)';
-    }
+    imgElement.style.boxShadow = 'none';
   };
 
   const normalizeColorHexValue = (value, fallback = '#000000') => {
@@ -12522,38 +12556,49 @@ function NoteEditor({
       if (!imgElement.dataset.noteImageId) {
         imgElement.dataset.noteImageId = `img-${generateId()}`;
       }
+      const imageLayout = getImageLayoutFromNode(imgElement, NOTE_IMAGE_LAYOUT_INLINE);
+      imgElement.dataset.layout = imageLayout;
       const parsedPosX = Number.parseFloat(String(imgElement.dataset.posX || ''));
       const parsedPosY = Number.parseFloat(String(imgElement.dataset.posY || ''));
       const hasStoredPosition = Number.isFinite(parsedPosX) && Number.isFinite(parsedPosY);
       const inferredPosition = inferredImagePositions.get(imgElement);
       const inferredHeight = Math.max(40, Number(inferredPosition?.height || 260));
-      if (!hasStoredPosition) {
-        if (inferredPosition?.canUse) {
-          const nextPosX = Math.max(0, Number(inferredPosition.x) || 0);
-          const nextPosY = Math.max(0, Number(inferredPosition.y) || 0);
-          imgElement.dataset.posX = String(Math.round(nextPosX));
-          imgElement.dataset.posY = String(Math.round(nextPosY));
-          nextAutoY = Math.max(nextAutoY, nextPosY + inferredHeight + 14);
+      if (imageLayout === NOTE_IMAGE_LAYOUT_FREE) {
+        if (!hasStoredPosition) {
+          if (inferredPosition?.canUse) {
+            const nextPosX = Math.max(0, Number(inferredPosition.x) || 0);
+            const nextPosY = Math.max(0, Number(inferredPosition.y) || 0);
+            imgElement.dataset.posX = String(Math.round(nextPosX));
+            imgElement.dataset.posY = String(Math.round(nextPosY));
+            nextAutoY = Math.max(nextAutoY, nextPosY + inferredHeight + 14);
+          } else {
+            const nextPosY = Math.max(24, nextAutoY);
+            imgElement.dataset.posX = '24';
+            imgElement.dataset.posY = String(Math.round(nextPosY));
+            nextAutoY = nextPosY + inferredHeight + 14;
+          }
         } else {
-          const nextPosY = Math.max(24, nextAutoY);
-          imgElement.dataset.posX = '24';
-          imgElement.dataset.posY = String(Math.round(nextPosY));
-          nextAutoY = nextPosY + inferredHeight + 14;
+          const storedHeight = Math.max(
+            40,
+            Number(
+              imgElement.getBoundingClientRect().height ||
+                imgElement.offsetHeight ||
+                Number.parseFloat(String(imgElement.style.height || '0')) ||
+                inferredHeight
+            ) || inferredHeight
+          );
+          nextAutoY = Math.max(nextAutoY, parsedPosY + storedHeight + 14);
         }
       } else {
-        const storedHeight = Math.max(
-          40,
-          Number(
-            imgElement.getBoundingClientRect().height ||
-              imgElement.offsetHeight ||
-              Number.parseFloat(String(imgElement.style.height || '0')) ||
-              inferredHeight
-          ) || inferredHeight
-        );
-        nextAutoY = Math.max(nextAutoY, parsedPosY + storedHeight + 14);
+        if (!Number.isFinite(parsedPosX)) {
+          imgElement.dataset.posX = '24';
+        }
+        if (!Number.isFinite(parsedPosY)) {
+          imgElement.dataset.posY = '24';
+        }
       }
-      imgElement.setAttribute('draggable', 'true');
-      applyImageLayout(imgElement, imgElement.dataset.layout || 'free');
+      imgElement.setAttribute('draggable', imageLayout === NOTE_IMAGE_LAYOUT_FREE ? 'true' : 'false');
+      applyImageLayout(imgElement, imageLayout);
     });
     const links = editorRef.current.querySelectorAll('a[href]');
     links.forEach((linkNode) => {
@@ -12816,9 +12861,23 @@ function NoteEditor({
     selection.addRange(range);
   };
 
-  const handleInput = () => {
+  const hasPendingDocContentNormalization = () => {
+    if (!editorRef.current) return false;
+    const editor = editorRef.current;
+    return Boolean(
+      editor.querySelector('img:not([data-note-image-id])') ||
+        editor.querySelector('a[href]:not([data-note-link-id])') ||
+        editor.querySelector('table[data-note-inline-table="true"]:not([data-note-table-id])')
+    );
+  };
+
+  const handleInput = (optionsInput = null) => {
     if (!isActiveDocPage) return;
-    normalizeEditorImages();
+    const options = optionsInput && typeof optionsInput === 'object' ? optionsInput : {};
+    const forceNormalizeImages = Boolean(options.forceNormalizeImages);
+    if (forceNormalizeImages || hasPendingDocContentNormalization()) {
+      normalizeEditorImages();
+    }
     if (editorRef.current) {
       const nextContent = getSanitizedDocEditorHtml();
       updateActivePage((page) => ({
@@ -12841,10 +12900,12 @@ function NoteEditor({
     const imageId = String(imgElement.dataset.noteImageId || '').trim();
     const linkedUrl = String(imgElement.dataset.linkUrl || '').trim();
     const cropModeOn = String(imgElement.dataset.cropMode || 'off') === 'on';
+    const imageLayout = getImageLayoutFromNode(imgElement, NOTE_IMAGE_LAYOUT_INLINE);
     setImageMenuState({
       imageId,
       linkedUrl,
       isLinked: Boolean(linkedUrl),
+      imageLayout,
       x: Math.min(Math.max(8, rawX), maxX),
       y: Math.max(8, rawY),
     });
@@ -12868,6 +12929,118 @@ function NoteEditor({
       }
     }
     return null;
+  };
+  const getCollapsedDocCaretRect = (rangeInput) => {
+    const range = rangeInput ? rangeInput.cloneRange() : null;
+    if (!range) return null;
+    range.collapse(true);
+    try {
+      const marker = document.createElement('span');
+      marker.setAttribute('data-note-caret-measure', 'true');
+      marker.textContent = '\u200b';
+      marker.style.display = 'inline-block';
+      marker.style.width = '0';
+      marker.style.height = '1em';
+      marker.style.overflow = 'hidden';
+      marker.style.pointerEvents = 'none';
+      range.insertNode(marker);
+      const markerRect = marker.getBoundingClientRect();
+      const markerParent = marker.parentNode;
+      if (markerParent) {
+        markerParent.removeChild(marker);
+      }
+      if (
+        Number.isFinite(Number(markerRect?.left)) &&
+        Number.isFinite(Number(markerRect?.top)) &&
+        Number.isFinite(Number(markerRect?.bottom))
+      ) {
+        return markerRect;
+      }
+    } catch {
+      // Fallback below.
+    }
+    const fallbackRect =
+      (range.getClientRects && range.getClientRects().length > 0
+        ? range.getClientRects()[0]
+        : null) || range.getBoundingClientRect();
+    if (
+      Number.isFinite(Number(fallbackRect?.left)) &&
+      Number.isFinite(Number(fallbackRect?.top)) &&
+      Number.isFinite(Number(fallbackRect?.bottom))
+    ) {
+      return fallbackRect;
+    }
+    return null;
+  };
+  const getDocImageInsertPositionFromSelection = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount <= 0) return null;
+    const range = selection.getRangeAt(0).cloneRange();
+    if (!editor.contains(range.startContainer)) return null;
+    const editorRect = editor.getBoundingClientRect();
+    const rangeRect = getCollapsedDocCaretRect(range);
+    if (!rangeRect) return null;
+    const rawX = Number(rangeRect.left);
+    const rawY = Number(rangeRect.bottom || rangeRect.top);
+    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return null;
+    const posX = rawX - editorRect.left + editor.scrollLeft;
+    const posY = rawY - editorRect.top + editor.scrollTop + 8;
+    if (!Number.isFinite(posX) || !Number.isFinite(posY)) return null;
+    return {
+      x: Math.max(0, posX),
+      y: Math.max(0, posY),
+    };
+  };
+  const cacheCurrentDocImageInsertPosition = () => {
+    const activePageId = String(activePage?.id || '').trim();
+    if (!activePageId || activePage?.type === 'sheet') return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount <= 0) return;
+    const range = selection.getRangeAt(0);
+    if (!range.collapsed) return;
+    const currentPosition = getDocImageInsertPositionFromSelection();
+    if (!currentPosition) return;
+    lastDocCaretInsertPositionRef.current = {
+      pageId: activePageId,
+      x: Number(currentPosition.x),
+      y: Number(currentPosition.y),
+      at: Date.now(),
+    };
+  };
+  const getDocImageInsertPositionWithFallback = () => {
+    const fromSelection = getDocImageInsertPositionFromSelection();
+    const activePageId = String(activePage?.id || '').trim();
+    const fallback = lastDocCaretInsertPositionRef.current;
+    const hasMatchingFallback =
+      fallback &&
+      String(fallback.pageId || '').trim() === activePageId &&
+      Number.isFinite(Number(fallback.x)) &&
+      Number.isFinite(Number(fallback.y)) &&
+      Number.isFinite(Number(fallback.at));
+    const fallbackFresh = hasMatchingFallback && Date.now() - Number(fallback.at) <= 8000;
+    if (!fromSelection && fallbackFresh) {
+      return {
+        x: Math.max(0, Number(fallback.x)),
+        y: Math.max(0, Number(fallback.y)),
+      };
+    }
+    if (fromSelection && fallbackFresh) {
+      const selectedY = Number(fromSelection.y);
+      const fallbackY = Number(fallback.y);
+      const isSuspiciousTopLeft =
+        Number.isFinite(selectedY) &&
+        selectedY <= 56 &&
+        Number.isFinite(fallbackY) &&
+        fallbackY - selectedY >= 120;
+      if (isSuspiciousTopLeft) {
+        return {
+          x: Math.max(0, Number(fallback.x)),
+          y: Math.max(0, fallbackY),
+        };
+      }
+    }
+    return fromSelection;
   };
 
   const placeImageAtPoint = (imageId, clientX, clientY) => {
@@ -13002,21 +13175,36 @@ function NoteEditor({
       }
     });
     imageNode.dataset.cropMode = 'off';
-    applyImageLayout(imageNode, String(data.layout || imageNode.dataset.layout || 'free').trim() || 'free');
+    applyImageLayout(
+      imageNode,
+      normalizeNoteImageLayout(
+        String(data.layout || imageNode.dataset.layout || NOTE_IMAGE_LAYOUT_INLINE).trim(),
+        NOTE_IMAGE_LAYOUT_INLINE
+      )
+    );
   };
   const insertImageAtCursor = (imageSrc, payloadInput = null, optionsInput = null) => {
     if (!editorRef.current || !imageSrc) return;
     const options = optionsInput && typeof optionsInput === 'object' ? optionsInput : {};
+    const preferredLayout = normalizeNoteImageLayout(options.layout, NOTE_IMAGE_LAYOUT_INLINE);
     const positionOverride =
       options.position && typeof options.position === 'object' ? options.position : null;
+    const suppressInput = Boolean(options.suppressInput);
+    const suppressMenu = Boolean(options.suppressMenu);
     const editor = editorRef.current;
-    editor.focus();
+    if (!positionOverride) {
+      try {
+        editor.focus({ preventScroll: true });
+      } catch {
+        editor.focus();
+      }
+    }
 
     const imageNode = document.createElement('img');
     imageNode.src = imageSrc;
     imageNode.alt = 'uploaded-note-image';
     imageNode.dataset.noteImageId = `img-${generateId()}`;
-    imageNode.setAttribute('draggable', 'true');
+    imageNode.setAttribute('draggable', preferredLayout === NOTE_IMAGE_LAYOUT_FREE ? 'true' : 'false');
     const selection = window.getSelection();
     let initialX = 24;
     let initialY = 24;
@@ -13041,55 +13229,116 @@ function NoteEditor({
     }
     imageNode.dataset.posX = String(Math.max(0, initialX));
     imageNode.dataset.posY = String(Math.max(0, initialY));
-    applyImageLayout(imageNode, 'free');
+    applyImageLayout(imageNode, preferredLayout);
     if (payloadInput && typeof payloadInput === 'object') {
       applyImageClipboardPayload(imageNode, payloadInput);
     }
-    editor.appendChild(imageNode);
+    const finalLayout = getImageLayoutFromNode(imageNode, preferredLayout);
+    imageNode.setAttribute('draggable', finalLayout === NOTE_IMAGE_LAYOUT_FREE ? 'true' : 'false');
+    let insertedAtSelection = false;
+    if (
+      finalLayout !== NOTE_IMAGE_LAYOUT_FREE &&
+      selection &&
+      selection.rangeCount > 0 &&
+      editor.contains(selection.anchorNode)
+    ) {
+      const insertRange = selection.getRangeAt(0);
+      if (editor.contains(insertRange.startContainer)) {
+        insertRange.deleteContents();
+        insertRange.insertNode(imageNode);
+        const spacerNode = document.createTextNode('\u00a0');
+        if (imageNode.parentNode) {
+          if (imageNode.nextSibling) {
+            imageNode.parentNode.insertBefore(spacerNode, imageNode.nextSibling);
+          } else {
+            imageNode.parentNode.appendChild(spacerNode);
+          }
+          const nextRange = document.createRange();
+          nextRange.setStartAfter(spacerNode);
+          nextRange.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(nextRange);
+        }
+        insertedAtSelection = true;
+      }
+    }
+    if (!insertedAtSelection) {
+      editor.appendChild(imageNode);
+    }
 
-    openImageMenu(imageNode);
-    handleInput();
+    if (!suppressMenu) {
+      openImageMenu(imageNode);
+    }
+    if (!suppressInput) {
+      handleInput({ forceNormalizeImages: true });
+    }
     return imageNode;
   };
-  const insertImageSeriesAtCursor = (imageSourcesInput) => {
+  const insertImageSeriesAtCursor = (imageSourcesInput, optionsInput = null) => {
     const imageSources = Array.isArray(imageSourcesInput)
       ? imageSourcesInput
           .map((source) => String(source || '').trim())
           .filter((source) => Boolean(source))
       : [];
     if (imageSources.length <= 0) return;
+    const options = optionsInput && typeof optionsInput === 'object' ? optionsInput : {};
+    const openMenu = options.openMenu === true;
+    const seriesLayout = normalizeNoteImageLayout(options.layout, NOTE_IMAGE_LAYOUT_INLINE);
+    const startPosition =
+      options.startPosition && typeof options.startPosition === 'object'
+        ? {
+            x: Number(options.startPosition.x),
+            y: Number(options.startPosition.y),
+          }
+        : null;
     const verticalGap = 14;
     let lastInsertedImage = null;
-    imageSources.forEach((imageSrc) => {
+    imageSources.forEach((imageSrc, index) => {
       let positionOverride = null;
-      if (lastInsertedImage) {
-        const parsedX = Number.parseFloat(String(lastInsertedImage.dataset.posX || ''));
-        const parsedY = Number.parseFloat(String(lastInsertedImage.dataset.posY || ''));
-        const imageHeight = Math.max(
-          40,
-          Number(
-            lastInsertedImage.getBoundingClientRect().height ||
-              lastInsertedImage.offsetHeight ||
-              Number.parseFloat(String(lastInsertedImage.style.height || '0')) ||
-              260
-          ) || 260
-        );
-        if (Number.isFinite(parsedX) && Number.isFinite(parsedY)) {
+      if (seriesLayout === NOTE_IMAGE_LAYOUT_FREE) {
+        if (index === 0 && startPosition && Number.isFinite(startPosition.x) && Number.isFinite(startPosition.y)) {
           positionOverride = {
-            x: parsedX,
-            y: parsedY + imageHeight + verticalGap,
+            x: startPosition.x,
+            y: startPosition.y,
           };
+        } else if (lastInsertedImage) {
+          const parsedX = Number.parseFloat(String(lastInsertedImage.dataset.posX || ''));
+          const parsedY = Number.parseFloat(String(lastInsertedImage.dataset.posY || ''));
+          const imageHeight = Math.max(
+            40,
+            Number(
+              lastInsertedImage.getBoundingClientRect().height ||
+                lastInsertedImage.offsetHeight ||
+                Number.parseFloat(String(lastInsertedImage.style.height || '0')) ||
+                260
+            ) || 260
+          );
+          if (Number.isFinite(parsedX) && Number.isFinite(parsedY)) {
+            positionOverride = {
+              x: parsedX,
+              y: parsedY + imageHeight + verticalGap,
+            };
+          }
         }
       }
       const insertedImage = insertImageAtCursor(
         imageSrc,
         null,
-        positionOverride ? { position: positionOverride } : null
+        {
+          layout: seriesLayout,
+          position: positionOverride,
+          suppressInput: true,
+          suppressMenu: true,
+        }
       );
       if (insertedImage) {
         lastInsertedImage = insertedImage;
       }
     });
+    if (lastInsertedImage && openMenu) {
+      openImageMenu(lastInsertedImage);
+    }
+    handleInput({ forceNormalizeImages: true });
   };
 
   const handleUploadImage = (event) => {
@@ -13103,7 +13352,7 @@ function NoteEditor({
     reader.onload = () => {
       const resultSrc = typeof reader.result === 'string' ? reader.result : '';
       if (!resultSrc) return;
-      insertImageAtCursor(resultSrc);
+      insertImageAtCursor(resultSrc, null, { suppressMenu: true });
     };
     reader.readAsDataURL(file);
     event.target.value = '';
@@ -13192,7 +13441,7 @@ function NoteEditor({
     imageNode.style.height = `${committedHeight}px`;
     imageNode.style.clipPath = 'none';
     setImageCropModeId('');
-    applyImageLayout(imageNode, imageNode.dataset.layout || 'free');
+    applyImageLayout(imageNode, imageNode.dataset.layout || NOTE_IMAGE_LAYOUT_INLINE);
     syncEditorCanvasMetrics();
     refreshActiveImageFrame(imageId);
     if (reopenMenu) {
@@ -13254,7 +13503,7 @@ function NoteEditor({
       );
     }
     imageNode.dataset.cropMode = 'on';
-    applyImageLayout(imageNode, imageNode.dataset.layout || 'free');
+    applyImageLayout(imageNode, imageNode.dataset.layout || NOTE_IMAGE_LAYOUT_INLINE);
     setImageCropModeId(imageId);
     syncEditorCanvasMetrics();
     refreshActiveImageFrame(imageId);
@@ -13375,13 +13624,13 @@ function NoteEditor({
     if (!normalizedLink) {
       targetImage.dataset.linkUrl = '';
       targetImage.removeAttribute('data-link-url');
-      applyImageLayout(targetImage, targetImage.dataset.layout || 'free');
+      applyImageLayout(targetImage, targetImage.dataset.layout || NOTE_IMAGE_LAYOUT_INLINE);
       handleInput();
       openImageMenu(targetImage);
       return;
     }
     targetImage.dataset.linkUrl = normalizedLink;
-    applyImageLayout(targetImage, targetImage.dataset.layout || 'free');
+    applyImageLayout(targetImage, targetImage.dataset.layout || NOTE_IMAGE_LAYOUT_INLINE);
     handleInput();
     openImageMenu(targetImage);
   };
@@ -13391,6 +13640,35 @@ function NoteEditor({
     const linkUrl = String(targetImage.dataset.linkUrl || '').trim();
     if (!linkUrl) return;
     window.open(linkUrl, '_blank', 'noopener,noreferrer');
+  };
+  const handleToggleImageLayoutMode = () => {
+    const targetImage = getImageById(imageMenuState?.imageId);
+    const editor = editorRef.current;
+    if (!targetImage || !editor) return;
+    const targetImageId = String(targetImage.dataset.noteImageId || '').trim();
+    if (imageCropModeId && imageCropModeId === targetImageId) {
+      commitCropForImage(targetImage, { persist: true, reopenMenu: false });
+    }
+    const currentLayout = getImageLayoutFromNode(targetImage, NOTE_IMAGE_LAYOUT_INLINE);
+    const nextLayout =
+      currentLayout === NOTE_IMAGE_LAYOUT_FREE ? NOTE_IMAGE_LAYOUT_INLINE : NOTE_IMAGE_LAYOUT_FREE;
+    if (nextLayout === NOTE_IMAGE_LAYOUT_FREE) {
+      const editorRect = editor.getBoundingClientRect();
+      const imageRect = targetImage.getBoundingClientRect();
+      const nextX = imageRect.left - editorRect.left + Number(editor.scrollLeft || 0);
+      const nextY = imageRect.top - editorRect.top + Number(editor.scrollTop || 0);
+      targetImage.dataset.posX = String(Math.max(0, Math.round(nextX)));
+      targetImage.dataset.posY = String(Math.max(0, Math.round(nextY)));
+    }
+    targetImage.dataset.layout = nextLayout;
+    targetImage.setAttribute('draggable', nextLayout === NOTE_IMAGE_LAYOUT_FREE ? 'true' : 'false');
+    applyImageLayout(targetImage, nextLayout);
+    if (nextLayout !== NOTE_IMAGE_LAYOUT_FREE) {
+      docImagePointerDragRef.current = null;
+      dragImageIdRef.current = '';
+    }
+    handleInput({ forceNormalizeImages: true });
+    openImageMenu(targetImage);
   };
 
   const handleEditorClick = (event) => {
@@ -13538,6 +13816,7 @@ function NoteEditor({
         ? getImageById(explicitImageId)
         : event?.target?.closest?.('img[data-note-image-id]') || null;
     if (!imageNode || !editorRef.current?.contains(imageNode)) return;
+    if (!isImageNodeFreeLayout(imageNode)) return;
     const imageId = String(imageNode.dataset.noteImageId || explicitImageId || '').trim();
     if (!imageId) return;
     if (event?.cancelable) {
@@ -13584,6 +13863,11 @@ function NoteEditor({
     const imageNode = event.target.closest('img[data-note-image-id]');
     if (!imageNode || !editorRef.current?.contains(imageNode)) return;
     if (event.button !== 0) return;
+    if (!isImageNodeFreeLayout(imageNode)) {
+      openImageMenu(imageNode);
+      setDocLinkMenuState(null);
+      return;
+    }
     const clickedImageId = String(imageNode.dataset.noteImageId || '').trim();
     if (imageCropModeId && clickedImageId && clickedImageId !== imageCropModeId) {
       const cropImageNode = getImageById(imageCropModeId);
@@ -13621,6 +13905,7 @@ function NoteEditor({
     if (!imageId) return;
     const imageNode = getImageById(imageId);
     if (!imageNode) return;
+    if (mode !== 'crop' && !isImageNodeFreeLayout(imageNode)) return;
     const rect = imageNode.getBoundingClientRect();
     const startPosX = Number.parseFloat(String(imageNode.dataset.posX || '0'));
     const startPosY = Number.parseFloat(String(imageNode.dataset.posY || '0'));
@@ -13668,6 +13953,11 @@ function NoteEditor({
   const handleEditorDragStart = (event) => {
     const imageNode = event.target.closest('img[data-note-image-id]');
     if (!imageNode) return;
+    if (!isImageNodeFreeLayout(imageNode)) {
+      dragImageIdRef.current = '';
+      event.preventDefault();
+      return;
+    }
     dragImageIdRef.current = imageNode.dataset.noteImageId;
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', dragImageIdRef.current);
@@ -13675,6 +13965,11 @@ function NoteEditor({
 
   const handleEditorDrop = (event) => {
     if (!dragImageIdRef.current || !editorRef.current) return;
+    const draggingImage = getImageById(dragImageIdRef.current);
+    if (!draggingImage || !isImageNodeFreeLayout(draggingImage)) {
+      dragImageIdRef.current = '';
+      return;
+    }
     event.preventDefault();
     const movedImage = placeImageAtPoint(dragImageIdRef.current, event.clientX, event.clientY);
     if (!movedImage) {
@@ -13708,6 +14003,11 @@ function NoteEditor({
     }
     const imageNode = event.target.closest('img[data-note-image-id]');
     if (!imageNode) {
+      resetTouchDragState();
+      return;
+    }
+    if (!isImageNodeFreeLayout(imageNode)) {
+      openImageMenu(imageNode);
       resetTouchDragState();
       return;
     }
@@ -14259,7 +14559,7 @@ function NoteEditor({
           imageNode.dataset.cropTop = String(Math.round(nextTop));
           imageNode.dataset.cropWidth = String(Math.round(nextCropWidth));
           imageNode.dataset.cropHeight = String(Math.round(nextCropHeight));
-          applyImageLayout(imageNode, imageNode.dataset.layout || 'free');
+          applyImageLayout(imageNode, imageNode.dataset.layout || NOTE_IMAGE_LAYOUT_INLINE);
         } else {
           let nextWidth = resizeState.startWidth;
           let nextHeight = resizeState.startHeight;
@@ -14329,7 +14629,7 @@ function NoteEditor({
             imageNode.dataset.cropHeight = String(
               Math.max(24, Math.round((Number(resizeState.startCropHeight) || nextHeight) * scaleY))
             );
-            applyImageLayout(imageNode, imageNode.dataset.layout || 'free');
+            applyImageLayout(imageNode, imageNode.dataset.layout || NOTE_IMAGE_LAYOUT_INLINE);
           }
         }
         syncEditorCanvasMetrics();
@@ -14371,7 +14671,7 @@ function NoteEditor({
         const imageNode = getImageById(resizeState.imageId);
         if (imageNode) {
           imageNode.style.cursor = 'grab';
-          applyImageLayout(imageNode, imageNode.dataset.layout || 'free');
+          applyImageLayout(imageNode, imageNode.dataset.layout || NOTE_IMAGE_LAYOUT_INLINE);
           openImageMenu(imageNode);
         }
         docImageResizeRef.current = null;
@@ -16004,7 +16304,11 @@ function NoteEditor({
           const internalClipboard = docImageClipboardRef.current;
           if (String(internalClipboard?.payload?.src || '').trim()) {
             event.preventDefault();
-            insertImageAtCursor(String(internalClipboard.payload.src || '').trim(), internalClipboard.payload);
+            insertImageAtCursor(
+              String(internalClipboard.payload.src || '').trim(),
+              internalClipboard.payload,
+              { suppressMenu: true }
+            );
             if (internalClipboard.cut) {
               docImageClipboardRef.current = null;
             }
@@ -16135,6 +16439,13 @@ function NoteEditor({
       const internalClipboard = docImageClipboardRef.current;
       const trimmedPastedText = pastedText.trim();
       const trimmedPastedHtml = pastedHtml.trim();
+      const pasteSelectionPosition = getDocImageInsertPositionWithFallback();
+      const imageInsertStartPosition = pasteSelectionPosition
+        ? {
+            x: Number(pasteSelectionPosition.x),
+            y: Number(pasteSelectionPosition.y),
+          }
+        : null;
       const markerToken = trimmedPastedText.startsWith(NOTE_IMAGE_CLIPBOARD_PREFIX)
         ? trimmedPastedText.slice(NOTE_IMAGE_CLIPBOARD_PREFIX.length).trim()
         : '';
@@ -16148,7 +16459,11 @@ function NoteEditor({
         event.preventDefault();
         insertImageAtCursor(
           String(internalClipboard.payload.src || '').trim(),
-          internalClipboard.payload
+          internalClipboard.payload,
+          {
+            position: imageInsertStartPosition || undefined,
+            suppressMenu: true,
+          }
         );
         if (internalClipboard.cut) {
           docImageClipboardRef.current = null;
@@ -16165,7 +16480,11 @@ function NoteEditor({
         event.preventDefault();
         insertImageAtCursor(
           String(internalClipboard.payload.src || '').trim(),
-          internalClipboard.payload
+          internalClipboard.payload,
+          {
+            position: imageInsertStartPosition || undefined,
+            suppressMenu: true,
+          }
         );
         if (internalClipboard?.cut) {
           docImageClipboardRef.current = null;
@@ -16190,7 +16509,11 @@ function NoteEditor({
         event.preventDefault();
         insertImageAtCursor(
           String(internalClipboard.payload.src || '').trim(),
-          internalClipboard.payload
+          internalClipboard.payload,
+          {
+            position: imageInsertStartPosition || undefined,
+            suppressMenu: true,
+          }
         );
         if (internalClipboard.cut) {
           docImageClipboardRef.current = null;
@@ -16211,7 +16534,13 @@ function NoteEditor({
         )
           .then((imageSources) => {
             if (!editorRef.current) return;
-            insertImageSeriesAtCursor(imageSources);
+            insertImageSeriesAtCursor(
+              imageSources,
+              {
+                startPosition: imageInsertStartPosition || undefined,
+                openMenu: false,
+              }
+            );
           })
           .catch(() => {
             // Ignore clipboard image read failures.
@@ -16225,12 +16554,25 @@ function NoteEditor({
       );
       if (shouldInsertHtmlImagesOnly) {
         event.preventDefault();
-        insertImageSeriesAtCursor(htmlImageSources);
+        insertImageSeriesAtCursor(
+          htmlImageSources,
+          {
+            startPosition: imageInsertStartPosition || undefined,
+            openMenu: false,
+          }
+        );
         return;
       }
       if (pastedDataUrlImage && !trimmedPastedHtml) {
         event.preventDefault();
-        insertImageAtCursor(trimmedPastedText);
+        insertImageAtCursor(
+          trimmedPastedText,
+          null,
+          {
+            position: imageInsertStartPosition || undefined,
+            suppressMenu: true,
+          }
+        );
       }
       return;
     }
@@ -17109,7 +17451,7 @@ function NoteEditor({
   const sheetSelectionCellCount = sheetSelectionRowCount * sheetSelectionColCount;
   const isSheetRangeSelection = sheetSelectionCellCount > 1;
   const sheetSelectionSummary = isSheetRangeSelection
-    ? `Range ${sheetSelectionStartLabel} to ${sheetSelectionEndLabel} â€¢ Rows ${sheetSelectionRowCount} â€¢ Cols ${sheetSelectionColCount} â€¢ Total ${sheetSelectionCellCount} cells`
+    ? `Range ${sheetSelectionStartLabel} to ${sheetSelectionEndLabel} • Rows ${sheetSelectionRowCount} • Cols ${sheetSelectionColCount} • Total ${sheetSelectionCellCount} cells`
     : `Selected cell: ${sheetSelectionStartLabel}`;
   const sheetClipboardBounds = React.useMemo(() => {
     if (!isActiveSheetPage || !sheetClipboardState) return null;
@@ -20085,14 +20427,17 @@ function NoteEditor({
             onMouseUp={(event) => {
               syncActiveFormats();
               schedulePresenceUpdate('');
+              cacheCurrentDocImageInsertPosition();
             }}
             onKeyUp={() => {
               syncActiveFormats();
               schedulePresenceUpdate(getEditorTypingPreview());
+              cacheCurrentDocImageInsertPosition();
             }}
             onFocus={() => {
               syncActiveFormats();
               schedulePresenceUpdate('');
+              cacheCurrentDocImageInsertPosition();
             }}
             onDragStart={handleEditorDragStart}
             onDragOver={(event) => {
@@ -20168,56 +20513,59 @@ function NoteEditor({
             ))}
           </div>
         )}
-        {isActiveDocPage && activeImageFrame && (
-          <div
-            data-note-image-frame
+	        {isActiveDocPage && activeImageFrame && (
+	          <div
+	            data-note-image-frame
             className="pointer-events-none absolute z-[28] border-2 border-blue-600 rounded-[10px] bg-blue-100/10"
             style={{
               left: `${activeImageFrame.x}px`,
               top: `${activeImageFrame.y}px`,
-              width: `${activeImageFrame.width}px`,
-              height: `${activeImageFrame.height}px`,
-            }}
-          >
-            <button
-              type="button"
-              className="pointer-events-auto absolute inset-0 cursor-move"
-              onMouseDown={(event) => {
-                startImagePointerDrag(event, activeImageFrame.imageId);
-              }}
-              onTouchStart={(event) => {
-                startImagePointerDrag(event, activeImageFrame.imageId);
-              }}
-              style={{ touchAction: 'none' }}
-              title="Drag image"
-            />
-            {[
-              { key: 'nw', className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
-              { key: 'n', className: 'left-1/2 -translate-x-1/2 -top-1.5 cursor-ns-resize' },
-              { key: 'ne', className: '-right-1.5 -top-1.5 cursor-nesw-resize' },
-              { key: 'e', className: '-right-1.5 top-1/2 -translate-y-1/2 cursor-ew-resize' },
-              { key: 'se', className: '-right-1.5 -bottom-1.5 cursor-nwse-resize' },
-              { key: 's', className: 'left-1/2 -translate-x-1/2 -bottom-1.5 cursor-ns-resize' },
-              { key: 'sw', className: '-left-1.5 -bottom-1.5 cursor-nesw-resize' },
-              { key: 'w', className: '-left-1.5 top-1/2 -translate-y-1/2 cursor-ew-resize' },
-            ].map((handleItem) => (
-              <button
-                key={`image-frame-handle-${handleItem.key}`}
-                type="button"
-                className={`pointer-events-auto absolute w-3 h-3 rounded-[2px] border border-blue-600 bg-white ${handleItem.className}`}
-                onMouseDown={(event) =>
-                  handleImageResizeStart(event, handleItem.key, 'resize')
-                }
-                onTouchStart={(event) =>
-                  handleImageResizeStart(event, handleItem.key, 'resize')
-                }
-                style={{ touchAction: 'none' }}
-                title="Drag to resize image"
-              />
-            ))}
-            {imageCropModeId === activeImageFrame.imageId && (
-              <span className="pointer-events-none absolute left-2 top-2 rounded-md bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                Crop mode
+	              width: `${activeImageFrame.width}px`,
+	              height: `${activeImageFrame.height}px`,
+	            }}
+	          >
+	            {isImageIdFreeLayout(activeImageFrame.imageId) && (
+	              <button
+	                type="button"
+	                className="pointer-events-auto absolute inset-0 cursor-move"
+	                onMouseDown={(event) => {
+	                  startImagePointerDrag(event, activeImageFrame.imageId);
+	                }}
+	                onTouchStart={(event) => {
+	                  startImagePointerDrag(event, activeImageFrame.imageId);
+	                }}
+	                style={{ touchAction: 'none' }}
+	                title="Drag image"
+	              />
+	            )}
+	            {isImageIdFreeLayout(activeImageFrame.imageId) &&
+	              [
+	                { key: 'nw', className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
+	                { key: 'n', className: 'left-1/2 -translate-x-1/2 -top-1.5 cursor-ns-resize' },
+	                { key: 'ne', className: '-right-1.5 -top-1.5 cursor-nesw-resize' },
+	                { key: 'e', className: '-right-1.5 top-1/2 -translate-y-1/2 cursor-ew-resize' },
+	                { key: 'se', className: '-right-1.5 -bottom-1.5 cursor-nwse-resize' },
+	                { key: 's', className: 'left-1/2 -translate-x-1/2 -bottom-1.5 cursor-ns-resize' },
+	                { key: 'sw', className: '-left-1.5 -bottom-1.5 cursor-nesw-resize' },
+	                { key: 'w', className: '-left-1.5 top-1/2 -translate-y-1/2 cursor-ew-resize' },
+	              ].map((handleItem) => (
+	                <button
+	                  key={`image-frame-handle-${handleItem.key}`}
+	                  type="button"
+	                  className={`pointer-events-auto absolute w-3 h-3 rounded-[2px] border border-blue-600 bg-white ${handleItem.className}`}
+	                  onMouseDown={(event) =>
+	                    handleImageResizeStart(event, handleItem.key, 'resize')
+	                  }
+	                  onTouchStart={(event) =>
+	                    handleImageResizeStart(event, handleItem.key, 'resize')
+	                  }
+	                  style={{ touchAction: 'none' }}
+	                  title="Drag to resize image"
+	                />
+	              ))}
+	            {imageCropModeId === activeImageFrame.imageId && (
+	              <span className="pointer-events-none absolute left-2 top-2 rounded-md bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-medium text-white">
+	                Crop mode
               </span>
             )}
           </div>
@@ -20328,6 +20676,19 @@ function NoteEditor({
           </button>
           <button
             type="button"
+            onClick={handleToggleImageLayoutMode}
+            className={`px-2 py-1 text-xs rounded-md ${
+              imageMenuState.imageLayout === NOTE_IMAGE_LAYOUT_FREE
+                ? 'bg-blue-50 text-blue-700'
+                : 'hover:bg-gray-100 text-gray-700'
+            }`}
+          >
+            {imageMenuState.imageLayout === NOTE_IMAGE_LAYOUT_FREE
+              ? 'Disable free drag'
+              : 'Enable free drag'}
+          </button>
+          <button
+            type="button"
             onClick={() => void handleSetImageLink()}
             className="px-2 py-1 text-xs rounded-md hover:bg-gray-100 text-gray-700"
           >
@@ -20376,7 +20737,7 @@ function NoteEditor({
 
       <div className="p-2 bg-gray-50 border-t border-gray-100 text-[11px] text-gray-400 flex items-center justify-between">
         <span>{isActiveSheetPage ? `Sheet ${sheetRows}x${sheetCols}` : 'Doc editor'}</span>
-        <span>Auto-saved Â· Live collaboration</span>
+        <span>Auto-saved · Live collaboration</span>
       </div>
       <style>{`
         .note-editor-toolbar-row {
