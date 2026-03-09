@@ -51,10 +51,19 @@ import {
 
 // --- Constants & Helpers ---
 const THAI_MONTHS = [
-  'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
-  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+  'à¸¡à¸à¸£à¸²à¸„à¸¡', 'à¸à¸¸à¸¡à¸ à¸²à¸žà¸±à¸™à¸˜à¹Œ', 'à¸¡à¸µà¸™à¸²à¸„à¸¡', 'à¹€à¸¡à¸©à¸²à¸¢à¸™', 'à¸žà¸¤à¸©à¸ à¸²à¸„à¸¡', 'à¸¡à¸´à¸–à¸¸à¸™à¸²à¸¢à¸™',
+  'à¸à¸£à¸à¸Žà¸²à¸„à¸¡', 'à¸ªà¸´à¸‡à¸«à¸²à¸„à¸¡', 'à¸à¸±à¸™à¸¢à¸²à¸¢à¸™', 'à¸•à¸¸à¸¥à¸²à¸„à¸¡', 'à¸žà¸¤à¸¨à¸ˆà¸´à¸à¸²à¸¢à¸™', 'à¸˜à¸±à¸™à¸§à¸²à¸„à¸¡'
 ];
-const DAYS_OF_WEEK = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+const DAYS_OF_WEEK = ['à¸­à¸²', 'à¸ˆ', 'à¸­', 'à¸ž', 'à¸žà¸¤', 'à¸¨', 'à¸ª'];
+const NOTE_TITLE_OWNER_PREFIX_TH = '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E02\u0E2D\u0E07';
+const NOTE_TITLE_DEPARTMENT_PREFIX_TH =
+  '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E02\u0E2D\u0E07\u0E1D\u0E48\u0E32\u0E22';
+const toCompactFontOptionLabel = (labelInput) => {
+  const original = String(labelInput || '').trim();
+  if (!original) return '';
+  const compact = original.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  return compact || original;
+};
 
 const PROJECT_COLORS = [
   { bg: 'bg-blue-500', text: 'text-blue-800', lightBg: 'bg-blue-100', border: 'border-blue-200' },
@@ -157,17 +166,17 @@ const PROJECT_STATUS_HIGHLIGHTS = {
   on_track: {
     tone: 'positive',
     priorityLabel: 'Stable',
-    prompt: '"ดีมากเลย วันนี้คืบหน้าอีกนิด พรุ่งนี้จะเบาขึ้นเยอะนะ"',
+    prompt: '"à¸”à¸µà¸¡à¸²à¸à¹€à¸¥à¸¢ à¸§à¸±à¸™à¸™à¸µà¹‰à¸„à¸·à¸šà¸«à¸™à¹‰à¸²à¸­à¸µà¸à¸™à¸´à¸” à¸žà¸£à¸¸à¹ˆà¸‡à¸™à¸µà¹‰à¸ˆà¸°à¹€à¸šà¸²à¸‚à¸¶à¹‰à¸™à¹€à¸¢à¸­à¸°à¸™à¸°"',
   },
   at_risk: {
     tone: 'warning',
     priorityLabel: 'Needs Attention',
-    prompt: '"ไม่เป็นไรน้า ค่อยๆ แก้ทีละจุด เดี๋ยวทุกอย่างกลับมาเข้าที่"',
+    prompt: '"à¹„à¸¡à¹ˆà¹€à¸›à¹‡à¸™à¹„à¸£à¸™à¹‰à¸² à¸„à¹ˆà¸­à¸¢à¹† à¹à¸à¹‰à¸—à¸µà¸¥à¸°à¸ˆà¸¸à¸” à¹€à¸”à¸µà¹‹à¸¢à¸§à¸—à¸¸à¸à¸­à¸¢à¹ˆà¸²à¸‡à¸à¸¥à¸±à¸šà¸¡à¸²à¹€à¸‚à¹‰à¸²à¸—à¸µà¹ˆ"',
   },
   off_track: {
     tone: 'critical',
     priorityLabel: 'Critical',
-    prompt: '"พักหายใจลึกๆ แล้วเริ่มจากเรื่องสำคัญสุดก่อนนะ เรายังกลับมาได้เสมอ"',
+    prompt: '"à¸žà¸±à¸à¸«à¸²à¸¢à¹ƒà¸ˆà¸¥à¸¶à¸à¹† à¹à¸¥à¹‰à¸§à¹€à¸£à¸´à¹ˆà¸¡à¸ˆà¸²à¸à¹€à¸£à¸·à¹ˆà¸­à¸‡à¸ªà¸³à¸„à¸±à¸à¸ªà¸¸à¸”à¸à¹ˆà¸­à¸™à¸™à¸° à¹€à¸£à¸²à¸¢à¸±à¸‡à¸à¸¥à¸±à¸šà¸¡à¸²à¹„à¸”à¹‰à¹€à¸ªà¸¡à¸­"',
   },
 };
 const PROJECT_STATUS_TONE_STYLES = {
@@ -326,7 +335,7 @@ const formatProjectActivityTimestamp = (value) => {
 };
 const stripWrappingQuotes = (value) => {
   const raw = String(value || '').trim();
-  return raw.replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, '').trim();
+  return raw.replace(/^["'`â€œâ€â€˜â€™]+|["'`â€œâ€â€˜â€™]+$/g, '').trim();
 };
 const formatDateDayMonthYear = (value) => {
   const raw = String(value || '').trim();
@@ -393,17 +402,17 @@ const DOC_FONT_FAMILY_GROUPS = [
   {
     label: 'Thai Handwriting',
     options: [
-      { value: 'Mali', label: 'Mali (ไทยลายมือ)', cssFamily: '"Mali", cursive' },
-      { value: 'Sriracha', label: 'Sriracha (ไทยลายมือ)', cssFamily: '"Sriracha", cursive' },
-      { value: 'Charm', label: 'Charm (ไทยลายมือ)', cssFamily: '"Charm", cursive' },
+      { value: 'Mali', label: 'Mali (à¹„à¸—à¸¢à¸¥à¸²à¸¢à¸¡à¸·à¸­)', cssFamily: '"Mali", cursive' },
+      { value: 'Sriracha', label: 'Sriracha (à¹„à¸—à¸¢à¸¥à¸²à¸¢à¸¡à¸·à¸­)', cssFamily: '"Sriracha", cursive' },
+      { value: 'Charm', label: 'Charm (à¹„à¸—à¸¢à¸¥à¸²à¸¢à¸¡à¸·à¸­)', cssFamily: '"Charm", cursive' },
     ],
   },
   {
     label: 'Thai Formal',
     options: [
-      { value: 'Sarabun', label: 'Sarabun (ไทยทางการ)', cssFamily: '"Sarabun", sans-serif' },
-      { value: 'Noto Sans Thai', label: 'Noto Sans Thai (ไทยทางการ)', cssFamily: '"Noto Sans Thai", sans-serif' },
-      { value: 'Prompt', label: 'Prompt (ไทยทางการ)', cssFamily: '"Prompt", sans-serif' },
+      { value: 'Sarabun', label: 'Sarabun (à¹„à¸—à¸¢à¸—à¸²à¸‡à¸à¸²à¸£)', cssFamily: '"Sarabun", sans-serif' },
+      { value: 'Noto Sans Thai', label: 'Noto Sans Thai (à¹„à¸—à¸¢à¸—à¸²à¸‡à¸à¸²à¸£)', cssFamily: '"Noto Sans Thai", sans-serif' },
+      { value: 'Prompt', label: 'Prompt (à¹„à¸—à¸¢à¸—à¸²à¸‡à¸à¸²à¸£)', cssFamily: '"Prompt", sans-serif' },
     ],
   },
 ];
@@ -1030,7 +1039,7 @@ const describeProjectActivityEntry = (entry) => {
       if (entry.actorUsername) detailParts.push(`By ${entry.actorUsername}`);
       return {
         title: `New Event: ${eventTitle || 'Untitled event'}`,
-        subtitle: detailParts.join(' • ') || entry.message || 'New calendar event was added.',
+        subtitle: detailParts.join(' â€¢ ') || entry.message || 'New calendar event was added.',
       };
     }
     case PROJECT_ACTIVITY_TYPES.TASK_CREATED: {
@@ -1049,7 +1058,7 @@ const describeProjectActivityEntry = (entry) => {
       if (entry.actorUsername) detailParts.push(`By ${entry.actorUsername}`);
       return {
         title: `New Task: ${taskTitle || 'Untitled task'}`,
-        subtitle: detailParts.join(' • ') || entry.message || 'New task was created.',
+        subtitle: detailParts.join(' â€¢ ') || entry.message || 'New task was created.',
       };
     }
     case PROJECT_ACTIVITY_TYPES.MEMBER_JOINED: {
@@ -1066,7 +1075,7 @@ const describeProjectActivityEntry = (entry) => {
       }
       return {
         title: `New Member: ${memberName}`,
-        subtitle: detailParts.join(' • ') || entry.message || 'A new member joined the project.',
+        subtitle: detailParts.join(' â€¢ ') || entry.message || 'A new member joined the project.',
       };
     }
     case PROJECT_ACTIVITY_TYPES.PROJECT_STATUS_CHANGED: {
@@ -1075,13 +1084,13 @@ const describeProjectActivityEntry = (entry) => {
       const statusHighlight = PROJECT_STATUS_HIGHLIGHTS[toStatusKey] || {
         tone: 'neutral',
         priorityLabel: 'Updated',
-        prompt: '"อัปเดตแล้วนะ ลองเช็กภาพรวมอีกนิด แล้วค่อยเดินต่อแบบใจเย็นๆ"',
+        prompt: '"à¸­à¸±à¸›à¹€à¸”à¸•à¹à¸¥à¹‰à¸§à¸™à¸° à¸¥à¸­à¸‡à¹€à¸Šà¹‡à¸à¸ à¸²à¸žà¸£à¸§à¸¡à¸­à¸µà¸à¸™à¸´à¸” à¹à¸¥à¹‰à¸§à¸„à¹ˆà¸­à¸¢à¹€à¸”à¸´à¸™à¸•à¹ˆà¸­à¹à¸šà¸šà¹ƒà¸ˆà¹€à¸¢à¹‡à¸™à¹†"',
       };
       const detailParts = [];
       if (entry.actorUsername) detailParts.push(`By ${entry.actorUsername}`);
       return {
         title: `Project status changed: ${toStatus}`,
-        subtitle: detailParts.join(' • ') || 'Status was updated.',
+        subtitle: detailParts.join(' â€¢ ') || 'Status was updated.',
         isStatusUpdate: true,
         statusTone: statusHighlight.tone,
         statusPriorityLabel: statusHighlight.priorityLabel,
@@ -1095,7 +1104,7 @@ const describeProjectActivityEntry = (entry) => {
       if (entry.message) detailParts.push(entry.message);
       return {
         title: `Announcement${announcementTitle ? `: ${announcementTitle}` : ''}`,
-        subtitle: detailParts.join(' • ') || 'New project announcement.',
+        subtitle: detailParts.join(' â€¢ ') || 'New project announcement.',
       };
     }
     default:
@@ -5735,7 +5744,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
   const handleNewEventClick = () => {
     setEditingEvent(null);
-    // ตั้งค่าเริ่มต้นเป็นวันที่ปัจจุบัน
+    // à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸²à¹€à¸£à¸´à¹ˆà¸¡à¸•à¹‰à¸™à¹€à¸›à¹‡à¸™à¸§à¸±à¸™à¸—à¸µà¹ˆà¸›à¸±à¸ˆà¸ˆà¸¸à¸šà¸±à¸™
     const now = new Date();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     setSelectedDateForNewEvent(todayStr);
@@ -5953,7 +5962,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         if (!p.isVisible && visibleProjects.length >= 4) {
           void popup.alert({
             title: 'Display limit',
-            message: 'คุณสามารถแสดงได้สูงสุดเพียง 4 โปรเจกต์ในหน้าจอหลัก',
+            message: 'à¸„à¸¸à¸“à¸ªà¸²à¸¡à¸²à¸£à¸–à¹à¸ªà¸”à¸‡à¹„à¸”à¹‰à¸ªà¸¹à¸‡à¸ªà¸¸à¸”à¹€à¸žà¸µà¸¢à¸‡ 4 à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œà¹ƒà¸™à¸«à¸™à¹‰à¸²à¸ˆà¸­à¸«à¸¥à¸±à¸',
           });
           return p;
         }
@@ -7008,7 +7017,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         {visibleProjects.length === 0 ? (
           <div className="flex h-full items-center justify-center flex-col text-gray-400 gap-4">
             <LayoutGrid className="w-16 h-16 opacity-50" />
-            <p className="text-lg">กรุณาเลือกหรือเพิ่มโปรเจกต์จากเมนู "จัดการ Project"</p>
+            <p className="text-lg">à¸à¸£à¸¸à¸“à¸²à¹€à¸¥à¸·à¸­à¸à¸«à¸£à¸·à¸­à¹€à¸žà¸´à¹ˆà¸¡à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œà¸ˆà¸²à¸à¹€à¸¡à¸™à¸¹ "à¸ˆà¸±à¸”à¸à¸²à¸£ Project"</p>
           </div>
         ) : (
           <div className={!isCompactViewport && !effectiveMergeView ? 'min-w-[800px]' : 'w-full'}> {/* Ensure it doesn't squish too much on small screens */}
@@ -7055,7 +7064,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             {/* Months List (Continuous Scroll) */}
             {monthsToRender.length === 0 ? (
               <div className="flex justify-center items-center h-48 text-gray-500">
-                ไม่มีสัปดาห์ที่จะแสดงผลในช่วงเวลาที่เลือก
+                à¹„à¸¡à¹ˆà¸¡à¸µà¸ªà¸±à¸›à¸”à¸²à¸«à¹Œà¸—à¸µà¹ˆà¸ˆà¸°à¹à¸ªà¸”à¸‡à¸œà¸¥à¹ƒà¸™à¸Šà¹ˆà¸§à¸‡à¹€à¸§à¸¥à¸²à¸—à¸µà¹ˆà¹€à¸¥à¸·à¸­à¸
               </div>
             ) : (
               <div className="flex flex-col">
@@ -7243,12 +7252,12 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
             autoFocus
           />
           <div className="flex gap-2 justify-end">
-            <button onClick={handleCancel} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors">ยกเลิก</button>
+            <button onClick={handleCancel} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors">à¸¢à¸à¹€à¸¥à¸´à¸</button>
             <button 
               onClick={handleSave} 
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
             >
-              <Check className="w-4 h-4" /> บันทึก
+              <Check className="w-4 h-4" /> à¸šà¸±à¸™à¸—à¸¶à¸
             </button>
           </div>
         </div>
@@ -7257,7 +7266,7 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
           {value ? (
             <p>{value}</p>
           ) : (
-            <p className="text-gray-400 italic">ยังไม่มีข้อมูล คลิกปุ่มแก้ไขเพื่อเพิ่ม...</p>
+            <p className="text-gray-400 italic">à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µà¸‚à¹‰à¸­à¸¡à¸¹à¸¥ à¸„à¸¥à¸´à¸à¸›à¸¸à¹ˆà¸¡à¹à¸à¹‰à¹„à¸‚à¹€à¸žà¸·à¹ˆà¸­à¹€à¸žà¸´à¹ˆà¸¡...</p>
           )}
         </div>
       )}
@@ -7410,7 +7419,7 @@ function ProjectDashboard({
   onActiveTabChange,
 }) {
   const popup = usePopup();
-  // เปลี่ยนค่าเริ่มต้นให้เปิดหน้า Project Organization เป็นอันดับแรก
+  // à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¸„à¹ˆà¸²à¹€à¸£à¸´à¹ˆà¸¡à¸•à¹‰à¸™à¹ƒà¸«à¹‰à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸² Project Organization à¹€à¸›à¹‡à¸™à¸­à¸±à¸™à¸”à¸±à¸šà¹à¸£à¸
   const [activeTabLocal, setActiveTabLocal] = useState(DEFAULT_PROJECT_DASHBOARD_TAB);
   const activeTab = normalizeProjectDashboardTab(activeTabProp ?? activeTabLocal);
   const setActiveTab = (nextTab) => {
@@ -7650,9 +7659,9 @@ function ProjectDashboard({
   }, [project.id, project.notesPreferences, project.ownerId, currentUser.id]);
   
   const statusConfig = {
-    on_track: { label: 'On Track (ตามแผน)', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
-    at_risk: { label: 'At Risk (มีความเสี่ยง)', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', dot: 'bg-yellow-500' },
-    off_track: { label: 'Off Track (ล่าช้า)', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', dot: 'bg-red-500' },
+    on_track: { label: 'On Track (à¸•à¸²à¸¡à¹à¸œà¸™)', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
+    at_risk: { label: 'At Risk (à¸¡à¸µà¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡)', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', dot: 'bg-yellow-500' },
+    off_track: { label: 'Off Track (à¸¥à¹ˆà¸²à¸Šà¹‰à¸²)', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', dot: 'bg-red-500' },
   };
 
   const TABS = [
@@ -8310,8 +8319,8 @@ function ProjectDashboard({
   );
   const activeNoteTitle =
     noteSection === 'department'
-      ? `บันทึกของฝ่าย: ${activeNoteId}`
-      : `บันทึกของ: ${selectedNoteMember?.name || 'Unknown'}`;
+      ? `${NOTE_TITLE_DEPARTMENT_PREFIX_TH}: ${activeNoteId}`
+      : `${NOTE_TITLE_OWNER_PREFIX_TH}: ${selectedNoteMember?.name || 'Unknown'}`;
   const currentNoteTargetOptions =
     noteSection === 'department' ? orderedDepartmentNoteOptions : orderedMemberNoteOptions;
   const handleSaveNoteContent = (id, content) => {
@@ -8873,7 +8882,7 @@ function ProjectDashboard({
                         : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >
-                    แยกตามฝ่าย
+                    à¹à¸¢à¸à¸•à¸²à¸¡à¸à¹ˆà¸²à¸¢
                   </button>
                   <button
                     onClick={() => {
@@ -8888,7 +8897,7 @@ function ProjectDashboard({
                         : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >
-                    แยกตามแต่ละคน
+                    à¹à¸¢à¸à¸•à¸²à¸¡à¹à¸•à¹ˆà¸¥à¸°à¸„à¸™
                   </button>
                 </div>
               )}
@@ -8902,19 +8911,19 @@ function ProjectDashboard({
                   
                   {/* Vision Section */}
                   <EditableSection 
-                    title="วิสัยทัศน์ (Vision)" 
+                    title="à¸§à¸´à¸ªà¸±à¸¢à¸—à¸±à¸¨à¸™à¹Œ (Vision)" 
                     icon={Target} 
                     value={project.vision} 
-                    placeholder="กรอกวิสัยทัศน์ของโครงการที่นี่..."
+                    placeholder="à¸à¸£à¸­à¸à¸§à¸´à¸ªà¸±à¸¢à¸—à¸±à¸¨à¸™à¹Œà¸‚à¸­à¸‡à¹‚à¸„à¸£à¸‡à¸à¸²à¸£à¸—à¸µà¹ˆà¸™à¸µà¹ˆ..."
                     onSave={(newVision) => onUpdateProject(project.id, { vision: newVision })}
                   />
 
                   {/* Mission Section */}
                   <EditableSection 
-                    title="พันธกิจ (Mission)" 
+                    title="à¸žà¸±à¸™à¸˜à¸à¸´à¸ˆ (Mission)" 
                     icon={Flag} 
                     value={project.mission} 
-                    placeholder="กรอกพันธกิจของโครงการที่นี่..."
+                    placeholder="à¸à¸£à¸­à¸à¸žà¸±à¸™à¸˜à¸à¸´à¸ˆà¸‚à¸­à¸‡à¹‚à¸„à¸£à¸‡à¸à¸²à¸£à¸—à¸µà¹ˆà¸™à¸µà¹ˆ..."
                     onSave={(newMission) => onUpdateProject(project.id, { mission: newMission })}
                   />
 
@@ -8923,7 +8932,7 @@ function ProjectDashboard({
                     <div className="flex justify-between items-start mb-3 md:mb-4 gap-2">
                       <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <AlignLeft className="w-5 h-5 text-gray-500" />
-                        รายละเอียดโปรเจกต์ (Project Description)
+                        à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ (Project Description)
                       </h3>
                       {!isEditingDesc && (
                         <button 
@@ -8943,12 +8952,12 @@ function ProjectDashboard({
                         <textarea 
                           value={editDescText}
                           onChange={e => setEditDescText(e.target.value)}
-                          placeholder="เพิ่มรายละเอียดและเป้าหมายของโปรเจกต์ที่นี่..."
+                          placeholder="à¹€à¸žà¸´à¹ˆà¸¡à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¹à¸¥à¸°à¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢à¸‚à¸­à¸‡à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œà¸—à¸µà¹ˆà¸™à¸µà¹ˆ..."
                           className="w-full border border-gray-300 rounded-lg p-3 text-sm text-gray-700 min-h-[120px] outline-none focus:ring-2 focus:ring-blue-500 resize-y"
                           autoFocus
                         ></textarea>
                         <div className="flex gap-2 justify-end">
-                          <button onClick={() => setIsEditingDesc(false)} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors">ยกเลิก</button>
+                          <button onClick={() => setIsEditingDesc(false)} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors">à¸¢à¸à¹€à¸¥à¸´à¸</button>
                           <button 
                             onClick={() => {
                               onUpdateProject(project.id, { description: editDescText });
@@ -8956,7 +8965,7 @@ function ProjectDashboard({
                             }} 
                             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                           >
-                            บันทึก
+                            à¸šà¸±à¸™à¸—à¸¶à¸
                           </button>
                         </div>
                       </div>
@@ -8965,7 +8974,7 @@ function ProjectDashboard({
                         {project.description ? (
                           <p>{project.description}</p>
                         ) : (
-                          <p className="text-gray-400 italic">ยังไม่มีรายละเอียดโปรเจกต์ คลิกปุ่มแก้ไขเพื่อเพิ่มข้อมูล</p>
+                          <p className="text-gray-400 italic">à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µà¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ à¸„à¸¥à¸´à¸à¸›à¸¸à¹ˆà¸¡à¹à¸à¹‰à¹„à¸‚à¹€à¸žà¸·à¹ˆà¸­à¹€à¸žà¸´à¹ˆà¸¡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥</p>
                         )}
                       </div>
                     )}
@@ -8976,14 +8985,14 @@ function ProjectDashboard({
                     <div className="flex justify-between items-start md:items-center gap-3 mb-3 md:mb-4">
                       <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <Target className="w-5 h-5 text-gray-500" />
-                        เป้าหมายหลัก & จุดวิกฤต (Milestones)
+                        à¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢à¸«à¸¥à¸±à¸ & à¸ˆà¸¸à¸”à¸§à¸´à¸à¸¤à¸• (Milestones)
                       </h3>
                       {!isAddingMilestone && (
                         <button 
                           onClick={() => setIsAddingMilestone(true)}
                           className="text-blue-600 hover:text-blue-800 text-xs md:text-sm font-medium flex items-center gap-1 bg-blue-50 hover:bg-blue-100 px-2.5 md:px-3 py-1.5 rounded-lg transition-colors shrink-0"
                         >
-                          <Plus className="w-4 h-4" /> เพิ่มเป้าหมาย
+                          <Plus className="w-4 h-4" /> à¹€à¸žà¸´à¹ˆà¸¡à¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢
                         </button>
                       )}
                     </div>
@@ -9007,7 +9016,7 @@ function ProjectDashboard({
                                 e.stopPropagation();
                                 const shouldDelete = await popup.confirm({
                                   title: 'Delete milestone',
-                                  message: 'ลบเป้าหมายนี้?',
+                                  message: 'à¸¥à¸šà¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢à¸™à¸µà¹‰?',
                                   confirmText: 'Delete',
                                   tone: 'danger',
                                 });
@@ -9026,7 +9035,7 @@ function ProjectDashboard({
                       
                       {(project.milestones || []).length === 0 && !isAddingMilestone && (
                         <div className="text-center py-6 text-gray-400 text-sm italic bg-gray-50 rounded-lg border border-dashed border-gray-200">
-                          ยังไม่มีเป้าหมายของโปรเจกต์
+                          à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µà¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢à¸‚à¸­à¸‡à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ
                         </div>
                       )}
 
@@ -9035,7 +9044,7 @@ function ProjectDashboard({
                         <div className="p-3 md:p-4 bg-blue-50/50 rounded-lg border border-blue-100 flex flex-col gap-3 mt-4">
                           <input 
                             type="text" 
-                            placeholder="ชื่อเป้าหมาย / Milestone..." 
+                            placeholder="à¸Šà¸·à¹ˆà¸­à¹€à¸›à¹‰à¸²à¸«à¸¡à¸²à¸¢ / Milestone..." 
                             value={newMilestoneName}
                             onChange={e => setNewMilestoneName(e.target.value)}
                             className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500"
@@ -9065,13 +9074,13 @@ function ProjectDashboard({
                               }}
                               className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 transition-colors"
                             >
-                              เพิ่ม
+                              à¹€à¸žà¸´à¹ˆà¸¡
                             </button>
                             <button 
                               onClick={() => setIsAddingMilestone(false)}
                               className="text-gray-600 hover:bg-gray-100 border border-gray-300 px-4 py-2 rounded-md text-sm font-medium transition-colors"
                             >
-                              ยกเลิก
+                              à¸¢à¸à¹€à¸¥à¸´à¸
                             </button>
                           </div>
                         </div>
@@ -9087,7 +9096,7 @@ function ProjectDashboard({
                   {/* Status Dropdown */}
                   <div className="bg-white p-4 md:p-5 rounded-xl border border-gray-200 shadow-sm relative">
                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                      <Activity className="w-4 h-4" /> สถานะโปรเจกต์
+                      <Activity className="w-4 h-4" /> à¸ªà¸–à¸²à¸™à¸°à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ
                     </h3>
                     <div 
                       onClick={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}
@@ -9118,7 +9127,7 @@ function ProjectDashboard({
                       </div>
                     )}
                     <p className="text-[11px] text-gray-400 mt-3 flex items-center justify-between">
-                      <span>คลิกเพื่อเปลี่ยนสถานะ</span>
+                      <span>à¸„à¸¥à¸´à¸à¹€à¸žà¸·à¹ˆà¸­à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¸ªà¸–à¸²à¸™à¸°</span>
                     </p>
                   </div>
 
@@ -9137,7 +9146,7 @@ function ProjectDashboard({
                       className="relative h-10 w-10 md:h-auto md:w-auto flex items-center justify-center md:justify-start gap-2 bg-white border border-gray-300 hover:bg-gray-50 px-0 md:px-4 md:py-2 rounded-lg text-sm font-medium text-gray-700 transition-colors shadow-sm shrink-0 [&>span:first-of-type]:hidden md:[&>span:first-of-type]:inline"
                     >
                       <Filter className="w-4 h-4 text-gray-500" />
-                      <span>ฟิลเตอร์</span>
+                      <span>à¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œ</span>
                       {isTaskFilterActive && (
                         <span className="absolute top-1.5 right-1.5 md:static md:ml-1 w-2 h-2 rounded-full bg-blue-500"></span>
                       )}
@@ -9147,13 +9156,13 @@ function ProjectDashboard({
                     {showFilterPopup && (
                       <div className="absolute top-full left-0 mt-2 w-[min(18rem,calc(100vw-2.5rem))] md:w-72 bg-white border border-gray-200 shadow-xl rounded-xl p-4 z-20">
                         <div className="flex justify-between items-center mb-4">
-                          <h4 className="font-semibold text-gray-800">ตั้งค่าฟิลเตอร์</h4>
+                          <h4 className="font-semibold text-gray-800">à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸²à¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œ</h4>
                           <button onClick={() => setShowFilterPopup(false)} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
                         </div>
                         <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
                           {/* Status Filter */}
                           <div>
-                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">สถานะ (Status)</label>
+                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">à¸ªà¸–à¸²à¸™à¸° (Status)</label>
                             <div className="space-y-1">
                               {TASK_STATUSES.map(s => (
                                 <label key={s} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 p-1.5 rounded-md transition-colors">
@@ -9176,7 +9185,7 @@ function ProjectDashboard({
                           
                           {/* Department Filter */}
                           <div>
-                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">ฝ่าย (Department)</label>
+                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">à¸à¹ˆà¸²à¸¢ (Department)</label>
                             <div className="space-y-1">
                               {DEPARTMENTS.map(d => (
                                 <label key={d} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 p-1.5 rounded-md transition-colors">
@@ -9240,7 +9249,7 @@ function ProjectDashboard({
                               className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                               disabled={!isTaskFilterActive}
                             >
-                              ล้างฟิลเตอร์ทั้งหมด
+                              à¸¥à¹‰à¸²à¸‡à¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œà¸—à¸±à¹‰à¸‡à¸«à¸¡à¸”
                             </button>
                           </div>
                         </div>
@@ -9269,7 +9278,7 @@ function ProjectDashboard({
                       onClick={openAddTask}
                       className="h-10 w-10 md:h-auto md:w-auto bg-blue-600 hover:bg-blue-700 text-white px-0 md:px-4 md:py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors shadow-sm whitespace-nowrap shrink-0"
                     >
-                      <Plus className="w-4 h-4" /> <span className="hidden md:inline">เพิ่ม Task</span>
+                      <Plus className="w-4 h-4" /> <span className="hidden md:inline">à¹€à¸žà¸´à¹ˆà¸¡ Task</span>
                     </button>
                   </div>
                 </div>
@@ -9278,8 +9287,8 @@ function ProjectDashboard({
                 {filteredTasks.length === 0 ? (
                   <div className="text-center py-16 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50/50">
                     <CheckSquare className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                    <p className="font-medium text-lg">ไม่มีงานที่ตรงกับฟิลเตอร์ที่เลือก</p>
-                    <p className="text-sm mt-1">ลองเปลี่ยนการตั้งค่าฟิลเตอร์หรือเพิ่มงานใหม่บนปฏิทิน</p>
+                    <p className="font-medium text-lg">à¹„à¸¡à¹ˆà¸¡à¸µà¸‡à¸²à¸™à¸—à¸µà¹ˆà¸•à¸£à¸‡à¸à¸±à¸šà¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œà¸—à¸µà¹ˆà¹€à¸¥à¸·à¸­à¸</p>
+                    <p className="text-sm mt-1">à¸¥à¸­à¸‡à¹€à¸›à¸¥à¸µà¹ˆà¸¢à¸™à¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸²à¸Ÿà¸´à¸¥à¹€à¸•à¸­à¸£à¹Œà¸«à¸£à¸·à¸­à¹€à¸žà¸´à¹ˆà¸¡à¸‡à¸²à¸™à¹ƒà¸«à¸¡à¹ˆà¸šà¸™à¸›à¸à¸´à¸—à¸´à¸™</p>
                   </div>
                 ) : (
                   <>
@@ -9290,11 +9299,11 @@ function ProjectDashboard({
                           <table className="w-full min-w-[720px] text-left text-sm whitespace-nowrap">
                             <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
                               <tr>
-                                <th className="px-5 py-4 font-medium">ชื่องาน (Task)</th>
-                                <th className="px-5 py-4 font-medium">ผู้รับผิดชอบ (Assignee)</th>
-                                <th className="px-5 py-4 font-medium">ฝ่าย (Department)</th>
-                                <th className="px-5 py-4 font-medium">กำหนดส่ง (Due Date)</th>
-                                <th className="px-5 py-4 font-medium w-40">สถานะ (Status)</th>
+                                <th className="px-5 py-4 font-medium">à¸Šà¸·à¹ˆà¸­à¸‡à¸²à¸™ (Task)</th>
+                                <th className="px-5 py-4 font-medium">à¸œà¸¹à¹‰à¸£à¸±à¸šà¸œà¸´à¸”à¸Šà¸­à¸š (Assignee)</th>
+                                <th className="px-5 py-4 font-medium">à¸à¹ˆà¸²à¸¢ (Department)</th>
+                                <th className="px-5 py-4 font-medium">à¸à¸³à¸«à¸™à¸”à¸ªà¹ˆà¸‡ (Due Date)</th>
+                                <th className="px-5 py-4 font-medium w-40">à¸ªà¸–à¸²à¸™à¸° (Status)</th>
                               </tr>
                             </thead>
 	                            <tbody className="divide-y divide-gray-100">
@@ -9807,7 +9816,7 @@ function ProjectDashboard({
                             <div key={item.id} className="rounded-md border border-gray-200 bg-white px-2.5 py-2">
                               <p className="text-sm text-gray-700">{item.message}</p>
                               <p className="text-[11px] text-gray-400 mt-0.5">
-                                {item.createdBy || 'unknown'} • {new Date(item.createdAt).toLocaleString()}
+                                {item.createdBy || 'unknown'} â€¢ {new Date(item.createdAt).toLocaleString()}
                               </p>
                             </div>
                           ))}
@@ -10044,8 +10053,8 @@ function ProjectDashboard({
                       ) : (
                         <div className="h-full flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-xl text-gray-400 bg-gray-50/50">
                            <FileText className="w-12 h-12 mb-3 text-gray-300" />
-                           <p className="font-medium text-lg text-gray-500">กรุณาเลือกรายการทางซ้ายมือ</p>
-                           <p className="text-sm mt-1">เพื่อเปิดดูหรือแก้ไขบันทึก (Notes)</p>
+                           <p className="font-medium text-lg text-gray-500">à¸à¸£à¸¸à¸“à¸²à¹€à¸¥à¸·à¸­à¸à¸£à¸²à¸¢à¸à¸²à¸£à¸—à¸²à¸‡à¸‹à¹‰à¸²à¸¢à¸¡à¸·à¸­</p>
+                           <p className="text-sm mt-1">à¹€à¸žà¸·à¹ˆà¸­à¹€à¸›à¸´à¸”à¸”à¸¹à¸«à¸£à¸·à¸­à¹à¸à¹‰à¹„à¸‚à¸šà¸±à¸™à¸—à¸¶à¸ (Notes)</p>
                         </div>
                       )}
                     </div>
@@ -10798,25 +10807,25 @@ function TaskDetailPane({
                 <CheckCircle className="w-4 h-4" /> {task.status === 'Done' ? 'Completed' : 'Mark Complete'}
               </button>
             )}
-            {isEditing && <span className="font-bold text-gray-700">{task ? 'แก้ไข Task' : 'สร้าง Task ใหม่'}</span>}
+            {isEditing && <span className="font-bold text-gray-700">{task ? 'à¹à¸à¹‰à¹„à¸‚ Task' : 'à¸ªà¸£à¹‰à¸²à¸‡ Task à¹ƒà¸«à¸¡à¹ˆ'}</span>}
           </div>
           <div className="flex items-center gap-2">
             {!isEditing && (
               <>
-                <button onClick={() => setIsEditing(true)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="แก้ไข">
+                <button onClick={() => setIsEditing(true)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="à¹à¸à¹‰à¹„à¸‚">
                   <Edit2 className="w-4 h-4" />
                 </button>
                 <button 
                   onClick={async () => {
                     const shouldDelete = await popup.confirm({
                       title: 'Delete task',
-                      message: 'คุณแน่ใจหรือไม่ที่จะลบ Task นี้?',
+                      message: 'à¸„à¸¸à¸“à¹à¸™à¹ˆà¹ƒà¸ˆà¸«à¸£à¸·à¸­à¹„à¸¡à¹ˆà¸—à¸µà¹ˆà¸ˆà¸°à¸¥à¸š Task à¸™à¸µà¹‰?',
                       confirmText: 'Delete',
                       tone: 'danger',
                     });
                     if (shouldDelete) onDelete(task.id);
                   }} 
-                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="ลบ"
+                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="à¸¥à¸š"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -10846,7 +10855,7 @@ function TaskDetailPane({
               </div>
 
               <div className="grid grid-cols-[120px_1fr] items-center gap-y-5 gap-x-2 text-sm">
-                <div className="text-gray-500 flex items-center gap-2"><Users className="w-4 h-4" /> ผู้รับผิดชอบ</div>
+                <div className="text-gray-500 flex items-center gap-2"><Users className="w-4 h-4" /> à¸œà¸¹à¹‰à¸£à¸±à¸šà¸œà¸´à¸”à¸Šà¸­à¸š</div>
                 <div className="space-y-2">
                   <button
                     type="button"
@@ -10948,20 +10957,20 @@ function TaskDetailPane({
                   )}
                 </div>
 
-                <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> วันที่สิ้นสุด</div>
+                <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> à¸§à¸±à¸™à¸—à¸µà¹ˆà¸ªà¸´à¹‰à¸™à¸ªà¸¸à¸”</div>
                 <div className="flex items-center gap-2">
                   <input type="date" value={endDate} min={hasStartDate ? startDate : ''} onChange={e => setEndDate(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 flex-1" />
                   <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 w-28" />
                 </div>
 
-                <div className="text-gray-500 flex items-center gap-2"><Activity className="w-4 h-4" /> สถานะ</div>
+                <div className="text-gray-500 flex items-center gap-2"><Activity className="w-4 h-4" /> à¸ªà¸–à¸²à¸™à¸°</div>
                 <div>
                   <select value={status} onChange={e => setStatus(e.target.value)} className="w-full border-gray-300 rounded-lg p-2 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 border">
                     {TASK_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
 
-                <div className="text-gray-500 flex items-center gap-2"><Layers className="w-4 h-4" /> ฝ่าย</div>
+                <div className="text-gray-500 flex items-center gap-2"><Layers className="w-4 h-4" /> à¸à¹ˆà¸²à¸¢</div>
                 <div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {relatedDepartments.length > 0 ? (
@@ -10985,9 +10994,9 @@ function TaskDetailPane({
               </div>
 
               <div className="mt-2 border-t pt-5 border-gray-100">
-                <div className="text-gray-500 flex items-center gap-2 mb-3 text-sm"><AlignLeft className="w-4 h-4" /> คำอธิบาย (Description)</div>
+                <div className="text-gray-500 flex items-center gap-2 mb-3 text-sm"><AlignLeft className="w-4 h-4" /> à¸„à¸³à¸­à¸˜à¸´à¸šà¸²à¸¢ (Description)</div>
                 <textarea 
-                  placeholder="เพิ่มคำอธิบายรายละเอียดงาน..."
+                  placeholder="à¹€à¸žà¸´à¹ˆà¸¡à¸„à¸³à¸­à¸˜à¸´à¸šà¸²à¸¢à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸‡à¸²à¸™..."
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   className="w-full border-gray-300 border rounded-lg p-3 bg-gray-50 min-h-[150px] outline-none focus:ring-2 focus:ring-blue-500 resize-y text-sm"
@@ -11002,7 +11011,7 @@ function TaskDetailPane({
               </div>
 
               <div className="grid grid-cols-[130px_1fr] items-center gap-y-6 text-sm">
-                <div className="text-gray-500">ผู้รับผิดชอบ</div>
+                <div className="text-gray-500">à¸œà¸¹à¹‰à¸£à¸±à¸šà¸œà¸´à¸”à¸Šà¸­à¸š</div>
                                 <div className="flex flex-wrap items-center gap-2.5">
 	                  {currentAssignees.map((assignee, index) => (
 	                    <div
@@ -11020,7 +11029,7 @@ function TaskDetailPane({
 	                  ))}
                 </div>
 
-                <div className="text-gray-500">วันที่เริ่มต้น</div>
+                <div className="text-gray-500">à¸§à¸±à¸™à¸—à¸µà¹ˆà¹€à¸£à¸´à¹ˆà¸¡à¸•à¹‰à¸™</div>
                 <div className="text-gray-800 font-medium flex items-center gap-2">
                   {hasStartDate ? startDate : 'No start date'}
                   {hasStartTime && startTime ? (
@@ -11028,7 +11037,7 @@ function TaskDetailPane({
                   ) : null}
                 </div>
 
-                <div className="text-gray-500">กำหนดส่ง</div>
+                <div className="text-gray-500">à¸à¸³à¸«à¸™à¸”à¸ªà¹ˆà¸‡</div>
                 <div className="text-gray-800 font-medium flex items-center gap-2">
                   {endDate}
                   {endTime ? (
@@ -11036,7 +11045,7 @@ function TaskDetailPane({
                   ) : null}
                 </div>
 
-                <div className="text-gray-500">สถานะ</div>
+                <div className="text-gray-500">à¸ªà¸–à¸²à¸™à¸°</div>
                 <div>
                   <span className={`px-3 py-1 rounded-full text-xs font-bold border 
                     ${status === 'Done' ? 'bg-green-50 text-green-700 border-green-200' : 
@@ -11048,7 +11057,7 @@ function TaskDetailPane({
                   </span>
                 </div>
 
-                <div className="text-gray-500">ฝ่าย (Department)</div>
+                <div className="text-gray-500">à¸à¹ˆà¸²à¸¢ (Department)</div>
                 <div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {relatedDepartments.map((departmentName) => (
@@ -11065,13 +11074,13 @@ function TaskDetailPane({
               </div>
 
               <div className="mt-4 border-t pt-6 border-gray-100">
-                <h4 className="text-sm font-semibold text-gray-800 mb-3">คำอธิบาย</h4>
+                <h4 className="text-sm font-semibold text-gray-800 mb-3">à¸„à¸³à¸­à¸˜à¸´à¸šà¸²à¸¢</h4>
                 {description ? (
                   <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100">
                     {description}
                   </p>
                 ) : (
-                  <p className="text-sm text-gray-400 italic">ไม่มีคำอธิบายเพิ่มเติม</p>
+                  <p className="text-sm text-gray-400 italic">à¹„à¸¡à¹ˆà¸¡à¸µà¸„à¸³à¸­à¸˜à¸´à¸šà¸²à¸¢à¹€à¸žà¸´à¹ˆà¸¡à¹€à¸•à¸´à¸¡</p>
                 )}
               </div>
             </div>
@@ -11172,7 +11181,7 @@ function TaskDetailPane({
                 onClick={() => setIsEditing(false)}
                 className="text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-lg font-medium transition-colors"
               >
-                ยกเลิก
+                à¸¢à¸à¹€à¸¥à¸´à¸
               </button>
             )}
             {!task && (
@@ -11181,7 +11190,7 @@ function TaskDetailPane({
                 onClick={onClose}
                 className="text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-lg font-medium transition-colors"
               >
-                ปิด
+                à¸›à¸´à¸”
               </button>
             )}
             <button 
@@ -11189,7 +11198,7 @@ function TaskDetailPane({
               form="task-form"
               className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors shadow-sm"
             >
-              บันทึก
+              à¸šà¸±à¸™à¸—à¸¶à¸
             </button>
           </div>
         )}
@@ -11385,6 +11394,26 @@ function NoteEditor({
   );
   const isActiveDocPage = activePage?.type !== 'sheet';
   const isActiveSheetPage = activePage?.type === 'sheet';
+  const noteHeaderTargetLabel = useMemo(() => {
+    const rawTitle = String(noteTitle || '').trim();
+    if (!rawTitle) return '';
+    const knownPrefixes = [
+      NOTE_TITLE_DEPARTMENT_PREFIX_TH,
+      NOTE_TITLE_OWNER_PREFIX_TH,
+      'à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¸­à¸‡à¸à¹ˆà¸²à¸¢',
+      'à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¸­à¸‡',
+    ];
+    for (const prefix of knownPrefixes) {
+      if (!prefix || !rawTitle.startsWith(prefix)) continue;
+      const stripped = rawTitle
+        .slice(prefix.length)
+        .replace(/^[:\s-]+/, '')
+        .trim();
+      return stripped || rawTitle;
+    }
+    return rawTitle;
+  }, [noteTitle]);
+  const noteHeaderSingleLineText = `${NOTE_TITLE_OWNER_PREFIX_TH} ${noteHeaderTargetLabel || '-'}`;
   const persistNoteDocument = (nextDocumentInput, options = {}) => {
     const normalized = normalizeNoteDocumentPayload(nextDocumentInput);
     const nextSerialized = serializeStoredNoteDocument(normalized);
@@ -12463,11 +12492,65 @@ function NoteEditor({
 
   const normalizeEditorImages = () => {
     if (!editorRef.current) return;
-    editorRef.current.style.position = 'relative';
-    const images = editorRef.current.querySelectorAll('img');
+    const editor = editorRef.current;
+    editor.style.position = 'relative';
+    const images = Array.from(editor.querySelectorAll('img'));
+    const editorRect = editor.getBoundingClientRect();
+    const inferredImagePositions = new Map();
+    images.forEach((imgElement) => {
+      const imageRect = imgElement.getBoundingClientRect();
+      const inferredX = imageRect.left - editorRect.left + editor.scrollLeft;
+      const inferredY = imageRect.top - editorRect.top + editor.scrollTop;
+      const inferredHeight = Math.max(
+        40,
+        Number(imageRect.height || imgElement.offsetHeight || 0) ||
+          Number.parseFloat(String(imgElement.style.height || '0')) ||
+          260
+      );
+      inferredImagePositions.set(imgElement, {
+        x: inferredX,
+        y: inferredY,
+        height: inferredHeight,
+        canUse:
+          (imageRect.width > 0 || imageRect.height > 0) &&
+          Number.isFinite(inferredX) &&
+          Number.isFinite(inferredY),
+      });
+    });
+    let nextAutoY = 24;
     images.forEach((imgElement) => {
       if (!imgElement.dataset.noteImageId) {
         imgElement.dataset.noteImageId = `img-${generateId()}`;
+      }
+      const parsedPosX = Number.parseFloat(String(imgElement.dataset.posX || ''));
+      const parsedPosY = Number.parseFloat(String(imgElement.dataset.posY || ''));
+      const hasStoredPosition = Number.isFinite(parsedPosX) && Number.isFinite(parsedPosY);
+      const inferredPosition = inferredImagePositions.get(imgElement);
+      const inferredHeight = Math.max(40, Number(inferredPosition?.height || 260));
+      if (!hasStoredPosition) {
+        if (inferredPosition?.canUse) {
+          const nextPosX = Math.max(0, Number(inferredPosition.x) || 0);
+          const nextPosY = Math.max(0, Number(inferredPosition.y) || 0);
+          imgElement.dataset.posX = String(Math.round(nextPosX));
+          imgElement.dataset.posY = String(Math.round(nextPosY));
+          nextAutoY = Math.max(nextAutoY, nextPosY + inferredHeight + 14);
+        } else {
+          const nextPosY = Math.max(24, nextAutoY);
+          imgElement.dataset.posX = '24';
+          imgElement.dataset.posY = String(Math.round(nextPosY));
+          nextAutoY = nextPosY + inferredHeight + 14;
+        }
+      } else {
+        const storedHeight = Math.max(
+          40,
+          Number(
+            imgElement.getBoundingClientRect().height ||
+              imgElement.offsetHeight ||
+              Number.parseFloat(String(imgElement.style.height || '0')) ||
+              inferredHeight
+          ) || inferredHeight
+        );
+        nextAutoY = Math.max(nextAutoY, parsedPosY + storedHeight + 14);
       }
       imgElement.setAttribute('draggable', 'true');
       applyImageLayout(imgElement, imgElement.dataset.layout || 'free');
@@ -12828,16 +12911,38 @@ function NoteEditor({
       reader.onerror = () => reject(reader.error || new Error('Failed reading image file.'));
       reader.readAsDataURL(file);
     });
-  const extractImageSrcFromHtmlClipboard = (htmlText) => {
+  const extractImageSrcListFromHtmlClipboard = (htmlText) => {
     const rawHtml = String(htmlText || '').trim();
-    if (!rawHtml) return '';
+    if (!rawHtml) return [];
     try {
       const parser = new DOMParser();
       const documentNode = parser.parseFromString(rawHtml, 'text/html');
-      const imageNode = documentNode.querySelector('img[src]');
-      return String(imageNode?.getAttribute('src') || '').trim();
+      const seen = new Set();
+      const imageSources = [];
+      documentNode.querySelectorAll('img[src]').forEach((imageNode) => {
+        const source = String(imageNode.getAttribute('src') || '').trim();
+        if (!source || seen.has(source)) return;
+        seen.add(source);
+        imageSources.push(source);
+      });
+      return imageSources;
     } catch {
-      return '';
+      return [];
+    }
+  };
+  const hasMeaningfulTextInHtmlClipboard = (htmlText) => {
+    const rawHtml = String(htmlText || '').trim();
+    if (!rawHtml) return false;
+    try {
+      const parser = new DOMParser();
+      const documentNode = parser.parseFromString(rawHtml, 'text/html');
+      const textValue = String(documentNode.body?.textContent || '')
+        .replace(/\u00a0/g, ' ')
+        .replace(/[\u200b-\u200d\ufeff]/g, '')
+        .trim();
+      return Boolean(textValue);
+    } catch {
+      return false;
     }
   };
   const buildImageClipboardPayload = (imageNode) => {
@@ -12899,8 +13004,11 @@ function NoteEditor({
     imageNode.dataset.cropMode = 'off';
     applyImageLayout(imageNode, String(data.layout || imageNode.dataset.layout || 'free').trim() || 'free');
   };
-  const insertImageAtCursor = (imageSrc, payloadInput = null) => {
+  const insertImageAtCursor = (imageSrc, payloadInput = null, optionsInput = null) => {
     if (!editorRef.current || !imageSrc) return;
+    const options = optionsInput && typeof optionsInput === 'object' ? optionsInput : {};
+    const positionOverride =
+      options.position && typeof options.position === 'object' ? options.position : null;
     const editor = editorRef.current;
     editor.focus();
 
@@ -12921,6 +13029,16 @@ function NoteEditor({
         initialY = rangeRect.bottom - editorRect.top + editor.scrollTop + 8;
       }
     }
+    if (positionOverride) {
+      const overrideX = Number(positionOverride.x);
+      const overrideY = Number(positionOverride.y);
+      if (Number.isFinite(overrideX)) {
+        initialX = overrideX;
+      }
+      if (Number.isFinite(overrideY)) {
+        initialY = overrideY;
+      }
+    }
     imageNode.dataset.posX = String(Math.max(0, initialX));
     imageNode.dataset.posY = String(Math.max(0, initialY));
     applyImageLayout(imageNode, 'free');
@@ -12932,6 +13050,46 @@ function NoteEditor({
     openImageMenu(imageNode);
     handleInput();
     return imageNode;
+  };
+  const insertImageSeriesAtCursor = (imageSourcesInput) => {
+    const imageSources = Array.isArray(imageSourcesInput)
+      ? imageSourcesInput
+          .map((source) => String(source || '').trim())
+          .filter((source) => Boolean(source))
+      : [];
+    if (imageSources.length <= 0) return;
+    const verticalGap = 14;
+    let lastInsertedImage = null;
+    imageSources.forEach((imageSrc) => {
+      let positionOverride = null;
+      if (lastInsertedImage) {
+        const parsedX = Number.parseFloat(String(lastInsertedImage.dataset.posX || ''));
+        const parsedY = Number.parseFloat(String(lastInsertedImage.dataset.posY || ''));
+        const imageHeight = Math.max(
+          40,
+          Number(
+            lastInsertedImage.getBoundingClientRect().height ||
+              lastInsertedImage.offsetHeight ||
+              Number.parseFloat(String(lastInsertedImage.style.height || '0')) ||
+              260
+          ) || 260
+        );
+        if (Number.isFinite(parsedX) && Number.isFinite(parsedY)) {
+          positionOverride = {
+            x: parsedX,
+            y: parsedY + imageHeight + verticalGap,
+          };
+        }
+      }
+      const insertedImage = insertImageAtCursor(
+        imageSrc,
+        null,
+        positionOverride ? { position: positionOverride } : null
+      );
+      if (insertedImage) {
+        lastInsertedImage = insertedImage;
+      }
+    });
   };
 
   const handleUploadImage = (event) => {
@@ -13529,6 +13687,25 @@ function NoteEditor({
   };
 
   const handleEditorTouchStart = (event) => {
+    const tableCellNode = getDocTableCellFromTarget(event.target);
+    if (isActiveDocPage && tableCellNode) {
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      try {
+        editorRef.current?.focus({ preventScroll: true });
+      } catch {
+        editorRef.current?.focus();
+      }
+      beginDocTableRangeSelection(tableCellNode);
+      setImageMenuState(null);
+      setActiveImageFrame(null);
+      setActiveCropFrame(null);
+      setImageCropModeId('');
+      setSelectedImageVisual('');
+      setDocLinkMenuState(null);
+      return;
+    }
     const imageNode = event.target.closest('img[data-note-image-id]');
     if (!imageNode) {
       resetTouchDragState();
@@ -13578,6 +13755,22 @@ function NoteEditor({
   };
 
   const handleEditorTouchMove = (event) => {
+    if (isActiveDocPage && docTableRangeDragRef.current.active) {
+      const touch = event.touches?.[0];
+      if (!touch) return;
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      const pointerTarget =
+        typeof document !== 'undefined' && typeof document.elementFromPoint === 'function'
+          ? document.elementFromPoint(touch.clientX, touch.clientY)
+          : event.target;
+      const tableCellNode = getDocTableCellFromTarget(pointerTarget || event.target);
+      if (tableCellNode) {
+        extendDocTableRangeSelection(tableCellNode);
+      }
+      return;
+    }
     const current = touchDragStateRef.current;
     if (!current.imageId) return;
 
@@ -13603,6 +13796,10 @@ function NoteEditor({
   };
 
   const handleEditorTouchEnd = (event) => {
+    if (isActiveDocPage && docTableRangeDragRef.current.active) {
+      endDocTableRangeSelection();
+      return;
+    }
     const current = touchDragStateRef.current;
     if (!current.imageId) {
       clearLongPressTimer();
@@ -13861,14 +14058,38 @@ function NoteEditor({
       if (!cellElement) return;
       extendDocTableRangeSelection(cellElement);
     };
+    const handleDocTableSelectionTouchMove = (event) => {
+      if (!isActiveDocPage || !docTableRangeDragRef.current.active) return;
+      const touch = event.touches?.[0];
+      if (!touch) {
+        endDocTableRangeSelection();
+        return;
+      }
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      const pointerTarget =
+        typeof document !== 'undefined' && typeof document.elementFromPoint === 'function'
+          ? document.elementFromPoint(touch.clientX, touch.clientY)
+          : event.target;
+      const cellElement = getDocTableCellFromTarget(pointerTarget || event.target);
+      if (!cellElement) return;
+      extendDocTableRangeSelection(cellElement);
+    };
     const stopDocTableSelection = () => {
       endDocTableRangeSelection();
     };
     window.addEventListener('mousemove', handleDocTableSelectionMove);
     window.addEventListener('mouseup', stopDocTableSelection);
+    window.addEventListener('touchmove', handleDocTableSelectionTouchMove, { passive: false });
+    window.addEventListener('touchend', stopDocTableSelection);
+    window.addEventListener('touchcancel', stopDocTableSelection);
     return () => {
       window.removeEventListener('mousemove', handleDocTableSelectionMove);
       window.removeEventListener('mouseup', stopDocTableSelection);
+      window.removeEventListener('touchmove', handleDocTableSelectionTouchMove);
+      window.removeEventListener('touchend', stopDocTableSelection);
+      window.removeEventListener('touchcancel', stopDocTableSelection);
     };
   }, [isActiveDocPage, activePageId]);
   React.useEffect(() => {
@@ -13906,12 +14127,35 @@ function NoteEditor({
     docTableSelectionState?.endCol,
   ]);
   React.useEffect(() => {
+    const resolveCornerResizePoint = (event) => {
+      const touch =
+        (event.touches && event.touches[0]) ||
+        (event.changedTouches && event.changedTouches[0]) ||
+        null;
+      if (touch) {
+        const x = Number(touch.clientX);
+        const y = Number(touch.clientY);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          return { x, y };
+        }
+      }
+      const x = Number(event.clientX);
+      const y = Number(event.clientY);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        return { x, y };
+      }
+      return null;
+    };
     const handleDocTableCornerResizeMove = (event) => {
       const resizeState = docTableCornerResizeRef.current;
       if (!isActiveDocPage || !resizeState?.active) return;
-      event.preventDefault();
-      const deltaX = event.clientX - resizeState.startClientX;
-      const deltaY = event.clientY - resizeState.startClientY;
+      const point = resolveCornerResizePoint(event);
+      if (!point) return;
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+      const deltaX = point.x - resizeState.startClientX;
+      const deltaY = point.y - resizeState.startClientY;
       const didApply = applyDocTableCornerResizeDrag(resizeState, deltaX, deltaY);
       if (!didApply) return;
       resizeState.hasMoved = true;
@@ -13929,9 +14173,15 @@ function NoteEditor({
     };
     window.addEventListener('mousemove', handleDocTableCornerResizeMove);
     window.addEventListener('mouseup', stopDocTableCornerResize);
+    window.addEventListener('touchmove', handleDocTableCornerResizeMove, { passive: false });
+    window.addEventListener('touchend', stopDocTableCornerResize);
+    window.addEventListener('touchcancel', stopDocTableCornerResize);
     return () => {
       window.removeEventListener('mousemove', handleDocTableCornerResizeMove);
       window.removeEventListener('mouseup', stopDocTableCornerResize);
+      window.removeEventListener('touchmove', handleDocTableCornerResizeMove);
+      window.removeEventListener('touchend', stopDocTableCornerResize);
+      window.removeEventListener('touchcancel', stopDocTableCornerResize);
     };
   }, [
     isActiveDocPage,
@@ -15535,8 +15785,24 @@ function NoteEditor({
   };
   const handleDocTableCornerResizeStart = (event, direction = 'se') => {
     if (!isActiveDocPage || !isDocTableResizeMenuOpen) return;
-    if (event.button !== 0) return;
-    event.preventDefault();
+    const touchPoint =
+      (event.touches && event.touches[0]) ||
+      (event.changedTouches && event.changedTouches[0]) ||
+      null;
+    const pointerClientX =
+      touchPoint && Number.isFinite(Number(touchPoint.clientX))
+        ? Number(touchPoint.clientX)
+        : Number(event.clientX);
+    const pointerClientY =
+      touchPoint && Number.isFinite(Number(touchPoint.clientY))
+        ? Number(touchPoint.clientY)
+        : Number(event.clientY);
+    const isMouseLikeEvent = !touchPoint && typeof event.button === 'number';
+    if (isMouseLikeEvent && event.button !== 0) return;
+    if (!Number.isFinite(pointerClientX) || !Number.isFinite(pointerClientY)) return;
+    if (event.cancelable) {
+      event.preventDefault();
+    }
     event.stopPropagation();
     const selectionSnapshot = getDocTableSelectionSnapshot();
     if (!selectionSnapshot) return;
@@ -15571,8 +15837,8 @@ function NoteEditor({
       tableId,
       direction: ['n', 'e', 's', 'w', 'nw', 'ne', 'sw', 'se'].includes(direction) ? direction : 'se',
       hasMoved: false,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
+      startClientX: pointerClientX,
+      startClientY: pointerClientY,
       startFrameWidth: frame.width,
       startFrameHeight: frame.height,
       startScale,
@@ -15866,25 +16132,11 @@ function NoteEditor({
     const pastedHtml = String(clipboardData?.getData('text/html') || '');
     const clipboardItems = Array.from(clipboardData?.items || []);
     if (!hasDocTableSelection) {
-      const pastedImageItem = clipboardItems.find((item) =>
-        String(item?.type || '').toLowerCase().startsWith('image/')
-      );
-      const pastedImageFile = pastedImageItem?.getAsFile?.() || null;
-      if (pastedImageFile) {
-        event.preventDefault();
-        void readFileAsDataUrl(pastedImageFile)
-          .then((imageSrc) => {
-            if (!imageSrc || !editorRef.current) return;
-            insertImageAtCursor(imageSrc);
-          })
-          .catch(() => {
-            // Ignore clipboard image read failures.
-          });
-        return;
-      }
       const internalClipboard = docImageClipboardRef.current;
-      const markerToken = pastedText.startsWith(NOTE_IMAGE_CLIPBOARD_PREFIX)
-        ? pastedText.slice(NOTE_IMAGE_CLIPBOARD_PREFIX.length).trim()
+      const trimmedPastedText = pastedText.trim();
+      const trimmedPastedHtml = pastedHtml.trim();
+      const markerToken = trimmedPastedText.startsWith(NOTE_IMAGE_CLIPBOARD_PREFIX)
+        ? trimmedPastedText.slice(NOTE_IMAGE_CLIPBOARD_PREFIX.length).trim()
         : '';
       const markerMatchesInternalClipboard = Boolean(
         markerToken &&
@@ -15892,43 +16144,46 @@ function NoteEditor({
           String(internalClipboard.token || '') === markerToken &&
           String(internalClipboard.payload?.src || '').trim()
       );
-      const pastedCopiedImageSrc = Boolean(
-        pastedText &&
-          internalClipboard &&
-          String(internalClipboard.payload?.src || '').trim() &&
-          pastedText.trim() === String(internalClipboard.payload.src || '').trim()
-      );
-      const htmlImageSrc = extractImageSrcFromHtmlClipboard(pastedHtml);
-      const pastedDataUrlImage = /^data:image\/[a-z0-9.+-]+;base64,/i.test(pastedText.trim());
-      let imageSrcToInsert = '';
-      let payloadForInsert = null;
       if (markerMatchesInternalClipboard) {
-        imageSrcToInsert = String(internalClipboard.payload.src || '').trim();
-        payloadForInsert = internalClipboard.payload;
-      } else if (pastedCopiedImageSrc) {
-        imageSrcToInsert = String(internalClipboard.payload.src || '').trim();
-        payloadForInsert = internalClipboard.payload;
-      } else if (htmlImageSrc) {
-        imageSrcToInsert = htmlImageSrc;
-      } else if (pastedDataUrlImage) {
-        imageSrcToInsert = pastedText.trim();
-      }
-      if (imageSrcToInsert) {
         event.preventDefault();
-        insertImageAtCursor(imageSrcToInsert, payloadForInsert);
-        if (
-          internalClipboard?.cut &&
-          (markerMatchesInternalClipboard || pastedCopiedImageSrc)
-        ) {
+        insertImageAtCursor(
+          String(internalClipboard.payload.src || '').trim(),
+          internalClipboard.payload
+        );
+        if (internalClipboard.cut) {
           docImageClipboardRef.current = null;
         }
         return;
       }
+      const pastedCopiedImageSrc = Boolean(
+        trimmedPastedText &&
+          internalClipboard &&
+          String(internalClipboard.payload?.src || '').trim() &&
+          trimmedPastedText === String(internalClipboard.payload.src || '').trim()
+      );
+      if (pastedCopiedImageSrc) {
+        event.preventDefault();
+        insertImageAtCursor(
+          String(internalClipboard.payload.src || '').trim(),
+          internalClipboard.payload
+        );
+        if (internalClipboard?.cut) {
+          docImageClipboardRef.current = null;
+        }
+        return;
+      }
+      const clipboardImageFiles = clipboardItems
+        .filter((item) => String(item?.type || '').toLowerCase().startsWith('image/'))
+        .map((item) => item?.getAsFile?.() || null)
+        .filter(Boolean);
+      const htmlImageSources = extractImageSrcListFromHtmlClipboard(trimmedPastedHtml);
+      const htmlHasMeaningfulText = hasMeaningfulTextInHtmlClipboard(trimmedPastedHtml);
+      const pastedDataUrlImage = /^data:image\/[a-z0-9.+-]+;base64,/i.test(trimmedPastedText);
       const canUseInternalClipboardFallback = Boolean(
         internalClipboard &&
           String(internalClipboard.payload?.src || '').trim() &&
-          !pastedText.trim() &&
-          !pastedHtml.trim() &&
+          !trimmedPastedText &&
+          !trimmedPastedHtml &&
           clipboardItems.length === 0
       );
       if (canUseInternalClipboardFallback) {
@@ -15940,6 +16195,42 @@ function NoteEditor({
         if (internalClipboard.cut) {
           docImageClipboardRef.current = null;
         }
+        return;
+      }
+      const shouldInsertClipboardFilesAsImages = Boolean(
+        clipboardImageFiles.length > 0 &&
+          !trimmedPastedText &&
+          !trimmedPastedHtml
+      );
+      if (shouldInsertClipboardFilesAsImages) {
+        event.preventDefault();
+        void Promise.all(
+          clipboardImageFiles.map((imageFile) =>
+            readFileAsDataUrl(imageFile).catch(() => '')
+          )
+        )
+          .then((imageSources) => {
+            if (!editorRef.current) return;
+            insertImageSeriesAtCursor(imageSources);
+          })
+          .catch(() => {
+            // Ignore clipboard image read failures.
+          });
+        return;
+      }
+      const shouldInsertHtmlImagesOnly = Boolean(
+        htmlImageSources.length > 0 &&
+          !htmlHasMeaningfulText &&
+          (!trimmedPastedText || /^https?:\/\//i.test(trimmedPastedText) || pastedDataUrlImage)
+      );
+      if (shouldInsertHtmlImagesOnly) {
+        event.preventDefault();
+        insertImageSeriesAtCursor(htmlImageSources);
+        return;
+      }
+      if (pastedDataUrlImage && !trimmedPastedHtml) {
+        event.preventDefault();
+        insertImageAtCursor(trimmedPastedText);
       }
       return;
     }
@@ -16687,6 +16978,17 @@ function NoteEditor({
         ),
       }
     : activeFormats;
+  const mobileCompactDocFontOptions = React.useMemo(
+    () =>
+      DOC_FONT_FAMILY_GROUPS.flatMap((group) =>
+        (Array.isArray(group?.options) ? group.options : []).map((fontOption) => ({
+          value: String(fontOption?.value || ''),
+          cssFamily: String(fontOption?.cssFamily || ''),
+          label: toCompactFontOptionLabel(fontOption?.label),
+        }))
+      ).filter((fontOption) => fontOption.value),
+    []
+  );
   const docTableSelectionBounds = React.useMemo(
     () => getDocTableSelectionBounds(docTableSelectionState),
     [
@@ -16703,6 +17005,7 @@ function NoteEditor({
       docTableSelectionBounds &&
       getDocTableElementById(docTableSelectionState.tableId)
   );
+  const isMobileFullDocToolbarMode = isMobileNoteViewport && isFullScreen && isActiveDocPage;
   const docTableSelectionRowCount = docTableSelectionBounds
     ? docTableSelectionBounds.maxRow - docTableSelectionBounds.minRow + 1
     : 0;
@@ -16760,6 +17063,18 @@ function NoteEditor({
     closeEditorFloatingMenus();
     setMobileToolbarSection((prev) => (prev === normalized ? '' : normalized));
   };
+  React.useEffect(() => {
+    if (!isMobileFullDocToolbarMode) return;
+    setMobileToolbarSection((prev) => {
+      if (hasDocTableSelection) {
+        return prev === 'table' ? prev : 'table';
+      }
+      if (prev === 'table') {
+        return '';
+      }
+      return prev;
+    });
+  }, [isMobileFullDocToolbarMode, hasDocTableSelection]);
   const sheetRows = Math.max(1, Number(activePage?.rows || 1));
   const sheetCols = Math.max(1, Number(activePage?.cols || 1));
   const sheetSelectionBounds = React.useMemo(() => {
@@ -16794,7 +17109,7 @@ function NoteEditor({
   const sheetSelectionCellCount = sheetSelectionRowCount * sheetSelectionColCount;
   const isSheetRangeSelection = sheetSelectionCellCount > 1;
   const sheetSelectionSummary = isSheetRangeSelection
-    ? `Range ${sheetSelectionStartLabel} to ${sheetSelectionEndLabel} • Rows ${sheetSelectionRowCount} • Cols ${sheetSelectionColCount} • Total ${sheetSelectionCellCount} cells`
+    ? `Range ${sheetSelectionStartLabel} to ${sheetSelectionEndLabel} â€¢ Rows ${sheetSelectionRowCount} â€¢ Cols ${sheetSelectionColCount} â€¢ Total ${sheetSelectionCellCount} cells`
     : `Selected cell: ${sheetSelectionStartLabel}`;
   const sheetClipboardBounds = React.useMemo(() => {
     if (!isActiveSheetPage || !sheetClipboardState) return null;
@@ -17037,18 +17352,24 @@ function NoteEditor({
             </button>
           )}
           <div className="mr-auto min-w-0">
-            <h3 className="font-semibold text-gray-700 flex items-center gap-2 min-w-0">
-              {isActiveSheetPage ? (
-                <LayoutGrid className="w-4 h-4 text-blue-500 shrink-0" />
-              ) : (
-                <FileText className="w-4 h-4 text-blue-500 shrink-0" />
-              )}
-              <span className="truncate">{noteTitle}</span>
-            </h3>
-            {isFullScreen && (
-              <p className="mt-0.5 pl-6 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">
-                Full Note Editor
-              </p>
+            {isMobileNoteViewport ? (
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-700 leading-tight">
+                  {NOTE_TITLE_OWNER_PREFIX_TH}
+                </p>
+                <p className="text-sm font-semibold text-gray-700 truncate leading-tight">
+                  {noteHeaderTargetLabel || '-'}
+                </p>
+              </div>
+            ) : (
+              <h3 className="font-semibold text-gray-700 flex items-center gap-2 min-w-0">
+                {isActiveSheetPage ? (
+                  <LayoutGrid className="w-4 h-4 text-blue-500 shrink-0" />
+                ) : (
+                  <FileText className="w-4 h-4 text-blue-500 shrink-0" />
+                )}
+                <span className="truncate">{noteHeaderSingleLineText}</span>
+              </h3>
             )}
           </div>
 
@@ -17249,27 +17570,25 @@ function NoteEditor({
                 >
                   <Italic size={16} />
                 </button>
-                <button
-                  type="button"
-                  onMouseDown={handleFormatMouseDown}
-                  onClick={() => {
-                    if (isActiveSheetPage) {
+                {isActiveSheetPage && (
+                  <button
+                    type="button"
+                    onMouseDown={handleFormatMouseDown}
+                    onClick={() => {
                       updateSelectedSheetCellStyle({
                         underline: !Boolean(selectedSheetCell?.style?.underline),
                       });
-                      return;
-                    }
-                    handleApplyUnderline();
-                  }}
-                  className={`p-1.5 rounded transition-colors ${
-                    currentFormatState.underline
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'hover:bg-gray-100 text-gray-600'
-                  }`}
-                  title="Underline (Ctrl+U)"
-                >
-                  <Underline size={16} />
-                </button>
+                    }}
+                    className={`p-1.5 rounded transition-colors ${
+                      currentFormatState.underline
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'hover:bg-gray-100 text-gray-600'
+                    }`}
+                    title="Underline (Ctrl+U)"
+                  >
+                    <Underline size={16} />
+                  </button>
+                )}
               </div>
 
               <div className="w-px h-6 bg-gray-300 mx-1"></div>
@@ -17311,7 +17630,11 @@ function NoteEditor({
         </div>
 
         {isMobileNoteViewport && (
-          <div className="md:hidden rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div
+            className={`md:hidden border border-gray-200 bg-white overflow-hidden ${
+              isMobileFullDocToolbarMode ? 'rounded-md' : 'rounded-xl shadow-sm'
+            }`}
+          >
             <div className="p-2 space-y-2">
               <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [&::-webkit-scrollbar]:hidden">
               <button
@@ -17319,26 +17642,28 @@ function NoteEditor({
                 onMouseDown={handleFormatMouseDown}
                 onClick={handleUndoNoteChange}
                 disabled={!canUndoNoteChange}
-                className={`h-8 px-2.5 text-xs rounded border shrink-0 ${
+                className={`h-8 w-8 text-base leading-none rounded border shrink-0 inline-flex items-center justify-center ${
                   canUndoNoteChange
                     ? 'border-gray-200 text-gray-700 bg-white hover:bg-gray-50'
                     : 'border-gray-100 text-gray-300 bg-gray-50 cursor-not-allowed'
                 }`}
+                title="Undo"
               >
-                Undo
+                {'\u21B6'}
               </button>
               <button
                 type="button"
                 onMouseDown={handleFormatMouseDown}
                 onClick={handleRedoNoteChange}
                 disabled={!canRedoNoteChange}
-                className={`h-8 px-2.5 text-xs rounded border shrink-0 ${
+                className={`h-8 w-8 text-base leading-none rounded border shrink-0 inline-flex items-center justify-center ${
                   canRedoNoteChange
                     ? 'border-gray-200 text-gray-700 bg-white hover:bg-gray-50'
                     : 'border-gray-100 text-gray-300 bg-gray-50 cursor-not-allowed'
                 }`}
+                title="Redo"
               >
-                Redo
+                {'\u21B7'}
               </button>
               <span className="w-px h-5 bg-gray-200 mx-0.5 shrink-0" />
                 <button
@@ -17379,28 +17704,58 @@ function NoteEditor({
               >
                 <Italic size={14} />
               </button>
-                <button
-                type="button"
-                onMouseDown={handleFormatMouseDown}
-                onClick={() => {
-                  if (isActiveSheetPage) {
-                    updateSelectedSheetCellStyle({
-                      underline: !Boolean(selectedSheetCell?.style?.underline),
-                    });
-                    return;
-                  }
-                  handleApplyUnderline();
-                }}
-                className={`h-8 w-8 inline-flex items-center justify-center rounded border shrink-0 ${
-                  currentFormatState.underline
-                    ? 'bg-blue-50 text-blue-700 border-blue-200'
-                    : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
-                }`}
-                title="Underline"
-              >
-                <Underline size={14} />
-              </button>
+                {isActiveSheetPage && (
+                  <button
+                    type="button"
+                    onMouseDown={handleFormatMouseDown}
+                    onClick={() => {
+                      updateSelectedSheetCellStyle({
+                        underline: !Boolean(selectedSheetCell?.style?.underline),
+                      });
+                    }}
+                    className={`h-8 w-8 inline-flex items-center justify-center rounded border shrink-0 ${
+                      currentFormatState.underline
+                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                        : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
+                    }`}
+                    title="Underline"
+                  >
+                    <Underline size={14} />
+                  </button>
+                )}
+                {isMobileFullDocToolbarMode && (
+                  <>
+                    <span className="w-px h-5 bg-gray-200 mx-0.5 shrink-0" />
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => toggleMobileToolbarSection('format')}
+                      className={`h-8 px-2.5 text-xs rounded border inline-flex items-center justify-center gap-1 shrink-0 ${
+                        mobileToolbarSection === 'format'
+                          ? 'border-gray-300 bg-gray-50 text-gray-700'
+                          : 'border-gray-200 bg-white text-gray-700'
+                      }`}
+                    >
+                      <Settings size={12} />
+                      Format
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => toggleMobileToolbarSection('insert')}
+                      className={`h-8 px-2.5 text-xs rounded border inline-flex items-center justify-center gap-1 shrink-0 ${
+                        mobileToolbarSection === 'insert'
+                          ? 'border-gray-300 bg-gray-50 text-gray-700'
+                          : 'border-gray-200 bg-white text-gray-700'
+                      }`}
+                    >
+                      <Plus size={12} />
+                      Insert
+                    </button>
+                  </>
+                )}
               </div>
+              {!isMobileFullDocToolbarMode && (
               <div className={`grid gap-1.5 ${isActiveSheetPage ? 'grid-cols-1' : 'grid-cols-3'}`}>
                 <button
                   type="button"
@@ -17446,8 +17801,9 @@ function NoteEditor({
                   </button>
                 )}
               </div>
+              )}
             </div>
-            {mobileToolbarSection === 'format' && (
+            {!isMobileFullDocToolbarMode && mobileToolbarSection === 'format' && (
               <div className="border-t border-gray-100 bg-slate-50 p-2.5 space-y-2.5">
                 {!isActiveSheetPage && (
                   <label className="block text-[11px] font-medium text-gray-600">
@@ -17466,7 +17822,7 @@ function NoteEditor({
                               value={fontOption.value}
                               style={{ fontFamily: fontOption.cssFamily }}
                             >
-                              {fontOption.label}
+                              {toCompactFontOptionLabel(fontOption.label)}
                             </option>
                           ))}
                         </optgroup>
@@ -17663,7 +18019,7 @@ function NoteEditor({
                 )}
               </div>
             )}
-            {mobileToolbarSection === 'insert' && (
+            {!isMobileFullDocToolbarMode && mobileToolbarSection === 'insert' && (
               <div className="border-t border-gray-100 bg-slate-50 p-2.5 space-y-2.5">
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -17722,7 +18078,7 @@ function NoteEditor({
                 </button>
               </div>
             )}
-            {mobileToolbarSection === 'table' && (
+            {!isMobileFullDocToolbarMode && mobileToolbarSection === 'table' && (
               <div className="border-t border-gray-100 bg-slate-50 p-2.5 space-y-2.5">
                 {hasDocTableSelection ? (
                   <>
@@ -17955,6 +18311,630 @@ function NoteEditor({
           </div>
         )}
 
+        {isMobileFullDocToolbarMode && mobileToolbarSection && (
+          <div className="mobile-note-bottom-dock md:hidden fixed inset-x-0 bottom-0 z-[95] border-t border-gray-200 bg-white text-gray-700">
+            <div className="px-2.5 pt-2 pb-[max(env(safe-area-inset-bottom),0.75rem)]">
+              <div className="mobile-note-bottom-scroll flex items-center gap-2 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
+                {mobileToolbarSection === 'format' && (
+                  <>
+                    <label className="shrink-0 inline-flex items-center">
+                      <span className="sr-only">Font</span>
+                      <select
+                        value={docFontFamilyValue}
+                        onChange={handleApplyFontFamily}
+                        className="h-8 w-[88px] min-w-[88px] max-w-[88px] rounded-md border border-gray-200 bg-white px-1.5 text-[11px] text-gray-700"
+                        title="Font"
+                      >
+                        <option value="">Font</option>
+                        {mobileCompactDocFontOptions.map((fontOption) => (
+                          <option
+                            key={`mobile-dock-font-${fontOption.value}`}
+                            value={fontOption.value}
+                            style={{ fontFamily: fontOption.cssFamily }}
+                          >
+                            {fontOption.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div ref={docFontSizeMenuRef} className="relative shrink-0">
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={() => setIsDocFontSizeMenuOpen((prev) => !prev)}
+                        className="h-8 inline-flex items-center gap-1.5 px-2 text-xs rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                        title="Font size"
+                      >
+                        <span className="w-6 text-left">{docFontSizeValue}</span>
+                        <ChevronDown size={12} className={`transition-transform ${isDocFontSizeMenuOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                      {isDocFontSizeMenuOpen && (
+                        <div className="absolute z-[140] bottom-full mb-1 right-0 w-44 max-w-[calc(100vw-20px)] rounded-lg border border-gray-200 bg-white p-2 shadow-md">
+                          <div className="grid grid-cols-4 gap-1">
+                            {DOC_FONT_SIZE_OPTIONS.map((sizeValue) => {
+                              const isActiveSize = String(docFontSizeValue || '').trim() === sizeValue;
+                              return (
+                                <button
+                                  key={`mobile-dock-font-size-preset-${sizeValue}`}
+                                  type="button"
+                                  onMouseDown={handleFormatMouseDown}
+                                  onClick={() => handleApplyFontSizePreset(sizeValue)}
+                                  className={`px-1.5 py-1 text-[11px] rounded border transition-colors ${
+                                    isActiveSize
+                                      ? 'bg-gray-100 text-gray-700 border-gray-300'
+                                      : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  {sizeValue}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-1.5">
+                            <input
+                              value={docFontSizeDraft}
+                              onChange={handleDocFontSizeDraftChange}
+                              onKeyDown={handleDocFontSizeDraftKeyDown}
+                              inputMode="numeric"
+                              className="w-14 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700"
+                              title="Custom font size"
+                              placeholder="14"
+                            />
+                            <span className="text-[11px] text-gray-500">px</span>
+                            <button
+                              type="button"
+                              onMouseDown={handleFormatMouseDown}
+                              onClick={commitDocFontSizeDraft}
+                              className="ml-auto px-2 py-1 text-[11px] rounded border border-gray-200 bg-white hover:bg-gray-50 text-gray-700"
+                            >
+                              Set
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div ref={docTextColorPickerRef} className="relative shrink-0">
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={() => setIsDocTextColorPickerOpen((prev) => !prev)}
+                        className="h-8 px-2 text-xs rounded-md border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 inline-flex items-center gap-1.5"
+                        title="Text color"
+                      >
+                        <span className="inline-block w-3 h-3 rounded-sm border border-gray-200" style={{ backgroundColor: docTextColorValue }} />
+                        Text
+                      </button>
+                      {isDocTextColorPickerOpen && (
+                        <div className="absolute z-[140] bottom-full mb-1 right-0 w-56 max-w-[calc(100vw-20px)] rounded-lg border border-gray-200 bg-white p-2 shadow-md">
+                          <div className="grid grid-cols-8 gap-1">
+                            {DOC_COLOR_PRESETS.map((colorValue) => (
+                              <button
+                                key={`mobile-dock-doc-text-color-${colorValue}`}
+                                type="button"
+                                onMouseDown={handleFormatMouseDown}
+                                onClick={() => applyTextColorValue(colorValue)}
+                                className="w-5 h-5 rounded-full border border-white shadow-[0_0_0_1px_rgba(148,163,184,0.4)]"
+                                style={{ backgroundColor: colorValue }}
+                                title={colorValue}
+                              />
+                            ))}
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between">
+                            <span className="text-[11px] text-gray-500">Custom</span>
+                            <input
+                              type="color"
+                              value={docTextColorValue}
+                              onChange={(event) => applyTextColorValue(event.target.value)}
+                              className="h-7 w-8 p-0 border border-gray-200 rounded cursor-pointer bg-white"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div ref={docHighlightColorPickerRef} className="relative shrink-0 inline-flex items-center rounded-md border border-gray-200 bg-white">
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={handleToggleHighlight}
+                        className={`h-8 px-2 text-xs rounded-l inline-flex items-center gap-1.5 transition-colors ${
+                          currentFormatState.highlight
+                            ? 'bg-gray-100 text-gray-700'
+                            : 'hover:bg-gray-50 text-gray-700'
+                        }`}
+                        title="Toggle highlight on selected text"
+                      >
+                        <span className="inline-block w-3 h-3 rounded-sm border border-gray-200" style={{ backgroundColor: docHighlightColorValue }} />
+                        Highlight
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={() => setIsDocHighlightColorPickerOpen((prev) => !prev)}
+                        className="h-8 px-1.5 border-l border-gray-200 rounded-r hover:bg-gray-50 text-gray-600"
+                        title="Highlight color"
+                      >
+                        <ChevronDown size={12} />
+                      </button>
+                      {isDocHighlightColorPickerOpen && (
+                        <div className="absolute z-[140] bottom-full mb-1 right-0 w-56 max-w-[calc(100vw-20px)] rounded-lg border border-gray-200 bg-white p-2 shadow-md">
+                          <div className="grid grid-cols-8 gap-1">
+                            {DOC_COLOR_PRESETS.map((colorValue) => (
+                              <button
+                                key={`mobile-dock-doc-highlight-color-${colorValue}`}
+                                type="button"
+                                onMouseDown={handleFormatMouseDown}
+                                onClick={() => applyHighlightColorValue(colorValue)}
+                                className="w-5 h-5 rounded-full border border-white shadow-[0_0_0_1px_rgba(148,163,184,0.4)]"
+                                style={{ backgroundColor: colorValue }}
+                                title={colorValue}
+                              />
+                            ))}
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between">
+                            <span className="text-[11px] text-gray-500">Custom</span>
+                            <input
+                              type="color"
+                              value={docHighlightColorValue}
+                              onChange={(event) => applyHighlightColorValue(event.target.value)}
+                              className="h-7 w-8 p-0 border border-gray-200 rounded cursor-pointer bg-white"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div ref={docUnderlineMenuRef} className="relative shrink-0 inline-flex items-center rounded-md border border-gray-200 bg-white">
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={handleApplyUnderline}
+                        className={`h-8 px-2 text-xs rounded-l inline-flex items-center gap-1 transition-colors ${
+                          currentFormatState.underline
+                            ? 'bg-gray-100 text-gray-700'
+                            : 'hover:bg-gray-50 text-gray-700'
+                        }`}
+                      >
+                        <Underline size={13} /> Underline
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={() => setIsDocUnderlineMenuOpen((prev) => !prev)}
+                        className="h-8 px-1.5 border-l border-gray-200 rounded-r hover:bg-gray-50 text-gray-600"
+                        title="Underline style"
+                      >
+                        <ChevronDown size={12} />
+                      </button>
+                      {isDocUnderlineMenuOpen && (
+                        <div className="absolute z-[140] bottom-full mb-1 right-0 w-36 rounded-lg border border-gray-200 bg-white p-1 shadow-md">
+                          <button
+                            type="button"
+                            onMouseDown={handleFormatMouseDown}
+                            onClick={() => {
+                              setDocUnderlineStyle('solid');
+                              setIsDocUnderlineMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-gray-100 ${
+                              docUnderlineStyle === 'solid' ? 'text-gray-700 bg-gray-100' : 'text-gray-700'
+                            }`}
+                          >
+                            Solid line
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={handleFormatMouseDown}
+                            onClick={() => {
+                              setDocUnderlineStyle('dashed');
+                              setIsDocUnderlineMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-gray-100 ${
+                              docUnderlineStyle === 'dashed' ? 'text-gray-700 bg-gray-100' : 'text-gray-700'
+                            }`}
+                          >
+                            Dashed line
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <span className="h-6 w-px shrink-0 bg-gray-200" />
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={handleInsertBulletList}
+                      className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                      title="Bulleted list"
+                    >
+                      <List size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={handleInsertNumberList}
+                      className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                      title="Numbered list"
+                    >
+                      <ListOrdered size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => handleDocHorizontalAlignAction('left')}
+                      className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                      title="Align left"
+                    >
+                      <AlignLeft size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => handleDocHorizontalAlignAction('center')}
+                      className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                      title="Align center"
+                    >
+                      <AlignCenter size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => handleDocHorizontalAlignAction('right')}
+                      className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                      title="Align right"
+                    >
+                      <AlignRight size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => execCmd('outdent')}
+                      className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                      title="Decrease indent"
+                    >
+                      <IndentDecrease size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => execCmd('indent')}
+                      className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                      title="Increase indent"
+                    >
+                      <IndentIncrease size={14} />
+                    </button>
+                  </>
+                )}
+                {mobileToolbarSection === 'insert' && (
+                  <>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={handleInsertLink}
+                      className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1.5"
+                    >
+                      <LinkIcon size={13} />
+                      Link
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => uploadInputRef.current?.click()}
+                      className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1.5"
+                    >
+                      <ImageIcon size={13} />
+                      Image
+                    </button>
+                    <div ref={docInsertTableMenuRef} className="relative shrink-0">
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={handleToggleDocInsertTableMenu}
+                        className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1"
+                        title="Insert table"
+                      >
+                        <Table2 size={13} />
+                        Table
+                        <ChevronDown size={12} className={`transition-transform ${isDocInsertTableMenuOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                      {isDocInsertTableMenuOpen && (
+                        <div className="absolute z-[140] bottom-full mb-1 right-0 w-56 max-w-[calc(100vw-20px)] rounded-lg border border-gray-200 bg-white p-2 shadow-md">
+                          <div
+                            className="grid grid-cols-10 gap-1"
+                            onMouseLeave={() => {
+                              setDocTableHoverRows(0);
+                              setDocTableHoverCols(0);
+                            }}
+                          >
+                            {Array.from({ length: 8 }, (_, rowIndex) =>
+                              Array.from({ length: 10 }, (_, colIndex) => {
+                                const previewRows = docTableHoverRows || normalizeDocTableDimension(docTableDraftRows, 4);
+                                const previewCols = docTableHoverCols || normalizeDocTableDimension(docTableDraftCols, 4);
+                                const isHighlighted = rowIndex < previewRows && colIndex < previewCols;
+                                return (
+                                  <button
+                                    key={`mobile-dock-table-picker-${rowIndex}-${colIndex}`}
+                                    type="button"
+                                    onMouseDown={handleFormatMouseDown}
+                                    onMouseEnter={() => {
+                                      setDocTableHoverRows(rowIndex + 1);
+                                      setDocTableHoverCols(colIndex + 1);
+                                    }}
+                                    onClick={() => insertDocTable(rowIndex + 1, colIndex + 1)}
+                                    className={`h-4 w-4 rounded-[2px] border transition-colors ${
+                                      isHighlighted
+                                        ? 'border-gray-400 bg-gray-200'
+                                        : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
+                                    }`}
+                                    title={`${rowIndex + 1} x ${colIndex + 1}`}
+                                  />
+                                );
+                              })
+                            )}
+                          </div>
+                          <p className="mt-2 text-center text-xs text-gray-600">
+                            {(docTableHoverRows || normalizeDocTableDimension(docTableDraftRows, 4))} x{' '}
+                            {(docTableHoverCols || normalizeDocTableDimension(docTableDraftCols, 4))}
+                          </p>
+                          <div className="mt-2 pt-2 border-t border-gray-100 flex items-end gap-1.5">
+                            <label className="text-[11px] text-gray-500">
+                              Row
+                              <input
+                                value={docTableDraftRows}
+                                onChange={handleDocTableDraftRowsChange}
+                                onKeyDown={handleDocTableDraftKeyDown}
+                                inputMode="numeric"
+                                className="mt-0.5 w-12 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700"
+                                placeholder="4"
+                              />
+                            </label>
+                            <label className="text-[11px] text-gray-500">
+                              Col
+                              <input
+                                value={docTableDraftCols}
+                                onChange={handleDocTableDraftColsChange}
+                                onKeyDown={handleDocTableDraftKeyDown}
+                                inputMode="numeric"
+                                className="mt-0.5 w-12 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700"
+                                placeholder="4"
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              onMouseDown={handleFormatMouseDown}
+                              onClick={() => insertDocTable(docTableDraftRows, docTableDraftCols)}
+                              className="ml-auto px-2 py-1 text-[11px] rounded border border-gray-200 bg-white hover:bg-gray-50 text-gray-700"
+                            >
+                              Insert
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+                {mobileToolbarSection === 'table' && (
+                  <>
+                    {hasDocTableSelection ? (
+                      <>
+                        <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                          Fill
+                          <input
+                            type="color"
+                            value={docTableFillColorValue === 'transparent' ? '#ffffff' : docTableFillColorValue}
+                            onChange={(event) => applyDocTableFillColorValue(event.target.value)}
+                            className="h-8 w-9 rounded border border-gray-200 bg-white p-0"
+                          />
+                        </label>
+                        <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                          Border
+                          <input
+                            type="color"
+                            value={docTableBorderColorValue === 'transparent' ? '#cbd5e1' : docTableBorderColorValue}
+                            onChange={(event) => applyDocTableBorderColorValue(event.target.value)}
+                            className="h-8 w-9 rounded border border-gray-200 bg-white p-0"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => applyDocTableFillColorValue('transparent')}
+                          className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Fill clear
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => applyDocTableBorderColorValue('#cbd5e1')}
+                          className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Border default
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => applyDocTableBorderColorValue('transparent')}
+                          className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Border clear
+                        </button>
+                        <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                          Design
+                          <select
+                            value={docTableBorderDesignValue}
+                            onChange={(event) => handleDocTableBorderDesignChange(event.target.value)}
+                            className="h-8 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700"
+                          >
+                            {DOC_TABLE_BORDER_DESIGN_OPTIONS.map((option) => (
+                              <option key={`mobile-doc-dock-border-design-${option.id}`} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                          Style
+                          <select
+                            value={docTableBorderLineStyleValue}
+                            onChange={handleDocTableBorderLineStyleChange}
+                            className="h-8 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700"
+                          >
+                            {DOC_TABLE_BORDER_LINE_STYLE_OPTIONS.map((option) => (
+                              <option key={`mobile-doc-dock-border-style-${option.id}`} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                          Width
+                          <select
+                            value={docTableBorderLineWidthValue}
+                            onChange={handleDocTableBorderLineWidthChange}
+                            className="h-8 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700"
+                          >
+                            {DOC_TABLE_BORDER_WIDTH_OPTIONS.map((widthValue) => (
+                              <option key={`mobile-doc-dock-border-width-${widthValue}`} value={widthValue}>
+                                {widthValue}px
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={handleToggleDocTableWrap}
+                          className={`h-8 px-2.5 shrink-0 rounded-md border text-xs ${
+                            docTableWrapEnabled
+                              ? 'border-gray-300 bg-gray-50 text-gray-700'
+                              : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          Wrap
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => {
+                            if (canUnmergeDocTableSelection) {
+                              handleUnmergeSelectedDocTableCell();
+                              return;
+                            }
+                            void handleMergeSelectedDocTableCells();
+                          }}
+                          disabled={!canUnmergeDocTableSelection && !canMergeDocTableSelection}
+                          className={`h-8 px-2.5 shrink-0 rounded-md border text-xs ${
+                            canUnmergeDocTableSelection || canMergeDocTableSelection
+                              ? 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                              : 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed'
+                          }`}
+                        >
+                          {canUnmergeDocTableSelection ? 'Unmerge' : 'Merge'}
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() =>
+                            applyDocTableCellAlign('left', docTableCellAlignValue.vertical)
+                          }
+                          className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                          title="Cell align left"
+                        >
+                          <AlignLeft size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() =>
+                            applyDocTableCellAlign('center', docTableCellAlignValue.vertical)
+                          }
+                          className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                          title="Cell align center"
+                        >
+                          <AlignCenter size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() =>
+                            applyDocTableCellAlign('right', docTableCellAlignValue.vertical)
+                          }
+                          className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                          title="Cell align right"
+                        >
+                          <AlignRight size={13} />
+                        </button>
+                        <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                          Scale
+                          <input
+                            value={docTableScaleDraft}
+                            onChange={handleDocTableScaleDraftChange}
+                            onKeyDown={handleDocTableScaleDraftKeyDown}
+                            inputMode="numeric"
+                            className="h-8 w-14 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700"
+                            placeholder="100"
+                          />
+                          <span className="text-gray-500">%</span>
+                        </label>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => applyLiveDocTableScale(docTableScaleDraft)}
+                          className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Resize
+                        </button>
+                        <input
+                          type="range"
+                          min="1"
+                          max="400"
+                          step="5"
+                          value={Math.round(normalizeDocTableScale(docTableScaleDraft, 100))}
+                          onChange={handleDocTableScaleRangeChange}
+                          className="h-8 w-28 shrink-0 accent-gray-400"
+                        />
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => applyDocTablePageAlign('left')}
+                          className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Table left
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => applyDocTablePageAlign('center')}
+                          className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Table center
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => applyDocTablePageAlign('right')}
+                          className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Table right
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={handleEqualizeDocTableCellsByLargestContent}
+                          className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                        >
+                          Equalize cells
+                        </button>
+                      </>
+                    ) : (
+                      <span className="h-8 px-2.5 shrink-0 inline-flex items-center rounded-md border border-gray-200 bg-white text-xs text-gray-500">
+                        Select a table cell to show table tools.
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {isFullScreen && !isMobileNoteViewport && (
           <div className="note-editor-toolbar-row relative z-[70] flex flex-nowrap items-center gap-1.5 p-1.5 bg-white border border-gray-200 rounded-md shadow-sm overflow-visible [&>*]:shrink-0">
             <button
@@ -17962,26 +18942,28 @@ function NoteEditor({
               onMouseDown={handleFormatMouseDown}
               onClick={handleUndoNoteChange}
               disabled={!canUndoNoteChange}
-              className={`px-2 py-1 text-xs rounded ${
+              className={`h-7 w-7 inline-flex items-center justify-center text-sm rounded ${
                 canUndoNoteChange
                   ? 'hover:bg-gray-100 text-gray-700'
                   : 'text-gray-300 cursor-not-allowed'
               }`}
+              title="Undo"
             >
-              Undo
+              {'\u21B6'}
             </button>
             <button
               type="button"
               onMouseDown={handleFormatMouseDown}
               onClick={handleRedoNoteChange}
               disabled={!canRedoNoteChange}
-              className={`px-2 py-1 text-xs rounded ${
+              className={`h-7 w-7 inline-flex items-center justify-center text-sm rounded ${
                 canRedoNoteChange
                   ? 'hover:bg-gray-100 text-gray-700'
                   : 'text-gray-300 cursor-not-allowed'
               }`}
+              title="Redo"
             >
-              Redo
+              {'\u21B7'}
             </button>
             <div className="w-px h-5 bg-gray-200 mx-0.5" />
             <button
@@ -18018,27 +19000,25 @@ function NoteEditor({
             >
               <Italic size={15} />
             </button>
-            <button
-              type="button"
-              onMouseDown={handleFormatMouseDown}
-              onClick={() => {
-                if (isActiveSheetPage) {
+            {isActiveSheetPage && (
+              <button
+                type="button"
+                onMouseDown={handleFormatMouseDown}
+                onClick={() => {
                   updateSelectedSheetCellStyle({
                     underline: !Boolean(selectedSheetCell?.style?.underline),
                   });
-                  return;
-                }
-                handleApplyUnderline();
-              }}
-              className={`p-1.5 rounded transition-colors ${
-                currentFormatState.underline
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'hover:bg-gray-100 text-gray-600'
-              }`}
-              title="Underline (Ctrl+U)"
-            >
-              <Underline size={15} />
-            </button>
+                }}
+                className={`p-1.5 rounded transition-colors ${
+                  currentFormatState.underline
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'hover:bg-gray-100 text-gray-600'
+                }`}
+                title="Underline (Ctrl+U)"
+              >
+                <Underline size={15} />
+              </button>
+            )}
             <div className="w-px h-5 bg-gray-200 mx-0.5" />
             <select
               value={isActiveSheetPage ? '' : docFontFamilyValue}
@@ -18055,7 +19035,7 @@ function NoteEditor({
                       value={fontOption.value}
                       style={{ fontFamily: fontOption.cssFamily }}
                     >
-                      {fontOption.label}
+                      {toCompactFontOptionLabel(fontOption.label)}
                     </option>
                   ))}
                 </optgroup>
@@ -19130,7 +20110,11 @@ function NoteEditor({
             onTouchCancel={handleEditorTouchEnd}
             data-placeholder="Type your note... and upload images with the image button"
             className={`rich-editor flex-1 min-w-0 ${
-              isMobileNoteViewport ? 'p-3 text-sm' : 'p-6 text-sm md:text-base'
+              isMobileNoteViewport
+                ? isMobileFullDocToolbarMode && mobileToolbarSection
+                  ? 'p-3 pb-28 text-sm'
+                  : 'p-3 text-sm'
+                : 'p-6 text-sm md:text-base'
             } outline-none overflow-visible text-gray-800 leading-relaxed bg-white prose max-w-none`}
             style={{ minHeight: '300px', textAlign: 'left' }}
           ></div>
@@ -19177,6 +20161,8 @@ function NoteEditor({
                 type="button"
                 className={`pointer-events-auto absolute w-3 h-3 rounded-full border border-blue-600 bg-white shadow-sm ${handleItem.className}`}
                 onMouseDown={(event) => handleDocTableCornerResizeStart(event, handleItem.key)}
+                onTouchStart={(event) => handleDocTableCornerResizeStart(event, handleItem.key)}
+                style={{ touchAction: 'none' }}
                 title="Drag to resize selected table"
               />
             ))}
@@ -19390,12 +20376,48 @@ function NoteEditor({
 
       <div className="p-2 bg-gray-50 border-t border-gray-100 text-[11px] text-gray-400 flex items-center justify-between">
         <span>{isActiveSheetPage ? `Sheet ${sheetRows}x${sheetCols}` : 'Doc editor'}</span>
-        <span>Auto-saved · Live collaboration</span>
+        <span>Auto-saved Â· Live collaboration</span>
       </div>
       <style>{`
         .note-editor-toolbar-row {
           scrollbar-width: none;
           -ms-overflow-style: none;
+        }
+        .mobile-note-bottom-dock {
+          box-shadow: none !important;
+          color-scheme: light !important;
+        }
+        .mobile-note-bottom-scroll {
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+        }
+        .mobile-note-bottom-scroll::-webkit-scrollbar {
+          width: 0;
+          height: 0;
+          display: none;
+        }
+        .mobile-note-bottom-dock label {
+          color: #6b7280 !important;
+        }
+        .mobile-note-bottom-dock button,
+        .mobile-note-bottom-dock select,
+        .mobile-note-bottom-dock input[type='text'],
+        .mobile-note-bottom-dock input[type='number'],
+        .mobile-note-bottom-dock input[type='color'] {
+          color-scheme: light !important;
+          box-shadow: none !important;
+          transition: none !important;
+        }
+        .mobile-note-bottom-dock button:disabled {
+          background: #f9fafb !important;
+          color: #9ca3af !important;
+          border-color: #e5e7eb !important;
+        }
+        .mobile-note-bottom-dock span {
+          color: #6b7280;
+        }
+        .mobile-note-bottom-dock .h-6.w-px {
+          background: #e5e7eb !important;
         }
         .note-editor-toolbar-row::-webkit-scrollbar {
           width: 0;
@@ -21504,3 +22526,5 @@ function EventModal({
     </div>
   );
 }
+
+
