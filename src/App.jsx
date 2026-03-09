@@ -1325,6 +1325,37 @@ const GOOGLE_CLIENT_ID = String(
     import.meta.env.VITE_GOOGLE_CLIENT_ID ||
     ''
 ).trim();
+const GOOGLE_CLIENT_ID_PATTERN = /^[0-9]+-[a-z0-9._-]+\.apps\.googleusercontent\.com$/i;
+const getGoogleClientConfigError = (clientId) => {
+  const normalizedClientId = String(clientId || '').trim();
+  if (!normalizedClientId) {
+    return 'Google OAuth is not configured.';
+  }
+  if (/your_google_client_id/i.test(normalizedClientId)) {
+    return 'Google OAuth is using placeholder client ID. Set VITE_GOOGLE_CLIENT_ID to your real Web OAuth client ID.';
+  }
+  if (!GOOGLE_CLIENT_ID_PATTERN.test(normalizedClientId)) {
+    return 'Google OAuth client ID format is invalid. Expected value ending with .apps.googleusercontent.com';
+  }
+  return '';
+};
+const getGoogleOAuthErrorMessage = (errorCodeInput) => {
+  const errorCode = String(errorCodeInput || '').trim().toLowerCase();
+  if (errorCode === 'invalid_client') {
+    const origin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : 'this origin';
+    return `Google OAuth client is invalid for ${origin}. Use OAuth client type "Web application" and add this origin to Authorized JavaScript origins in Google Cloud Console.`;
+  }
+  if (errorCode === 'access_denied' || errorCode === 'popup_closed_by_user') {
+    return 'Google sign-in was cancelled.';
+  }
+  if (errorCode === 'popup_blocked') {
+    return 'Google popup was blocked. Please allow popups and try again.';
+  }
+  return errorCodeInput ? String(errorCodeInput) : 'Google sign-in failed.';
+};
 const GOOGLE_CALENDAR_PROJECT_ID = '__google_calendar__';
 const GOOGLE_CALENDAR_PROJECT_META = {
   id: GOOGLE_CALENDAR_PROJECT_ID,
@@ -2678,8 +2709,9 @@ function AuthScreen({ onAuthSuccess }) {
     setError('');
     setSuccess('');
 
-    if (!GOOGLE_CLIENT_ID) {
-      setError('Google OAuth is not configured.');
+    const googleClientConfigError = getGoogleClientConfigError(GOOGLE_CLIENT_ID);
+    if (googleClientConfigError) {
+      setError(googleClientConfigError);
       return;
     }
 
@@ -2696,6 +2728,10 @@ function AuthScreen({ onAuthSuccess }) {
     window.google.accounts.id.prompt((notification) => {
       if (notification.isNotDisplayed()) {
         const reason = notification.getNotDisplayedReason?.() || 'unknown_reason';
+        if (reason === 'invalid_client') {
+          setError(getGoogleOAuthErrorMessage(reason));
+          return;
+        }
         setError(`Google sign-in is unavailable (${reason}). Check OAuth Authorized JavaScript origins.`);
       } else if (notification.isSkippedMoment()) {
         setError('Google sign-in was skipped. Please try again.');
@@ -2704,7 +2740,8 @@ function AuthScreen({ onAuthSuccess }) {
   };
 
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID || !googleButtonRef.current) return;
+    if (!googleButtonRef.current) return;
+    if (getGoogleClientConfigError(GOOGLE_CLIENT_ID)) return;
 
     let isCancelled = false;
     const initializeGoogle = () => {
@@ -2722,15 +2759,19 @@ function AuthScreen({ onAuthSuccess }) {
           callback: (tokenResponse) => {
             const accessToken = String(tokenResponse?.access_token || '').trim();
             if (!accessToken) {
-              const errorText = tokenResponse?.error || 'Google sign-in failed.';
+              const errorText = getGoogleOAuthErrorMessage(tokenResponse?.error);
               setError(errorText);
               return;
             }
 
             void authenticateWithGoogle({ accessToken });
           },
-          error_callback: () => {
-            setError('Google popup was blocked or closed. Please allow popups and try again.');
+          error_callback: (errorResponse) => {
+            setError(
+              getGoogleOAuthErrorMessage(
+                errorResponse?.type || errorResponse?.error || 'popup_closed_by_user'
+              )
+            );
           },
         });
       }
@@ -3205,8 +3246,9 @@ function ProfileSettingsView({
   };
 
   const requestGoogleAccessToken = async () => {
-    if (!GOOGLE_CLIENT_ID) {
-      throw new Error('Google OAuth is not configured.');
+    const googleClientConfigError = getGoogleClientConfigError(GOOGLE_CLIENT_ID);
+    if (googleClientConfigError) {
+      throw new Error(googleClientConfigError);
     }
     await ensureGoogleSdkLoaded();
     if (!window.google?.accounts?.oauth2?.initTokenClient) {
@@ -3220,13 +3262,19 @@ function ProfileSettingsView({
         callback: (tokenResponse) => {
           const accessToken = String(tokenResponse?.access_token || '').trim();
           if (!accessToken) {
-            reject(new Error(tokenResponse?.error || 'Google verification failed.'));
+            reject(new Error(getGoogleOAuthErrorMessage(tokenResponse?.error)));
             return;
           }
           resolve(accessToken);
         },
-        error_callback: () => {
-          reject(new Error('Google popup was blocked or closed.'));
+        error_callback: (errorResponse) => {
+          reject(
+            new Error(
+              getGoogleOAuthErrorMessage(
+                errorResponse?.type || errorResponse?.error || 'popup_closed_by_user'
+              )
+            )
+          );
         },
       });
       tokenClient.requestAccessToken({ prompt: 'select_account' });
