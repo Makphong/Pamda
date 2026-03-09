@@ -11564,6 +11564,12 @@ function NoteEditor({
     start: { row: 0, col: 0 },
     end: { row: 0, col: 0 },
   });
+  const sheetSelectionRangeRef = React.useRef({
+    start: { row: 0, col: 0 },
+    end: { row: 0, col: 0 },
+  });
+  const sheetTouchMoveRafRef = React.useRef(0);
+  const sheetTouchMovePointRef = React.useRef(null);
   const [sheetEditingCell, setSheetEditingCell] = useState(null);
   const [sheetQuickMenu, setSheetQuickMenu] = useState(null);
   const [sheetClipboardState, setSheetClipboardState] = useState(null);
@@ -11589,6 +11595,18 @@ function NoteEditor({
   React.useEffect(() => {
     noteDocumentRef.current = noteDocument;
   }, [noteDocument]);
+  React.useEffect(() => {
+    sheetSelectionRangeRef.current = sheetSelectionRange;
+  }, [sheetSelectionRange]);
+  React.useEffect(
+    () => () => {
+      if (sheetTouchMoveRafRef.current) {
+        window.cancelAnimationFrame(sheetTouchMoveRafRef.current);
+        sheetTouchMoveRafRef.current = 0;
+      }
+    },
+    []
+  );
   const activePage = useMemo(
     () => noteDocument.pages.find((page) => page.id === activePageId) || noteDocument.pages[0] || createDefaultNoteDocPage(''),
     [noteDocument, activePageId]
@@ -11756,10 +11774,31 @@ function NoteEditor({
       sheetSelectionDragRef.current.start.row,
       sheetSelectionDragRef.current.start.col
     );
-    setSheetSelection(nextEnd);
-    setSheetSelectionRange({
-      start,
-      end: nextEnd,
+    const currentRange = sheetSelectionRangeRef.current;
+    const isSameRange =
+      currentRange?.start?.row === start.row &&
+      currentRange?.start?.col === start.col &&
+      currentRange?.end?.row === nextEnd.row &&
+      currentRange?.end?.col === nextEnd.col;
+    if (isSameRange) return;
+    setSheetSelection((prevSelection) =>
+      prevSelection.row === nextEnd.row && prevSelection.col === nextEnd.col ? prevSelection : nextEnd
+    );
+    setSheetSelectionRange((prevRange) => {
+      const prevStart = prevRange?.start || start;
+      const prevEnd = prevRange?.end || nextEnd;
+      if (
+        prevStart.row === start.row &&
+        prevStart.col === start.col &&
+        prevEnd.row === nextEnd.row &&
+        prevEnd.col === nextEnd.col
+      ) {
+        return prevRange;
+      }
+      return {
+        start,
+        end: nextEnd,
+      };
     });
     if (nextEnd.row !== start.row || nextEnd.col !== start.col) {
       sheetSelectionDragRef.current.hasMoved = true;
@@ -11768,6 +11807,11 @@ function NoteEditor({
   const endSheetRangeSelection = () => {
     if (!sheetSelectionDragRef.current.active) return;
     sheetSelectionDragRef.current.active = false;
+    if (sheetTouchMoveRafRef.current) {
+      window.cancelAnimationFrame(sheetTouchMoveRafRef.current);
+      sheetTouchMoveRafRef.current = 0;
+    }
+    sheetTouchMovePointRef.current = null;
   };
   const setSheetSelectionWithCollapsedRange = (updater) => {
     setSheetSelection((prevSelection) => {
@@ -17407,6 +17451,62 @@ function NoteEditor({
     setSheetEditingCell(coord);
     schedulePresenceUpdate('');
   };
+  const getSheetCellCoordFromClientPoint = (clientX, clientY) => {
+    if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return null;
+    const pointTarget = document.elementFromPoint(clientX, clientY);
+    const cellElement = pointTarget?.closest?.('td[data-note-sheet-cell="true"]');
+    if (!cellElement) return null;
+    const rowValue = Number.parseInt(String(cellElement.getAttribute('data-sheet-row') || ''), 10);
+    const colValue = Number.parseInt(String(cellElement.getAttribute('data-sheet-col') || ''), 10);
+    if (!Number.isFinite(rowValue) || !Number.isFinite(colValue)) return null;
+    return normalizeSheetCellCoord(rowValue, colValue);
+  };
+  const queueSheetTouchRangeExtend = (clientX, clientY) => {
+    sheetTouchMovePointRef.current = { clientX, clientY };
+    if (sheetTouchMoveRafRef.current) return;
+    sheetTouchMoveRafRef.current = window.requestAnimationFrame(() => {
+      sheetTouchMoveRafRef.current = 0;
+      if (!sheetSelectionDragRef.current.active || !sheetTouchMovePointRef.current) return;
+      const pendingPoint = sheetTouchMovePointRef.current;
+      const coord = getSheetCellCoordFromClientPoint(pendingPoint.clientX, pendingPoint.clientY);
+      if (!coord) return;
+      extendSheetRangeSelection(coord.row, coord.col);
+    });
+  };
+  const handleSheetCellTouchStart = (event, row, col) => {
+    const touchPoint = event.touches?.[0];
+    if (!touchPoint) return;
+    setSheetQuickMenu(null);
+    beginSheetRangeSelection(row, col);
+    queueSheetTouchRangeExtend(touchPoint.clientX, touchPoint.clientY);
+    window.requestAnimationFrame(() => {
+      sheetPaneRef.current?.focus();
+    });
+  };
+  const handleSheetCellTouchMove = (event) => {
+    if (!sheetSelectionDragRef.current.active) return;
+    const touchPoint = event.touches?.[0];
+    if (!touchPoint) return;
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+    queueSheetTouchRangeExtend(touchPoint.clientX, touchPoint.clientY);
+  };
+  const handleSheetCellTouchEnd = () => {
+    if (sheetTouchMoveRafRef.current) {
+      window.cancelAnimationFrame(sheetTouchMoveRafRef.current);
+      sheetTouchMoveRafRef.current = 0;
+    }
+    if (sheetSelectionDragRef.current.active && sheetTouchMovePointRef.current) {
+      const pendingPoint = sheetTouchMovePointRef.current;
+      const coord = getSheetCellCoordFromClientPoint(pendingPoint.clientX, pendingPoint.clientY);
+      if (coord) {
+        extendSheetRangeSelection(coord.row, coord.col);
+      }
+    }
+    sheetTouchMovePointRef.current = null;
+    endSheetRangeSelection();
+  };
   const handleSheetCellMouseDown = (event, row, col) => {
     if (event.button !== 0) return;
     setSheetQuickMenu(null);
@@ -21386,9 +21486,16 @@ function NoteEditor({
                       return (
                         <td
                           key={`sheet-cell-${rowIndex}-${colIndex}`}
+                          data-note-sheet-cell="true"
+                          data-sheet-row={rowIndex}
+                          data-sheet-col={colIndex}
                           onMouseDown={(event) => handleSheetCellMouseDown(event, rowIndex, colIndex)}
                           onMouseEnter={(event) => handleSheetCellMouseEnter(event, rowIndex, colIndex)}
                           onMouseUp={endSheetRangeSelection}
+                          onTouchStart={(event) => handleSheetCellTouchStart(event, rowIndex, colIndex)}
+                          onTouchMove={handleSheetCellTouchMove}
+                          onTouchEnd={handleSheetCellTouchEnd}
+                          onTouchCancel={handleSheetCellTouchEnd}
                           onClick={(event) => handleSheetCellClick(event, rowIndex, colIndex)}
                           onDoubleClick={(event) => {
                             event.preventDefault();
