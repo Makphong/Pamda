@@ -478,6 +478,71 @@ const DOC_TABLE_BORDER_COLOR_PRESETS = [
 const DOC_TABLE_BORDER_ALL_COLOR_PRESETS = Array.from(
   new Set([...DOC_TABLE_BORDER_COLOR_PRESETS, ...DOC_COLOR_PRESETS])
 );
+const SHEET_DATA_TYPE_OPTIONS = [
+  { id: 'auto', label: 'Automatic', group: 'base', example: '' },
+  { id: 'text', label: 'Plain text', group: 'base', example: '' },
+  { id: 'number', label: 'Number', group: 'numeric', example: '1,000.12' },
+  { id: 'percent', label: 'Percent', group: 'numeric', example: '10.12%' },
+  { id: 'scientific', label: 'Scientific', group: 'numeric', example: '1.01E+03' },
+  { id: 'accounting', label: 'Accounting', group: 'finance', example: '฿ (1,000.12)' },
+  { id: 'financial', label: 'Financial', group: 'finance', example: '(1,000.12)' },
+  { id: 'currency', label: 'Currency', group: 'finance', example: '฿1,000.12' },
+  { id: 'date', label: 'Date', group: 'date', example: '26/9/2008' },
+  { id: 'time', label: 'Time', group: 'date', example: '15:59:00' },
+  { id: 'datetime', label: 'Date & time', group: 'date', example: '26/9/2008, 15:59:00' },
+];
+const SHEET_BORDER_LINE_STYLE_OPTIONS = [
+  { id: 'solid', label: 'Solid' },
+  { id: 'dashed', label: 'Dashed' },
+  { id: 'dotted', label: 'Dotted' },
+  { id: 'double', label: 'Double' },
+  { id: 'none', label: 'None' },
+];
+const SHEET_DATA_TYPE_LABEL_BY_ID = Object.fromEntries(
+  SHEET_DATA_TYPE_OPTIONS.map((option) => [option.id, option.label])
+);
+const normalizeSheetCellAlign = (value, fallback = 'left') => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'center') return 'center';
+  if (normalized === 'right' || normalized === 'end') return 'right';
+  if (
+    normalized === 'left' ||
+    normalized === 'start' ||
+    normalized === 'justify' ||
+    normalized === '-webkit-left'
+  ) {
+    return 'left';
+  }
+  return ['left', 'center', 'right'].includes(fallback) ? fallback : 'left';
+};
+const normalizeSheetCellVerticalAlign = (value, fallback = 'middle') => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'top') return 'top';
+  if (normalized === 'bottom') return 'bottom';
+  if (normalized === 'middle' || normalized === 'center') return 'middle';
+  return ['top', 'middle', 'bottom'].includes(fallback) ? fallback : 'middle';
+};
+const normalizeSheetCellBorderLineStyle = (value, fallback = 'solid') => {
+  const normalized = String(value || '').trim().toLowerCase();
+  const validValues = SHEET_BORDER_LINE_STYLE_OPTIONS.map((item) => item.id);
+  return validValues.includes(normalized) ? normalized : fallback;
+};
+const normalizeSheetCellBorderLineWidth = (value, fallback = 1, min = 0, max = 6) => {
+  const parsed = Number.parseFloat(String(value || '').trim());
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(parsed)));
+};
+const normalizeSheetCellDecimalPlaces = (value, fallback = 2, min = 0, max = 8) => {
+  const parsed = Number.parseFloat(String(value || '').trim());
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(parsed)));
+};
+const normalizeSheetCellDataType = (value, fallback = 'auto') => {
+  const normalized = String(value || '').trim().toLowerCase();
+  const validValues = SHEET_DATA_TYPE_OPTIONS.map((item) => item.id);
+  if (validValues.includes(normalized)) return normalized;
+  return validValues.includes(fallback) ? fallback : 'auto';
+};
 const normalizeDocTableBorderDesign = (value, fallback = 'all') => {
   const normalized = String(value || '').trim().toLowerCase();
   const validValues = DOC_TABLE_BORDER_DESIGN_OPTIONS.map((item) => item.id);
@@ -711,12 +776,126 @@ const normalizeNoteSheetCell = (value) => {
       bold: Boolean(style.bold),
       italic: Boolean(style.italic),
       underline: Boolean(style.underline),
-      align: ['left', 'center', 'right'].includes(style.align) ? style.align : 'left',
+      align: normalizeSheetCellAlign(style.align, 'left'),
+      vAlign: normalizeSheetCellVerticalAlign(style.vAlign, 'middle'),
       color: String(style.color || '').trim() || '#111827',
       bgColor: String(style.bgColor || '').trim() || '#ffffff',
       fontSize: String(style.fontSize || '').trim() || '14px',
+      fontFamily: String(style.fontFamily || '').trim(),
+      wrap: Boolean(style.wrap),
+      borderStyle: normalizeSheetCellBorderLineStyle(style.borderStyle, 'solid'),
+      borderColor: String(style.borderColor || '').trim() || '#cbd5e1',
+      borderWidth: normalizeSheetCellBorderLineWidth(style.borderWidth, 1, 0, 6),
+      dataType: normalizeSheetCellDataType(style.dataType, 'auto'),
+      decimalPlaces: normalizeSheetCellDecimalPlaces(style.decimalPlaces, 2, 0, 8),
     },
   };
+};
+const parseSheetNumericValue = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  let normalized = raw.replace(/,/g, '').replace(/\s+/g, '');
+  let hasPercentSuffix = false;
+  if (normalized.endsWith('%')) {
+    hasPercentSuffix = true;
+    normalized = normalized.slice(0, -1);
+  }
+  if (!/^[-+]?((\d+(\.\d+)?)|(\.\d+))(e[-+]?\d+)?$/i.test(normalized)) {
+    return null;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return hasPercentSuffix ? parsed / 100 : parsed;
+};
+const formatSheetCellDisplayText = (cellInput) => {
+  const cell = normalizeNoteSheetCell(cellInput);
+  const rawText = String(cell.text || '');
+  if (!rawText) return '';
+  const dataType = normalizeSheetCellDataType(cell.style.dataType, 'auto');
+  const decimals = normalizeSheetCellDecimalPlaces(cell.style.decimalPlaces, 2, 0, 8);
+  if (dataType === 'auto' || dataType === 'text') {
+    return rawText;
+  }
+  const numericValue = parseSheetNumericValue(rawText);
+  if (
+    dataType === 'number' ||
+    dataType === 'percent' ||
+    dataType === 'scientific' ||
+    dataType === 'accounting' ||
+    dataType === 'financial' ||
+    dataType === 'currency'
+  ) {
+    if (!Number.isFinite(numericValue)) return rawText;
+  }
+  if (dataType === 'number') {
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(numericValue);
+  }
+  if (dataType === 'percent') {
+    return new Intl.NumberFormat('en-US', {
+      style: 'percent',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(numericValue);
+  }
+  if (dataType === 'scientific') {
+    return Number(numericValue).toExponential(Math.max(0, decimals)).replace('e', 'E');
+  }
+  if (dataType === 'accounting') {
+    const absoluteFormatted = new Intl.NumberFormat('th-TH', {
+      style: 'currency',
+      currency: 'THB',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(Math.abs(numericValue));
+    return numericValue < 0 ? `(${absoluteFormatted})` : absoluteFormatted;
+  }
+  if (dataType === 'financial') {
+    const absoluteFormatted = new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(Math.abs(numericValue));
+    return numericValue < 0 ? `(${absoluteFormatted})` : absoluteFormatted;
+  }
+  if (dataType === 'currency') {
+    return new Intl.NumberFormat('th-TH', {
+      style: 'currency',
+      currency: 'THB',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(numericValue);
+  }
+  if (dataType === 'date' || dataType === 'time' || dataType === 'datetime') {
+    const parsedDate = new Date(rawText);
+    if (Number.isNaN(parsedDate.getTime())) return rawText;
+    if (dataType === 'date') {
+      return new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }).format(parsedDate);
+    }
+    if (dataType === 'time') {
+      return new Intl.DateTimeFormat('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).format(parsedDate);
+    }
+    return new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(parsedDate);
+  }
+  return rawText;
 };
 const normalizeNoteDocumentPage = (pageInput, index = 0) => {
   const raw = pageInput && typeof pageInput === 'object' ? pageInput : {};
@@ -11259,6 +11438,8 @@ function NoteEditor({
   const docViewportRef = React.useRef(null);
   const pagePickerRef = React.useRef(null);
   const sheetQuickMenuRef = React.useRef(null);
+  const sheetCellMenuRef = React.useRef(null);
+  const sheetDataTypeMenuRef = React.useRef(null);
   const docTextColorPickerRef = React.useRef(null);
   const docHighlightColorPickerRef = React.useRef(null);
   const docUnderlineMenuRef = React.useRef(null);
@@ -11386,6 +11567,8 @@ function NoteEditor({
   const [sheetEditingCell, setSheetEditingCell] = useState(null);
   const [sheetQuickMenu, setSheetQuickMenu] = useState(null);
   const [sheetClipboardState, setSheetClipboardState] = useState(null);
+  const [isSheetCellMenuOpen, setIsSheetCellMenuOpen] = useState(false);
+  const [isSheetDataTypeMenuOpen, setIsSheetDataTypeMenuOpen] = useState(false);
   const [isCompactSheetViewport, setIsCompactSheetViewport] = useState(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
     return window.matchMedia('(max-width: 1023px)').matches;
@@ -11472,6 +11655,8 @@ function NoteEditor({
     setSheetEditingCell(null);
     setSheetQuickMenu(null);
     setSheetClipboardState(null);
+    setIsSheetCellMenuOpen(false);
+    setIsSheetDataTypeMenuOpen(false);
     sheetSelectionDragRef.current.active = false;
     sheetSelectionDragRef.current.hasMoved = false;
     setImageMenuState(null);
@@ -12167,6 +12352,8 @@ function NoteEditor({
     setIsDocTableCellAlignMenuOpen(false);
     setIsDocTableResizeMenuOpen(false);
     setIsDocTableExtraToolsMenuOpen(false);
+    setIsSheetCellMenuOpen(false);
+    setIsSheetDataTypeMenuOpen(false);
   };
   const getDocTableDimensions = (tableElement) => {
     if (!tableElement) return { rows: 1, cols: 1 };
@@ -14191,6 +14378,8 @@ function NoteEditor({
       setIsDocTableCellAlignMenuOpen(false);
       setIsDocTableResizeMenuOpen(false);
       setIsDocTableExtraToolsMenuOpen(false);
+      setIsSheetCellMenuOpen(false);
+      setIsSheetDataTypeMenuOpen(false);
       setMobileToolbarSection('');
       setDocFontFamilyValue('');
       setDocFontSizeValue('14');
@@ -14864,6 +15053,18 @@ function NoteEditor({
       ) {
         setIsDocTableExtraToolsMenuOpen(false);
       }
+      if (
+        isSheetCellMenuOpen &&
+        !sheetCellMenuRef.current?.contains(event.target)
+      ) {
+        setIsSheetCellMenuOpen(false);
+      }
+      if (
+        isSheetDataTypeMenuOpen &&
+        !sheetDataTypeMenuRef.current?.contains(event.target)
+      ) {
+        setIsSheetDataTypeMenuOpen(false);
+      }
       if (docLinkMenuState && !docLinkMenuRef.current?.contains(event.target)) {
         setDocLinkMenuState(null);
       }
@@ -14881,6 +15082,8 @@ function NoteEditor({
     isDocTableCellAlignMenuOpen,
     isDocTableResizeMenuOpen,
     isDocTableExtraToolsMenuOpen,
+    isSheetCellMenuOpen,
+    isSheetDataTypeMenuOpen,
     docLinkMenuState,
   ]);
   React.useEffect(() => {
@@ -14968,8 +15171,12 @@ function NoteEditor({
     execValueCmd('formatBlock', `<${value}>`);
   };
   const handleApplyFontFamily = (event) => {
-    if (!isActiveDocPage) return;
     const value = String(event.target.value || '').trim();
+    if (isActiveSheetPage) {
+      updateSelectedSheetCellStyle({ fontFamily: value });
+      return;
+    }
+    if (!isActiveDocPage) return;
     setDocFontFamilyValue(value);
     if (!value) return;
     execValueCmd('fontName', value);
@@ -16742,6 +16949,8 @@ function NoteEditor({
     setActivePageId(normalizedId);
     setImageMenuState(null);
     setIsPagePickerOpen(false);
+    setIsSheetCellMenuOpen(false);
+    setIsSheetDataTypeMenuOpen(false);
     setSheetSelection({ row: 0, col: 0 });
     setSheetSelectionRange({
       start: { row: 0, col: 0 },
@@ -16804,6 +17013,8 @@ function NoteEditor({
     sheetSelectionDragRef.current.hasMoved = false;
     setSheetEditingCell(null);
     setIsPagePickerOpen(false);
+    setIsSheetCellMenuOpen(false);
+    setIsSheetDataTypeMenuOpen(false);
     schedulePresenceUpdate('');
   };
   const togglePinPage = (pageId) => {
@@ -16890,19 +17101,27 @@ function NoteEditor({
         const columns = Array.from({ length: cols }, (_, colIndex) => {
           const cellKey = getSheetCellKey(rowIndex, colIndex);
           const cell = normalizeNoteSheetCell(cells[cellKey] || {});
+          const displayText = formatSheetCellDisplayText(cell);
+          const borderWidth = normalizeSheetCellBorderLineWidth(cell.style.borderWidth, 1, 0, 6);
+          const borderStyle = normalizeSheetCellBorderLineStyle(cell.style.borderStyle, 'solid');
+          const shouldHideBorder = borderStyle === 'none' || borderWidth <= 0;
           const style = [
             `text-align:${cell.style.align}`,
+            `vertical-align:${normalizeSheetCellVerticalAlign(cell.style.vAlign, 'middle')}`,
             `font-weight:${cell.style.bold ? '700' : '400'}`,
             `font-style:${cell.style.italic ? 'italic' : 'normal'}`,
             `text-decoration:${cell.style.underline ? 'underline' : 'none'}`,
             `font-size:${cell.style.fontSize || '14px'}`,
+            ...(cell.style.fontFamily ? [`font-family:${cell.style.fontFamily}`] : []),
             `color:${cell.style.color}`,
             `background:${cell.style.bgColor}`,
-            'border:1px solid #cbd5e1',
+            `border:${shouldHideBorder ? 'none' : `${borderWidth}px ${borderStyle} ${cell.style.borderColor || '#cbd5e1'}`}`,
             'padding:6px',
             'min-width:80px',
+            `white-space:${cell.style.wrap ? 'pre-wrap' : 'nowrap'}`,
+            `overflow-wrap:${cell.style.wrap ? 'anywhere' : 'normal'}`,
           ].join(';');
-          return `<td style="${style}">${String(cell.text || '')
+          return `<td style="${style}">${String(displayText || '')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')}</td>`;
         }).join('');
@@ -16954,24 +17173,30 @@ function NoteEditor({
   };
   const updateSelectedSheetCellStyle = (patch) => {
     if (!isActiveSheetPage) return;
-    const row = sheetSelection.row;
-    const col = sheetSelection.col;
-    const cellKey = getSheetCellKey(row, col);
+    const stylePatch = patch && typeof patch === 'object' ? patch : {};
+    const patchKeys = Object.keys(stylePatch);
+    if (!patchKeys.length) return;
     updateActivePage((page) => {
       const currentCells = page.cells && typeof page.cells === 'object' ? page.cells : {};
-      const currentCell = normalizeNoteSheetCell(currentCells[cellKey] || {});
-      return {
-        ...page,
-        cells: {
-          ...currentCells,
-          [cellKey]: {
+      const nextCells = {
+        ...currentCells,
+      };
+      for (let row = sheetSelectionBounds.minRow; row <= sheetSelectionBounds.maxRow; row += 1) {
+        for (let col = sheetSelectionBounds.minCol; col <= sheetSelectionBounds.maxCol; col += 1) {
+          const cellKey = getSheetCellKey(row, col);
+          const currentCell = normalizeNoteSheetCell(currentCells[cellKey] || {});
+          nextCells[cellKey] = {
             ...currentCell,
             style: {
               ...currentCell.style,
-              ...patch,
+              ...stylePatch,
             },
-          },
-        },
+          };
+        }
+      }
+      return {
+        ...page,
+        cells: nextCells,
       };
     });
     schedulePresenceUpdate('');
@@ -17320,6 +17545,74 @@ function NoteEditor({
         ),
       }
     : activeFormats;
+  const selectedSheetDataType = normalizeSheetCellDataType(selectedSheetCell?.style?.dataType, 'auto');
+  const selectedSheetDataTypeLabel =
+    SHEET_DATA_TYPE_LABEL_BY_ID[selectedSheetDataType] ||
+    SHEET_DATA_TYPE_LABEL_BY_ID.auto ||
+    'Automatic';
+  const selectedSheetHorizontalAlign = normalizeSheetCellAlign(selectedSheetCell?.style?.align, 'left');
+  const selectedSheetVerticalAlign = normalizeSheetCellVerticalAlign(selectedSheetCell?.style?.vAlign, 'middle');
+  const selectedSheetBorderStyle = normalizeSheetCellBorderLineStyle(
+    selectedSheetCell?.style?.borderStyle,
+    'solid'
+  );
+  const selectedSheetBorderWidth = normalizeSheetCellBorderLineWidth(
+    selectedSheetCell?.style?.borderWidth,
+    1,
+    0,
+    6
+  );
+  const selectedSheetBorderColor = String(selectedSheetCell?.style?.borderColor || '').trim() || '#cbd5e1';
+  const isSelectedSheetWrapEnabled = Boolean(selectedSheetCell?.style?.wrap);
+  const isSelectedSheetBorderEnabled =
+    selectedSheetBorderStyle !== 'none' && selectedSheetBorderWidth > 0;
+  const selectedSheetFontFamily = String(selectedSheetCell?.style?.fontFamily || '').trim();
+  const activeFontFamilyValue = isActiveSheetPage ? selectedSheetFontFamily : docFontFamilyValue;
+  const selectedSheetDecimalPlaces = normalizeSheetCellDecimalPlaces(
+    selectedSheetCell?.style?.decimalPlaces,
+    2,
+    0,
+    8
+  );
+  const adjustSelectedSheetDecimalPlaces = (delta) => {
+    if (!isActiveSheetPage) return;
+    const step = Number(delta);
+    if (!Number.isFinite(step) || step === 0) return;
+    const nextDecimal = normalizeSheetCellDecimalPlaces(
+      selectedSheetDecimalPlaces + step,
+      selectedSheetDecimalPlaces,
+      0,
+      8
+    );
+    const nextDataType =
+      selectedSheetDataType === 'auto' || selectedSheetDataType === 'text'
+        ? 'number'
+        : selectedSheetDataType;
+    updateSelectedSheetCellStyle({
+      decimalPlaces: nextDecimal,
+      dataType: nextDataType,
+    });
+  };
+  const applySelectedSheetDataType = (nextDataTypeInput) => {
+    if (!isActiveSheetPage) return;
+    const nextDataType = normalizeSheetCellDataType(nextDataTypeInput, selectedSheetDataType);
+    updateSelectedSheetCellStyle({ dataType: nextDataType });
+    setIsSheetDataTypeMenuOpen(false);
+  };
+  const toggleSelectedSheetBorder = () => {
+    if (!isActiveSheetPage) return;
+    if (isSelectedSheetBorderEnabled) {
+      updateSelectedSheetCellStyle({
+        borderStyle: 'none',
+        borderWidth: 0,
+      });
+      return;
+    }
+    updateSelectedSheetCellStyle({
+      borderStyle: selectedSheetBorderStyle === 'none' ? 'solid' : selectedSheetBorderStyle,
+      borderWidth: Math.max(1, selectedSheetBorderWidth || 1),
+    });
+  };
   const mobileCompactDocFontOptions = React.useMemo(
     () =>
       DOC_FONT_FAMILY_GROUPS.flatMap((group) =>
@@ -17348,6 +17641,7 @@ function NoteEditor({
       getDocTableElementById(docTableSelectionState.tableId)
   );
   const isMobileFullDocToolbarMode = isMobileNoteViewport && isFullScreen && isActiveDocPage;
+  const isMobileFullSheetToolbarMode = isMobileNoteViewport && isFullScreen && isActiveSheetPage;
   const docTableSelectionRowCount = docTableSelectionBounds
     ? docTableSelectionBounds.maxRow - docTableSelectionBounds.minRow + 1
     : 0;
@@ -17399,6 +17693,8 @@ function NoteEditor({
     setIsDocTableCellAlignMenuOpen(false);
     setIsDocTableResizeMenuOpen(false);
     setIsDocTableExtraToolsMenuOpen(false);
+    setIsSheetCellMenuOpen(false);
+    setIsSheetDataTypeMenuOpen(false);
   };
   const toggleMobileToolbarSection = (sectionId) => {
     const normalized = String(sectionId || '').trim();
@@ -17417,6 +17713,11 @@ function NoteEditor({
       return prev;
     });
   }, [isMobileFullDocToolbarMode, hasDocTableSelection]);
+  React.useEffect(() => {
+    if (!isMobileFullSheetToolbarMode) return;
+    if (!mobileToolbarSection) return;
+    setMobileToolbarSection('');
+  }, [isMobileFullSheetToolbarMode, mobileToolbarSection]);
   const sheetRows = Math.max(1, Number(activePage?.rows || 1));
   const sheetCols = Math.max(1, Number(activePage?.cols || 1));
   const sheetSelectionBounds = React.useMemo(() => {
@@ -17974,7 +18275,9 @@ function NoteEditor({
         {isMobileNoteViewport && (
           <div
             className={`md:hidden border border-gray-200 bg-white overflow-hidden ${
-              isMobileFullDocToolbarMode ? 'rounded-md' : 'rounded-xl shadow-sm'
+              isMobileFullDocToolbarMode || isMobileFullSheetToolbarMode
+                ? 'rounded-md'
+                : 'rounded-xl shadow-sm'
             }`}
           >
             <div className="p-2 space-y-2">
@@ -18007,64 +18310,68 @@ function NoteEditor({
               >
                 {'\u21B7'}
               </button>
-              <span className="w-px h-5 bg-gray-200 mx-0.5 shrink-0" />
-                <button
-                type="button"
-                onMouseDown={handleFormatMouseDown}
-                onClick={() => {
-                  if (isActiveSheetPage) {
-                    updateSelectedSheetCellStyle({ bold: !Boolean(selectedSheetCell?.style?.bold) });
-                    return;
-                  }
-                  execCmd('bold');
-                }}
-                className={`h-8 w-8 inline-flex items-center justify-center rounded border shrink-0 ${
-                  currentFormatState.bold
-                    ? 'bg-blue-50 text-blue-700 border-blue-200'
-                    : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
-                }`}
-                title="Bold"
-              >
-                <Bold size={14} />
-              </button>
-                <button
-                type="button"
-                onMouseDown={handleFormatMouseDown}
-                onClick={() => {
-                  if (isActiveSheetPage) {
-                    updateSelectedSheetCellStyle({ italic: !Boolean(selectedSheetCell?.style?.italic) });
-                    return;
-                  }
-                  execCmd('italic');
-                }}
-                className={`h-8 w-8 inline-flex items-center justify-center rounded border shrink-0 ${
-                  currentFormatState.italic
-                    ? 'bg-blue-50 text-blue-700 border-blue-200'
-                    : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
-                }`}
-                title="Italic"
-              >
-                <Italic size={14} />
-              </button>
-                {isActiveSheetPage && (
+              {!isMobileFullSheetToolbarMode && (
+                <>
+                  <span className="w-px h-5 bg-gray-200 mx-0.5 shrink-0" />
                   <button
                     type="button"
                     onMouseDown={handleFormatMouseDown}
                     onClick={() => {
-                      updateSelectedSheetCellStyle({
-                        underline: !Boolean(selectedSheetCell?.style?.underline),
-                      });
+                      if (isActiveSheetPage) {
+                        updateSelectedSheetCellStyle({ bold: !Boolean(selectedSheetCell?.style?.bold) });
+                        return;
+                      }
+                      execCmd('bold');
                     }}
                     className={`h-8 w-8 inline-flex items-center justify-center rounded border shrink-0 ${
-                      currentFormatState.underline
+                      currentFormatState.bold
                         ? 'bg-blue-50 text-blue-700 border-blue-200'
                         : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
                     }`}
-                    title="Underline"
+                    title="Bold"
                   >
-                    <Underline size={14} />
+                    <Bold size={14} />
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onMouseDown={handleFormatMouseDown}
+                    onClick={() => {
+                      if (isActiveSheetPage) {
+                        updateSelectedSheetCellStyle({ italic: !Boolean(selectedSheetCell?.style?.italic) });
+                        return;
+                      }
+                      execCmd('italic');
+                    }}
+                    className={`h-8 w-8 inline-flex items-center justify-center rounded border shrink-0 ${
+                      currentFormatState.italic
+                        ? 'bg-blue-50 text-blue-700 border-blue-200'
+                        : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
+                    }`}
+                    title="Italic"
+                  >
+                    <Italic size={14} />
+                  </button>
+                  {isActiveSheetPage && (
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => {
+                        updateSelectedSheetCellStyle({
+                          underline: !Boolean(selectedSheetCell?.style?.underline),
+                        });
+                      }}
+                      className={`h-8 w-8 inline-flex items-center justify-center rounded border shrink-0 ${
+                        currentFormatState.underline
+                          ? 'bg-blue-50 text-blue-700 border-blue-200'
+                          : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
+                      }`}
+                      title="Underline"
+                    >
+                      <Underline size={14} />
+                    </button>
+                  )}
+                </>
+              )}
                 {isMobileFullDocToolbarMode && (
                   <>
                     <span className="w-px h-5 bg-gray-200 mx-0.5 shrink-0" />
@@ -18097,7 +18404,7 @@ function NoteEditor({
                   </>
                 )}
               </div>
-              {!isMobileFullDocToolbarMode && (
+              {!isMobileFullDocToolbarMode && !isMobileFullSheetToolbarMode && (
               <div className={`grid gap-1.5 ${isActiveSheetPage ? 'grid-cols-1' : 'grid-cols-3'}`}>
                 <button
                   type="button"
@@ -18145,13 +18452,15 @@ function NoteEditor({
               </div>
               )}
             </div>
-            {!isMobileFullDocToolbarMode && mobileToolbarSection === 'format' && (
+            {!isMobileFullDocToolbarMode &&
+              !isMobileFullSheetToolbarMode &&
+              mobileToolbarSection === 'format' && (
               <div className="border-t border-gray-100 bg-slate-50 p-2.5 space-y-2.5">
                 {!isActiveSheetPage && (
                   <label className="block text-[11px] font-medium text-gray-600">
                     <span className="mb-1 block">Font</span>
                     <select
-                      value={docFontFamilyValue}
+                      value={activeFontFamilyValue}
                       onChange={handleApplyFontFamily}
                       className="w-full h-9 border border-gray-200 rounded px-2 text-xs bg-white text-gray-700"
                     >
@@ -18199,42 +18508,162 @@ function NoteEditor({
                     <div className="grid grid-cols-3 gap-1.5">
                       <button
                         type="button"
-                        onClick={() => updateSelectedSheetCellStyle({ align: 'left' })}
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={() => adjustSelectedSheetDecimalPlaces(-1)}
                         className="h-9 text-xs rounded border border-gray-200 bg-white hover:bg-gray-50 text-gray-700"
                       >
-                        Left
+                        .0&#8592;
                       </button>
                       <button
                         type="button"
-                        onClick={() => updateSelectedSheetCellStyle({ align: 'center' })}
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={() => adjustSelectedSheetDecimalPlaces(1)}
                         className="h-9 text-xs rounded border border-gray-200 bg-white hover:bg-gray-50 text-gray-700"
                       >
-                        Center
+                        .00&#8594;
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => updateSelectedSheetCellStyle({ align: 'right' })}
-                        className="h-9 text-xs rounded border border-gray-200 bg-white hover:bg-gray-50 text-gray-700"
+                      <select
+                        value={selectedSheetDataType}
+                        onChange={(event) => applySelectedSheetDataType(event.target.value)}
+                        className="h-9 text-xs rounded border border-gray-200 bg-white px-2 text-gray-700"
+                        title="Data type"
                       >
-                        Right
-                      </button>
+                        {SHEET_DATA_TYPE_OPTIONS.map((option) => (
+                          <option key={`mobile-sheet-data-type-${option.id}`} value={option.id}>
+                            {option.example ? `${option.label} (${option.example})` : option.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-md border border-gray-200 bg-white p-2 space-y-2">
+                      <p className="text-[11px] font-medium text-gray-600">Cell</p>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => updateSelectedSheetCellStyle({ align: 'left' })}
+                          className={`h-8 rounded border inline-flex items-center justify-center ${
+                            selectedSheetCell?.style?.align === 'left'
+                              ? 'border-blue-500 bg-blue-50 text-blue-700'
+                              : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                          title="Align left"
+                        >
+                          <AlignLeft size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => updateSelectedSheetCellStyle({ align: 'center' })}
+                          className={`h-8 rounded border inline-flex items-center justify-center ${
+                            selectedSheetCell?.style?.align === 'center'
+                              ? 'border-blue-500 bg-blue-50 text-blue-700'
+                              : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                          title="Align center"
+                        >
+                          <AlignCenter size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => updateSelectedSheetCellStyle({ align: 'right' })}
+                          className={`h-8 rounded border inline-flex items-center justify-center ${
+                            selectedSheetCell?.style?.align === 'right'
+                              ? 'border-blue-500 bg-blue-50 text-blue-700'
+                              : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                          title="Align right"
+                        >
+                          <AlignRight size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onMouseDown={handleFormatMouseDown}
+                          onClick={() => updateSelectedSheetCellStyle({ wrap: !isSelectedSheetWrapEnabled })}
+                          className={`h-8 rounded border text-xs ${
+                            isSelectedSheetWrapEnabled
+                              ? 'border-blue-500 bg-blue-50 text-blue-700'
+                              : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                          }`}
+                          title="Wrap text"
+                        >
+                          Wrap
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="text-[11px] font-medium text-gray-600">
+                          <span className="mb-1 block">Fill</span>
+                          <input
+                            type="color"
+                            onChange={handleApplyCellBackgroundColor}
+                            value={selectedSheetCell?.style?.bgColor || '#ffffff'}
+                            className="h-8 w-full p-0 border border-gray-200 rounded cursor-pointer bg-white"
+                          />
+                        </label>
+                        <label className="text-[11px] font-medium text-gray-600">
+                          <span className="mb-1 block">Border color</span>
+                          <input
+                            type="color"
+                            onChange={(event) =>
+                              updateSelectedSheetCellStyle({ borderColor: String(event.target.value || '#cbd5e1') })
+                            }
+                            value={selectedSheetBorderColor}
+                            className="h-8 w-full p-0 border border-gray-200 rounded cursor-pointer bg-white"
+                          />
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="text-[11px] font-medium text-gray-600">
+                          <span className="mb-1 block">Border</span>
+                          <select
+                            value={selectedSheetBorderStyle}
+                            onChange={(event) =>
+                              updateSelectedSheetCellStyle({
+                                borderStyle: normalizeSheetCellBorderLineStyle(event.target.value, 'solid'),
+                              })
+                            }
+                            className="h-8 w-full border border-gray-200 rounded px-2 text-xs bg-white text-gray-700"
+                          >
+                            {SHEET_BORDER_LINE_STYLE_OPTIONS.map((option) => (
+                              <option key={`mobile-sheet-border-style-${option.id}`} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-[11px] font-medium text-gray-600">
+                          <span className="mb-1 block">Width</span>
+                          <select
+                            value={String(selectedSheetBorderWidth)}
+                            onChange={(event) =>
+                              updateSelectedSheetCellStyle({
+                                borderWidth: normalizeSheetCellBorderLineWidth(
+                                  event.target.value,
+                                  selectedSheetBorderWidth,
+                                  0,
+                                  6
+                                ),
+                              })
+                            }
+                            className="h-8 w-full border border-gray-200 rounded px-2 text-xs bg-white text-gray-700"
+                          >
+                            {Array.from({ length: 7 }, (_, index) => (
+                              <option key={`mobile-sheet-border-width-${index}`} value={String(index)}>
+                                {index === 0 ? '0 (none)' : `${index}px`}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
                       <label className="text-[11px] font-medium text-gray-600">
                         <span className="mb-1 block">Text color</span>
                         <input
                           type="color"
                           onChange={handleApplyTextColor}
                           value={selectedSheetCell?.style?.color || '#111827'}
-                          className="h-9 w-full p-0 border border-gray-200 rounded cursor-pointer bg-white"
-                        />
-                      </label>
-                      <label className="text-[11px] font-medium text-gray-600">
-                        <span className="mb-1 block">Cell color</span>
-                        <input
-                          type="color"
-                          onChange={handleApplyCellBackgroundColor}
-                          value={selectedSheetCell?.style?.bgColor || '#ffffff'}
                           className="h-9 w-full p-0 border border-gray-200 rounded cursor-pointer bg-white"
                         />
                       </label>
@@ -18361,7 +18790,9 @@ function NoteEditor({
                 )}
               </div>
             )}
-            {!isMobileFullDocToolbarMode && mobileToolbarSection === 'insert' && (
+            {!isMobileFullDocToolbarMode &&
+              !isMobileFullSheetToolbarMode &&
+              mobileToolbarSection === 'insert' && (
               <div className="border-t border-gray-100 bg-slate-50 p-2.5 space-y-2.5">
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -18420,7 +18851,9 @@ function NoteEditor({
                 </button>
               </div>
             )}
-            {!isMobileFullDocToolbarMode && mobileToolbarSection === 'table' && (
+            {!isMobileFullDocToolbarMode &&
+              !isMobileFullSheetToolbarMode &&
+              mobileToolbarSection === 'table' && (
               <div className="border-t border-gray-100 bg-slate-50 p-2.5 space-y-2.5">
                 {hasDocTableSelection ? (
                   <>
@@ -18653,16 +19086,425 @@ function NoteEditor({
           </div>
         )}
 
-        {isMobileFullDocToolbarMode && mobileToolbarSection && (
+        {((isMobileFullDocToolbarMode && mobileToolbarSection) || isMobileFullSheetToolbarMode) && (
           <div className="mobile-note-bottom-dock md:hidden fixed inset-x-0 bottom-0 z-[95] border-t border-gray-200 bg-white text-gray-700">
             <div className="px-2.5 pt-2 pb-[max(env(safe-area-inset-bottom),0.75rem)]">
               <div className="mobile-note-bottom-scroll flex items-center gap-2 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden">
-                {mobileToolbarSection === 'format' && (
+                {isMobileFullSheetToolbarMode && (
+                  <>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() =>
+                        updateSelectedSheetCellStyle({ bold: !Boolean(selectedSheetCell?.style?.bold) })
+                      }
+                      className={`h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border ${
+                        currentFormatState.bold
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                      title="Bold"
+                    >
+                      <Bold size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() =>
+                        updateSelectedSheetCellStyle({ italic: !Boolean(selectedSheetCell?.style?.italic) })
+                      }
+                      className={`h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border ${
+                        currentFormatState.italic
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                      title="Italic"
+                    >
+                      <Italic size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() =>
+                        updateSelectedSheetCellStyle({
+                          underline: !Boolean(selectedSheetCell?.style?.underline),
+                        })
+                      }
+                      className={`h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border ${
+                        currentFormatState.underline
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                      title="Underline"
+                    >
+                      <Underline size={14} />
+                    </button>
+                    <label className="shrink-0 inline-flex items-center">
+                      <span className="sr-only">Font</span>
+                      <select
+                        value={activeFontFamilyValue}
+                        onChange={handleApplyFontFamily}
+                        className="h-8 w-[88px] min-w-[88px] max-w-[88px] rounded-md border border-gray-200 bg-white px-1.5 text-[11px] text-gray-700"
+                        title="Font"
+                      >
+                        <option value="">Font</option>
+                        {mobileCompactDocFontOptions.map((fontOption) => (
+                          <option
+                            key={`mobile-sheet-dock-font-${fontOption.value}`}
+                            value={fontOption.value}
+                            style={{ fontFamily: fontOption.cssFamily }}
+                          >
+                            {fontOption.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div ref={docFontSizeMenuRef} className="relative shrink-0">
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={() => setIsDocFontSizeMenuOpen((prev) => !prev)}
+                        className="h-8 inline-flex items-center gap-1.5 px-2 text-xs rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                        title="Font size"
+                      >
+                        <span className="w-6 text-left">
+                          {String(selectedSheetCell?.style?.fontSize || '14').replace(/px$/i, '') || '14'}
+                        </span>
+                        <ChevronDown
+                          size={12}
+                          className={`transition-transform ${isDocFontSizeMenuOpen ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                      {isDocFontSizeMenuOpen && (
+                        <div className="absolute z-[140] bottom-full mb-1 right-0 w-44 max-w-[calc(100vw-20px)] rounded-lg border border-gray-200 bg-white p-2 shadow-md">
+                          <div className="grid grid-cols-4 gap-1">
+                            {DOC_FONT_SIZE_OPTIONS.map((sizeValue) => {
+                              const currentSize = String(selectedSheetCell?.style?.fontSize || '14').replace(
+                                /px$/i,
+                                ''
+                              );
+                              const isActiveSize = String(currentSize || '').trim() === sizeValue;
+                              return (
+                                <button
+                                  key={`mobile-sheet-dock-font-size-preset-${sizeValue}`}
+                                  type="button"
+                                  onMouseDown={handleFormatMouseDown}
+                                  onClick={() => handleApplyFontSizePreset(sizeValue)}
+                                  className={`px-1.5 py-1 text-[11px] rounded border transition-colors ${
+                                    isActiveSize
+                                      ? 'bg-gray-100 text-gray-700 border-gray-300'
+                                      : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  {sizeValue}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-1.5">
+                            <input
+                              value={docFontSizeDraft}
+                              onChange={handleDocFontSizeDraftChange}
+                              onKeyDown={handleDocFontSizeDraftKeyDown}
+                              inputMode="numeric"
+                              className="w-14 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700"
+                              title="Custom font size"
+                              placeholder="14"
+                            />
+                            <span className="text-[11px] text-gray-500">px</span>
+                            <button
+                              type="button"
+                              onMouseDown={handleFormatMouseDown}
+                              onClick={commitDocFontSizeDraft}
+                              className="ml-auto px-2 py-1 text-[11px] rounded border border-gray-200 bg-white hover:bg-gray-50 text-gray-700"
+                            >
+                              Set
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <span className="h-6 w-px shrink-0 bg-gray-200" />
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => adjustSelectedSheetDecimalPlaces(-1)}
+                      className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                      title="Decrease decimal places"
+                    >
+                      .0&#8592;
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => adjustSelectedSheetDecimalPlaces(1)}
+                      className="h-8 px-2.5 shrink-0 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50"
+                      title="Increase decimal places"
+                    >
+                      .00&#8594;
+                    </button>
+                    <div ref={sheetDataTypeMenuRef} className="relative shrink-0">
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={() => {
+                          setIsSheetDataTypeMenuOpen((prev) => !prev);
+                          setIsSheetCellMenuOpen(false);
+                        }}
+                        className="h-8 px-2.5 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1.5"
+                        title="Cell data type"
+                      >
+                        <span className="font-mono text-[11px]">123</span>
+                        {selectedSheetDataTypeLabel}
+                        <ChevronDown
+                          size={12}
+                          className={`transition-transform ${isSheetDataTypeMenuOpen ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                      {isSheetDataTypeMenuOpen && (
+                        <div className="absolute z-[140] bottom-full mb-1 right-0 w-64 max-w-[calc(100vw-20px)] rounded-lg border border-gray-200 bg-white p-1.5 shadow-md">
+                          {SHEET_DATA_TYPE_OPTIONS.map((option, optionIndex) => {
+                            const isActive = selectedSheetDataType === option.id;
+                            const previousOption =
+                              optionIndex > 0 ? SHEET_DATA_TYPE_OPTIONS[optionIndex - 1] : null;
+                            const showGroupDivider =
+                              optionIndex > 0 &&
+                              String(previousOption?.group || '') !== String(option.group || '');
+                            return (
+                              <React.Fragment key={`mobile-dock-sheet-data-type-${option.id}`}>
+                                {showGroupDivider && <div className="my-1 border-t border-gray-100" />}
+                                <button
+                                  type="button"
+                                  onMouseDown={handleFormatMouseDown}
+                                  onClick={() => applySelectedSheetDataType(option.id)}
+                                  className={`w-full px-2 py-1.5 rounded text-xs inline-flex items-center gap-2 ${
+                                    isActive
+                                      ? 'bg-blue-50 text-blue-700'
+                                      : 'text-gray-700 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  <span className="flex-1 text-left truncate">{option.label}</span>
+                                  <span
+                                    className={`text-[11px] tabular-nums whitespace-nowrap ${
+                                      isActive ? 'text-blue-600/80' : 'text-gray-400'
+                                    }`}
+                                  >
+                                    {option.example || ''}
+                                  </span>
+                                  <span className="w-3 h-3 inline-flex items-center justify-center">
+                                    {isActive ? <Check size={12} /> : null}
+                                  </span>
+                                </button>
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <div ref={sheetCellMenuRef} className="relative shrink-0 inline-flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={toggleSelectedSheetBorder}
+                        className={`h-8 px-2.5 rounded-md border inline-flex items-center gap-1.5 text-xs ${
+                          isSelectedSheetBorderEnabled
+                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                            : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                        }`}
+                        title="Toggle border"
+                      >
+                        <span
+                          className={`inline-block w-3 h-3 rounded-[2px] border ${
+                            isSelectedSheetBorderEnabled
+                              ? 'bg-blue-500 border-blue-500'
+                              : 'bg-white border-gray-300'
+                          }`}
+                        />
+                        Border
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={handleFormatMouseDown}
+                        onClick={() => {
+                          setIsSheetCellMenuOpen((prev) => !prev);
+                          setIsSheetDataTypeMenuOpen(false);
+                        }}
+                        className="h-8 px-2.5 rounded-md border border-gray-200 bg-white text-xs text-gray-700 hover:bg-gray-50 inline-flex items-center gap-1.5"
+                        title="Cell menu"
+                      >
+                        Cell
+                        <ChevronDown
+                          size={12}
+                          className={`transition-transform ${isSheetCellMenuOpen ? 'rotate-180' : ''}`}
+                        />
+                      </button>
+                      {isSheetCellMenuOpen && (
+                        <div className="absolute z-[140] bottom-full mb-1 right-0 w-52 max-w-[calc(100vw-20px)] rounded-lg border border-gray-200 bg-white p-2 shadow-md">
+                          <div className="grid grid-cols-3 gap-2">
+                            {DOC_TABLE_CELL_ALIGN_OPTIONS.map((alignOption) => {
+                              const optionVertical = normalizeSheetCellVerticalAlign(
+                                alignOption.vertical,
+                                'middle'
+                              );
+                              const isActive =
+                                selectedSheetHorizontalAlign === alignOption.horizontal &&
+                                selectedSheetVerticalAlign === optionVertical;
+                              return (
+                                <button
+                                  key={`mobile-dock-sheet-cell-align-${alignOption.id}`}
+                                  type="button"
+                                  onMouseDown={handleFormatMouseDown}
+                                  onClick={() =>
+                                    updateSelectedSheetCellStyle({
+                                      align: alignOption.horizontal,
+                                      vAlign: optionVertical,
+                                    })
+                                  }
+                                  className={`h-10 rounded border inline-flex items-center justify-center ${
+                                    isActive
+                                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                      : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                                  }`}
+                                  title={alignOption.label}
+                                >
+                                  <DocTableCellAlignPreview
+                                    horizontal={alignOption.horizontal}
+                                    vertical={optionVertical}
+                                  />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => updateSelectedSheetCellStyle({ align: 'left' })}
+                      className={`h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border ${
+                        selectedSheetCell?.style?.align === 'left'
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                      title="Align left"
+                    >
+                      <AlignLeft size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => updateSelectedSheetCellStyle({ align: 'center' })}
+                      className={`h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border ${
+                        selectedSheetCell?.style?.align === 'center'
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                      title="Align center"
+                    >
+                      <AlignCenter size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => updateSelectedSheetCellStyle({ align: 'right' })}
+                      className={`h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-md border ${
+                        selectedSheetCell?.style?.align === 'right'
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                      title="Align right"
+                    >
+                      <AlignRight size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={() => updateSelectedSheetCellStyle({ wrap: !isSelectedSheetWrapEnabled })}
+                      className={`h-8 px-2.5 shrink-0 rounded-md border text-xs ${
+                        isSelectedSheetWrapEnabled
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                      title="Wrap text"
+                    >
+                      Wrap
+                    </button>
+                    <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                      Fill
+                      <input
+                        type="color"
+                        onChange={handleApplyCellBackgroundColor}
+                        value={selectedSheetCell?.style?.bgColor || '#ffffff'}
+                        className="h-8 w-9 p-0 border border-gray-200 rounded cursor-pointer bg-white"
+                        title="Fill color"
+                      />
+                    </label>
+                    <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                      Border
+                      <input
+                        type="color"
+                        onChange={(event) =>
+                          updateSelectedSheetCellStyle({
+                            borderColor: String(event.target.value || '#cbd5e1'),
+                          })
+                        }
+                        value={selectedSheetBorderColor}
+                        className="h-8 w-9 p-0 border border-gray-200 rounded cursor-pointer bg-white"
+                        title="Border color"
+                      />
+                    </label>
+                    <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                      Style
+                      <select
+                        value={selectedSheetBorderStyle}
+                        onChange={(event) =>
+                          updateSelectedSheetCellStyle({
+                            borderStyle: normalizeSheetCellBorderLineStyle(event.target.value, 'solid'),
+                          })
+                        }
+                        className="h-8 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700"
+                        title="Border style"
+                      >
+                        {SHEET_BORDER_LINE_STYLE_OPTIONS.map((option) => (
+                          <option key={`mobile-sheet-dock-border-style-${option.id}`} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                      Width
+                      <select
+                        value={String(selectedSheetBorderWidth)}
+                        onChange={(event) =>
+                          updateSelectedSheetCellStyle({
+                            borderWidth: normalizeSheetCellBorderLineWidth(
+                              event.target.value,
+                              selectedSheetBorderWidth,
+                              0,
+                              6
+                            ),
+                          })
+                        }
+                        className="h-8 rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700"
+                        title="Border width"
+                      >
+                        {Array.from({ length: 7 }, (_, index) => (
+                          <option key={`mobile-sheet-dock-border-width-${index}`} value={String(index)}>
+                            {index === 0 ? '0px' : `${index}px`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
+                {isMobileFullDocToolbarMode && mobileToolbarSection === 'format' && (
                   <>
                     <label className="shrink-0 inline-flex items-center">
                       <span className="sr-only">Font</span>
                       <select
-                        value={docFontFamilyValue}
+                        value={activeFontFamilyValue}
                         onChange={handleApplyFontFamily}
                         className="h-8 w-[88px] min-w-[88px] max-w-[88px] rounded-md border border-gray-200 bg-white px-1.5 text-[11px] text-gray-700"
                         title="Font"
@@ -18943,7 +19785,7 @@ function NoteEditor({
                     </button>
                   </>
                 )}
-                {mobileToolbarSection === 'insert' && (
+                {isMobileFullDocToolbarMode && mobileToolbarSection === 'insert' && (
                   <>
                     <button
                       type="button"
@@ -19051,7 +19893,7 @@ function NoteEditor({
                     </div>
                   </>
                 )}
-                {mobileToolbarSection === 'table' && (
+                {isMobileFullDocToolbarMode && mobileToolbarSection === 'table' && (
                   <>
                     {hasDocTableSelection ? (
                       <>
@@ -19363,9 +20205,8 @@ function NoteEditor({
             )}
             <div className="w-px h-5 bg-gray-200 mx-0.5" />
             <select
-              value={isActiveSheetPage ? '' : docFontFamilyValue}
+              value={activeFontFamilyValue}
               onChange={handleApplyFontFamily}
-              disabled={isActiveSheetPage}
               className="w-24 lg:w-28 text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700 disabled:bg-gray-100 disabled:text-gray-400"
             >
               <option value="">Font</option>
@@ -19446,24 +20287,7 @@ function NoteEditor({
                 </div>
               )}
             </div>
-            {isActiveSheetPage ? (
-              <>
-                <input
-                  type="color"
-                  onChange={handleApplyTextColor}
-                  value={selectedSheetCell?.style?.color || '#111827'}
-                  className="h-7 w-8 p-0 border border-gray-200 rounded cursor-pointer bg-white"
-                  title="Text color"
-                />
-                <input
-                  type="color"
-                  onChange={handleApplyCellBackgroundColor}
-                  value={selectedSheetCell?.style?.bgColor || '#ffffff'}
-                  className="h-7 w-8 p-0 border border-gray-200 rounded cursor-pointer bg-white"
-                  title="Cell background"
-                />
-              </>
-            ) : (
+            {!isActiveSheetPage && (
               <>
                 <div ref={docTextColorPickerRef} className="relative">
                   <button
@@ -20157,23 +20981,271 @@ function NoteEditor({
             )}
             {isActiveSheetPage && (
               <>
-                <button type="button" onClick={() => updateSelectedSheetCellStyle({ align: 'left' })} className="px-2 py-1 text-xs rounded hover:bg-gray-100 text-gray-700">
-                  Left
-                </button>
-                <button type="button" onClick={() => updateSelectedSheetCellStyle({ align: 'center' })} className="px-2 py-1 text-xs rounded hover:bg-gray-100 text-gray-700">
-                  Center
-                </button>
-                <button type="button" onClick={() => updateSelectedSheetCellStyle({ align: 'right' })} className="px-2 py-1 text-xs rounded hover:bg-gray-100 text-gray-700">
-                  Right
-                </button>
-              </>
-            )}
-            {isActiveSheetPage && (
-              <>
                 <div className="w-px h-5 bg-gray-200 mx-0.5" />
-                <button type="button" onClick={handleExportPdf} className="px-2 py-1 text-xs rounded hover:bg-gray-100 text-gray-700">
-                  PDF
+                <button
+                  type="button"
+                  onMouseDown={handleFormatMouseDown}
+                  onClick={() => adjustSelectedSheetDecimalPlaces(-1)}
+                  className="px-2 py-1 text-xs rounded border border-gray-200 bg-white hover:bg-gray-100 text-gray-700"
+                  title="Decrease decimal places"
+                >
+                  .0&#8592;
                 </button>
+                <button
+                  type="button"
+                  onMouseDown={handleFormatMouseDown}
+                  onClick={() => adjustSelectedSheetDecimalPlaces(1)}
+                  className="px-2 py-1 text-xs rounded border border-gray-200 bg-white hover:bg-gray-100 text-gray-700"
+                  title="Increase decimal places"
+                >
+                  .00&#8594;
+                </button>
+                <div ref={sheetDataTypeMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onMouseDown={handleFormatMouseDown}
+                    onClick={() => {
+                      setIsSheetDataTypeMenuOpen((prev) => !prev);
+                      setIsSheetCellMenuOpen(false);
+                    }}
+                    className="px-2 py-1 text-xs rounded border border-gray-200 bg-white hover:bg-gray-100 text-gray-700 inline-flex items-center gap-1.5"
+                    title="Cell data type"
+                  >
+                    <span className="font-mono text-[11px]">123</span>
+                    <span className="hidden lg:inline">{selectedSheetDataTypeLabel}</span>
+                    <ChevronDown
+                      size={12}
+                      className={`transition-transform ${isSheetDataTypeMenuOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {isSheetDataTypeMenuOpen && (
+                    <div className="absolute z-[140] mt-1 top-full right-0 w-72 rounded-lg border border-gray-200 bg-white p-1.5 shadow-xl">
+                      {SHEET_DATA_TYPE_OPTIONS.map((option, optionIndex) => {
+                        const isActive = selectedSheetDataType === option.id;
+                        const previousOption = optionIndex > 0 ? SHEET_DATA_TYPE_OPTIONS[optionIndex - 1] : null;
+                        const showGroupDivider =
+                          optionIndex > 0 &&
+                          String(previousOption?.group || '') !== String(option.group || '');
+                        return (
+                          <React.Fragment key={`sheet-data-type-${option.id}`}>
+                            {showGroupDivider && <div className="my-1 border-t border-gray-100" />}
+                            <button
+                              type="button"
+                              onMouseDown={handleFormatMouseDown}
+                              onClick={() => applySelectedSheetDataType(option.id)}
+                              className={`w-full px-2 py-1.5 rounded text-xs inline-flex items-center gap-2 ${
+                                isActive
+                                  ? 'bg-blue-50 text-blue-700'
+                                  : 'text-gray-700 hover:bg-gray-50'
+                              }`}
+                            >
+                              <span className="flex-1 text-left truncate">{option.label}</span>
+                              <span
+                                className={`text-[11px] tabular-nums whitespace-nowrap ${
+                                  isActive ? 'text-blue-600/80' : 'text-gray-400'
+                                }`}
+                              >
+                                {option.example || ''}
+                              </span>
+                              <span className="w-3 h-3 inline-flex items-center justify-center">
+                                {isActive ? <Check size={12} /> : null}
+                              </span>
+                            </button>
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div ref={sheetCellMenuRef} className="relative inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onMouseDown={handleFormatMouseDown}
+                    onClick={toggleSelectedSheetBorder}
+                    className={`px-2 py-1 text-xs rounded border inline-flex items-center gap-1.5 ${
+                      isSelectedSheetBorderEnabled
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
+                    }`}
+                    title="Toggle border"
+                  >
+                    <span
+                      className={`inline-block w-3 h-3 rounded-[2px] border ${
+                        isSelectedSheetBorderEnabled
+                          ? 'bg-blue-500 border-blue-500'
+                          : 'bg-white border-gray-300'
+                      }`}
+                    />
+                    Border
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={handleFormatMouseDown}
+                    onClick={() => {
+                      setIsSheetCellMenuOpen((prev) => !prev);
+                      setIsSheetDataTypeMenuOpen(false);
+                    }}
+                    className="px-2 py-1 text-xs rounded border border-gray-200 bg-white hover:bg-gray-100 text-gray-700 inline-flex items-center gap-1.5"
+                    title="Cell menu"
+                  >
+                    Cell
+                    <ChevronDown
+                      size={12}
+                      className={`transition-transform ${isSheetCellMenuOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {isSheetCellMenuOpen && (
+                    <div className="absolute z-[140] mt-1 top-full right-0 w-52 rounded-lg border border-gray-200 bg-white p-2 shadow-xl">
+                      <div className="grid grid-cols-3 gap-2">
+                        {DOC_TABLE_CELL_ALIGN_OPTIONS.map((alignOption) => {
+                          const optionVertical = normalizeSheetCellVerticalAlign(
+                            alignOption.vertical,
+                            'middle'
+                          );
+                          const isActive =
+                            selectedSheetHorizontalAlign === alignOption.horizontal &&
+                            selectedSheetVerticalAlign === optionVertical;
+                          return (
+                            <button
+                              key={`sheet-cell-align-${alignOption.id}`}
+                              type="button"
+                              onMouseDown={handleFormatMouseDown}
+                              onClick={() =>
+                                updateSelectedSheetCellStyle({
+                                  align: alignOption.horizontal,
+                                  vAlign: optionVertical,
+                                })
+                              }
+                              className={`h-10 rounded border inline-flex items-center justify-center ${
+                                isActive
+                                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                              }`}
+                              title={alignOption.label}
+                            >
+                              <DocTableCellAlignPreview
+                                horizontal={alignOption.horizontal}
+                                vertical={optionVertical}
+                              />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="w-px h-5 bg-gray-200 mx-0.5" />
+                <button
+                  type="button"
+                  onMouseDown={handleFormatMouseDown}
+                  onClick={() => updateSelectedSheetCellStyle({ align: 'left' })}
+                  className={`h-7 w-7 rounded border inline-flex items-center justify-center ${
+                    selectedSheetCell?.style?.align === 'left'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                  title="Align left"
+                >
+                  <AlignLeft size={14} />
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={handleFormatMouseDown}
+                  onClick={() => updateSelectedSheetCellStyle({ align: 'center' })}
+                  className={`h-7 w-7 rounded border inline-flex items-center justify-center ${
+                    selectedSheetCell?.style?.align === 'center'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                  title="Align center"
+                >
+                  <AlignCenter size={14} />
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={handleFormatMouseDown}
+                  onClick={() => updateSelectedSheetCellStyle({ align: 'right' })}
+                  className={`h-7 w-7 rounded border inline-flex items-center justify-center ${
+                    selectedSheetCell?.style?.align === 'right'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                  title="Align right"
+                >
+                  <AlignRight size={14} />
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={handleFormatMouseDown}
+                  onClick={() => updateSelectedSheetCellStyle({ wrap: !isSelectedSheetWrapEnabled })}
+                  className={`px-2 py-1 text-xs rounded border ${
+                    isSelectedSheetWrapEnabled
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
+                  }`}
+                  title="Wrap text"
+                >
+                  Wrap
+                </button>
+                <label className="inline-flex items-center gap-1 text-[11px] text-gray-500">
+                  Fill
+                  <input
+                    type="color"
+                    onChange={handleApplyCellBackgroundColor}
+                    value={selectedSheetCell?.style?.bgColor || '#ffffff'}
+                    className="h-7 w-8 p-0 border border-gray-200 rounded cursor-pointer bg-white"
+                    title="Fill color"
+                  />
+                </label>
+                <label className="inline-flex items-center gap-1 text-[11px] text-gray-500">
+                  Border
+                  <input
+                    type="color"
+                    onChange={(event) =>
+                      updateSelectedSheetCellStyle({ borderColor: String(event.target.value || '#cbd5e1') })
+                    }
+                    value={selectedSheetBorderColor}
+                    className="h-7 w-8 p-0 border border-gray-200 rounded cursor-pointer bg-white"
+                    title="Border color"
+                  />
+                </label>
+                <select
+                  value={selectedSheetBorderStyle}
+                  onChange={(event) =>
+                    updateSelectedSheetCellStyle({
+                      borderStyle: normalizeSheetCellBorderLineStyle(event.target.value, 'solid'),
+                    })
+                  }
+                  className="h-7 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700"
+                  title="Border style"
+                >
+                  {SHEET_BORDER_LINE_STYLE_OPTIONS.map((option) => (
+                    <option key={`sheet-border-style-main-${option.id}`} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={String(selectedSheetBorderWidth)}
+                  onChange={(event) =>
+                    updateSelectedSheetCellStyle({
+                      borderWidth: normalizeSheetCellBorderLineWidth(
+                        event.target.value,
+                        selectedSheetBorderWidth,
+                        0,
+                        6
+                      ),
+                    })
+                  }
+                  className="h-7 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700"
+                  title="Border width"
+                >
+                  {Array.from({ length: 7 }, (_, index) => (
+                    <option key={`sheet-border-width-main-${index}`} value={String(index)}>
+                      {index === 0 ? '0px' : `${index}px`}
+                    </option>
+                  ))}
+                </select>
               </>
             )}
           </div>
@@ -20232,7 +21304,9 @@ function NoteEditor({
               event.preventDefault();
               pasteTextIntoSelectedSheetCells(pastedText);
             }}
-            className="h-full w-full min-w-0 overflow-auto bg-white outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+            className={`h-full w-full min-w-0 overflow-auto bg-white outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${
+              isMobileFullSheetToolbarMode ? 'pb-28' : ''
+            }`}
           >
             <table className="min-w-full border-collapse text-xs">
               <thead
@@ -20291,6 +21365,17 @@ function NoteEditor({
                       if (isClipboardBottom) clipboardBorderStyle.borderBottom = '2px dashed #2563eb';
                       if (isClipboardLeft) clipboardBorderStyle.borderLeft = '2px dashed #2563eb';
                       if (isClipboardRight) clipboardBorderStyle.borderRight = '2px dashed #2563eb';
+                      const cellBorderWidth = normalizeSheetCellBorderLineWidth(
+                        cell.style.borderWidth,
+                        1,
+                        0,
+                        6
+                      );
+                      const cellBorderStyle = normalizeSheetCellBorderLineStyle(cell.style.borderStyle, 'solid');
+                      const shouldHideCellBorder = cellBorderStyle === 'none' || cellBorderWidth <= 0;
+                      const displayCellText = formatSheetCellDisplayText(cell);
+                      const isCellWrapEnabled = Boolean(cell.style.wrap);
+                      const cellVerticalAlign = normalizeSheetCellVerticalAlign(cell.style.vAlign, 'middle');
                       const presenceCellEntries = sheetPresenceByCell.get(`${rowIndex}-${colIndex}`) || [];
                       const selectionShadows = [];
                       if (isRangeTop) selectionShadows.push('inset 0 2px 0 #2563eb');
@@ -20314,6 +21399,18 @@ function NoteEditor({
                           } ${isSelected ? 'z-[1]' : ''}`}
                           style={{
                             boxShadow: selectionShadows.length ? selectionShadows.join(', ') : undefined,
+                            ...(!isInSelectionRange
+                              ? shouldHideCellBorder
+                                ? {
+                                    borderStyle: 'none',
+                                    borderWidth: '0px',
+                                  }
+                                : {
+                                    borderStyle: cellBorderStyle,
+                                    borderWidth: `${cellBorderWidth}px`,
+                                    borderColor: cell.style.borderColor || '#cbd5e1',
+                                  }
+                              : {}),
                             ...clipboardBorderStyle,
                           }}
                         >
@@ -20361,30 +21458,48 @@ function NoteEditor({
                                 textDecoration: cell.style.underline ? 'underline' : 'none',
                                 textAlign: cell.style.align,
                                 fontSize: cell.style.fontSize || '14px',
+                                fontFamily: cell.style.fontFamily || undefined,
                                 color: cell.style.color,
                                 backgroundColor: isInSelectionRange ? 'transparent' : cell.style.bgColor,
                               }}
                             />
                           ) : (
                             <div
-                              className="w-full h-9 px-2 flex items-center overflow-hidden whitespace-nowrap text-ellipsis text-slate-700 select-none cursor-cell"
+                              className={`w-full px-2 text-slate-700 select-none cursor-cell ${
+                                isCellWrapEnabled
+                                  ? 'min-h-9 py-1 whitespace-pre-wrap break-words'
+                                  : 'h-9 flex items-center overflow-hidden whitespace-nowrap text-ellipsis'
+                              }`}
                               style={{
                                 fontWeight: cell.style.bold ? 700 : 400,
                                 fontStyle: cell.style.italic ? 'italic' : 'normal',
                                 textDecoration: cell.style.underline ? 'underline' : 'none',
-                                justifyContent:
-                                  cell.style.align === 'right'
-                                    ? 'flex-end'
-                                    : cell.style.align === 'center'
-                                    ? 'center'
-                                    : 'flex-start',
+                                ...(isCellWrapEnabled
+                                  ? {
+                                      textAlign: cell.style.align,
+                                    }
+                                  : {
+                                      justifyContent:
+                                        cell.style.align === 'right'
+                                          ? 'flex-end'
+                                          : cell.style.align === 'center'
+                                          ? 'center'
+                                          : 'flex-start',
+                                      alignItems:
+                                        cellVerticalAlign === 'top'
+                                          ? 'flex-start'
+                                          : cellVerticalAlign === 'bottom'
+                                          ? 'flex-end'
+                                          : 'center',
+                                    }),
                                 fontSize: cell.style.fontSize || '14px',
+                                fontFamily: cell.style.fontFamily || undefined,
                                 color: cell.style.color,
                                 backgroundColor: isInSelectionRange ? 'transparent' : cell.style.bgColor,
                               }}
                               title={cell.text || ''}
                             >
-                              {cell.text || '\u00A0'}
+                              {displayCellText || '\u00A0'}
                             </div>
                           )}
                           {presenceCellEntries.map((presenceEntry, presenceIndex) => (
