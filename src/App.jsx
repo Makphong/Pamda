@@ -9936,7 +9936,7 @@ function ProjectDashboard({
                  {/* Content Area */}
                  <div className="flex flex-col md:flex-row gap-4 md:gap-6 flex-1 min-h-0 min-w-0">
                     {/* Selector */}
-                    <div className="w-full md:w-72 bg-white border border-gray-200 rounded-xl shadow-sm p-3 shrink-0 space-y-2">
+                    <div className="w-full md:w-72 bg-white border border-gray-200 rounded-xl shadow-sm p-3 shrink-0 space-y-2 md:h-full md:flex md:flex-col md:min-h-0">
                       <div className="md:hidden space-y-2">
                         <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
                           {noteSection === 'department' ? 'Select department' : 'Select member'}
@@ -9956,12 +9956,12 @@ function ProjectDashboard({
                           emptyText={noteSection === 'department' ? 'No department found' : 'No member found'}
                         />
                       </div>
-                      <div className="hidden md:block space-y-2">
+                      <div className="hidden md:flex md:flex-col md:flex-1 md:min-h-0 space-y-2">
                         <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
                           {noteSection === 'department' ? 'Select department' : 'Select member'}
                         </p>
-                        <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
-                          <div className="max-h-[46vh] overflow-y-auto divide-y divide-gray-100">
+                        <div className="border border-gray-200 rounded-lg overflow-hidden bg-white flex-1 min-h-0">
+                          <div className="h-full overflow-y-auto divide-y divide-gray-100">
                             {currentNoteTargetOptions.map((option) => {
                               const isActive = option.value === activeNoteId;
                               const isPinned =
