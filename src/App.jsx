@@ -750,6 +750,91 @@ const parseSheetCellReference = (value) => {
   if (!Number.isFinite(row) || row < 0 || col < 0) return null;
   return { row, col };
 };
+const getSheetCoordKey = (row, col) => `${Number(row)}:${Number(col)}`;
+const normalizeNoteSheetMergeEntry = (mergeInput, rowsLimit = DEFAULT_NOTE_SHEET_ROWS, colsLimit = DEFAULT_NOTE_SHEET_COLS) => {
+  const raw = mergeInput && typeof mergeInput === 'object' ? mergeInput : {};
+  const safeRows = Math.max(1, Number.isFinite(Number(rowsLimit)) ? Number(rowsLimit) : DEFAULT_NOTE_SHEET_ROWS);
+  const safeCols = Math.max(1, Number.isFinite(Number(colsLimit)) ? Number(colsLimit) : DEFAULT_NOTE_SHEET_COLS);
+  const row = Math.max(0, Math.min(safeRows - 1, Number.parseInt(raw.row, 10) || 0));
+  const col = Math.max(0, Math.min(safeCols - 1, Number.parseInt(raw.col, 10) || 0));
+  const rowSpanRaw = Number.parseInt(raw.rowSpan, 10);
+  const colSpanRaw = Number.parseInt(raw.colSpan, 10);
+  const rowSpan = Math.max(1, Math.min(safeRows - row, Number.isFinite(rowSpanRaw) ? rowSpanRaw : 1));
+  const colSpan = Math.max(1, Math.min(safeCols - col, Number.isFinite(colSpanRaw) ? colSpanRaw : 1));
+  if (rowSpan <= 1 && colSpan <= 1) return null;
+  return { row, col, rowSpan, colSpan };
+};
+const getSheetMergeBounds = (mergeInput) => {
+  const merge = mergeInput && typeof mergeInput === 'object' ? mergeInput : null;
+  if (!merge) return null;
+  const minRow = Number.parseInt(merge.row, 10);
+  const minCol = Number.parseInt(merge.col, 10);
+  const rowSpan = Number.parseInt(merge.rowSpan, 10);
+  const colSpan = Number.parseInt(merge.colSpan, 10);
+  if (!Number.isFinite(minRow) || !Number.isFinite(minCol) || !Number.isFinite(rowSpan) || !Number.isFinite(colSpan)) {
+    return null;
+  }
+  return {
+    minRow,
+    maxRow: minRow + Math.max(1, rowSpan) - 1,
+    minCol,
+    maxCol: minCol + Math.max(1, colSpan) - 1,
+  };
+};
+const doesSheetRangeOverlap = (leftRangeInput, rightRangeInput) => {
+  const leftRange = leftRangeInput && typeof leftRangeInput === 'object' ? leftRangeInput : null;
+  const rightRange = rightRangeInput && typeof rightRangeInput === 'object' ? rightRangeInput : null;
+  if (!leftRange || !rightRange) return false;
+  return !(
+    leftRange.maxRow < rightRange.minRow ||
+    leftRange.minRow > rightRange.maxRow ||
+    leftRange.maxCol < rightRange.minCol ||
+    leftRange.minCol > rightRange.maxCol
+  );
+};
+const normalizeNoteSheetMerges = (mergesInput, rowsLimit = DEFAULT_NOTE_SHEET_ROWS, colsLimit = DEFAULT_NOTE_SHEET_COLS) => {
+  const source = Array.isArray(mergesInput)
+    ? mergesInput
+    : mergesInput && typeof mergesInput === 'object'
+    ? Object.values(mergesInput)
+    : [];
+  const accepted = [];
+  const occupiedCells = new Set();
+  source.forEach((mergeEntry) => {
+    const normalized = normalizeNoteSheetMergeEntry(mergeEntry, rowsLimit, colsLimit);
+    if (!normalized) return;
+    const bounds = getSheetMergeBounds(normalized);
+    if (!bounds) return;
+    for (let row = bounds.minRow; row <= bounds.maxRow; row += 1) {
+      for (let col = bounds.minCol; col <= bounds.maxCol; col += 1) {
+        if (occupiedCells.has(getSheetCoordKey(row, col))) {
+          return;
+        }
+      }
+    }
+    accepted.push(normalized);
+    for (let row = bounds.minRow; row <= bounds.maxRow; row += 1) {
+      for (let col = bounds.minCol; col <= bounds.maxCol; col += 1) {
+        occupiedCells.add(getSheetCoordKey(row, col));
+      }
+    }
+  });
+  return accepted;
+};
+const findNoteSheetMergeAtCoord = (mergesInput, rowInput, colInput) => {
+  const row = Number.parseInt(rowInput, 10);
+  const col = Number.parseInt(colInput, 10);
+  if (!Number.isFinite(row) || !Number.isFinite(col)) return null;
+  const merges = Array.isArray(mergesInput) ? mergesInput : [];
+  for (const merge of merges) {
+    const bounds = getSheetMergeBounds(merge);
+    if (!bounds) continue;
+    if (row >= bounds.minRow && row <= bounds.maxRow && col >= bounds.minCol && col <= bounds.maxCol) {
+      return merge;
+    }
+  }
+  return null;
+};
 const createDefaultNoteDocPage = (html = '') => ({
   id: `doc-${generateId()}`,
   type: 'doc',
@@ -765,6 +850,7 @@ const createDefaultNoteSheetPage = () => ({
   rows: DEFAULT_NOTE_SHEET_ROWS,
   cols: DEFAULT_NOTE_SHEET_COLS,
   cells: {},
+  merges: [],
 });
 const normalizeNoteSheetCell = (value) => {
   const raw = value && typeof value === 'object' ? value : {};
@@ -913,6 +999,7 @@ const normalizeNoteDocumentPage = (pageInput, index = 0) => {
       if (!normalizedKey) return;
       cells[normalizedKey] = normalizeNoteSheetCell(value);
     });
+    const merges = normalizeNoteSheetMerges(raw.merges, rows, cols);
     return {
       id: String(raw.id || `sheet-${generateId()}`).trim(),
       type: 'sheet',
@@ -921,6 +1008,7 @@ const normalizeNoteDocumentPage = (pageInput, index = 0) => {
       rows,
       cols,
       cells,
+      merges,
     };
   }
   return {
@@ -11797,12 +11885,24 @@ function NoteEditor({
   };
   const setSingleSheetSelection = (row, col) => {
     const coord = normalizeSheetCellCoord(row, col);
-    setSheetSelection(coord);
+    const activeMerges = normalizeNoteSheetMerges(
+      activePage?.merges,
+      Number(activePage?.rows || DEFAULT_NOTE_SHEET_ROWS),
+      Number(activePage?.cols || DEFAULT_NOTE_SHEET_COLS)
+    );
+    const mergeAtCoord = findNoteSheetMergeAtCoord(activeMerges, coord.row, coord.col);
+    const normalizedCoord = mergeAtCoord
+      ? {
+          row: mergeAtCoord.row,
+          col: mergeAtCoord.col,
+        }
+      : coord;
+    setSheetSelection(normalizedCoord);
     setSheetSelectionRange({
-      start: coord,
-      end: coord,
+      start: normalizedCoord,
+      end: normalizedCoord,
     });
-    return coord;
+    return normalizedCoord;
   };
   const beginSheetRangeSelection = (row, col) => {
     if (!isActiveSheetPage) return;
@@ -11866,14 +11966,38 @@ function NoteEditor({
       const nextRaw =
         typeof updater === 'function' ? updater(prevSelection) : updater || prevSelection;
       const nextCoord = normalizeSheetCellCoord(nextRaw.row, nextRaw.col);
+      const activeMerges = normalizeNoteSheetMerges(
+        activePage?.merges,
+        Number(activePage?.rows || DEFAULT_NOTE_SHEET_ROWS),
+        Number(activePage?.cols || DEFAULT_NOTE_SHEET_COLS)
+      );
+      const mergeAtCoord = findNoteSheetMergeAtCoord(activeMerges, nextCoord.row, nextCoord.col);
+      const normalizedCoord = mergeAtCoord
+        ? {
+            row: mergeAtCoord.row,
+            col: mergeAtCoord.col,
+          }
+        : nextCoord;
       setSheetSelectionRange({
-        start: nextCoord,
-        end: nextCoord,
+        start: normalizedCoord,
+        end: normalizedCoord,
       });
-      return nextCoord;
+      return normalizedCoord;
     });
   };
-  const selectedSheetCellKey = getSheetCellKey(sheetSelection.row, sheetSelection.col);
+  const selectedSheetMergeForActiveCell = findNoteSheetMergeAtCoord(
+    normalizeNoteSheetMerges(
+      activePage?.merges,
+      Number(activePage?.rows || DEFAULT_NOTE_SHEET_ROWS),
+      Number(activePage?.cols || DEFAULT_NOTE_SHEET_COLS)
+    ),
+    sheetSelection.row,
+    sheetSelection.col
+  );
+  const selectedSheetCellKey = getSheetCellKey(
+    selectedSheetMergeForActiveCell?.row ?? sheetSelection.row,
+    selectedSheetMergeForActiveCell?.col ?? sheetSelection.col
+  );
   const selectedSheetCell =
     isActiveSheetPage && activePage?.cells?.[selectedSheetCellKey]
       ? normalizeNoteSheetCell(activePage.cells[selectedSheetCellKey])
@@ -17189,8 +17313,29 @@ function NoteEditor({
       const rows = Math.max(1, Number(activePage?.rows || 1));
       const cols = Math.max(1, Number(activePage?.cols || 1));
       const cells = activePage?.cells && typeof activePage.cells === 'object' ? activePage.cells : {};
+      const merges = normalizeNoteSheetMerges(activePage?.merges, rows, cols);
+      const mergedAnchorByCellKey = new Map();
+      const mergedHiddenCellKeys = new Set();
+      merges.forEach((mergeEntry) => {
+        const bounds = getSheetMergeBounds(mergeEntry);
+        if (!bounds) return;
+        const anchorKey = getSheetCoordKey(bounds.minRow, bounds.minCol);
+        mergedAnchorByCellKey.set(anchorKey, mergeEntry);
+        for (let row = bounds.minRow; row <= bounds.maxRow; row += 1) {
+          for (let col = bounds.minCol; col <= bounds.maxCol; col += 1) {
+            const cellCoordKey = getSheetCoordKey(row, col);
+            if (cellCoordKey === anchorKey) continue;
+            mergedHiddenCellKeys.add(cellCoordKey);
+          }
+        }
+      });
       const tableRows = Array.from({ length: rows }, (_, rowIndex) => {
         const columns = Array.from({ length: cols }, (_, colIndex) => {
+          const coordKey = getSheetCoordKey(rowIndex, colIndex);
+          if (mergedHiddenCellKeys.has(coordKey)) {
+            return '';
+          }
+          const mergeEntry = mergedAnchorByCellKey.get(coordKey) || null;
           const cellKey = getSheetCellKey(rowIndex, colIndex);
           const cell = normalizeNoteSheetCell(cells[cellKey] || {});
           const displayText = formatSheetCellDisplayText(cell);
@@ -17213,7 +17358,13 @@ function NoteEditor({
             `white-space:${cell.style.wrap ? 'pre-wrap' : 'nowrap'}`,
             `overflow-wrap:${cell.style.wrap ? 'anywhere' : 'normal'}`,
           ].join(';');
-          return `<td style="${style}">${String(displayText || '')
+          const spanAttributes = [
+            mergeEntry?.rowSpan > 1 ? `rowspan="${mergeEntry.rowSpan}"` : '',
+            mergeEntry?.colSpan > 1 ? `colspan="${mergeEntry.colSpan}"` : '',
+          ]
+            .filter(Boolean)
+            .join(' ');
+          return `<td ${spanAttributes} style="${style}">${String(displayText || '')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')}</td>`;
         }).join('');
@@ -17245,7 +17396,11 @@ function NoteEditor({
   };
   const updateSheetCell = (row, col, nextText) => {
     if (!isActiveSheetPage) return;
-    const cellKey = getSheetCellKey(row, col);
+    const activeMerges = Array.isArray(activePage?.merges) ? activePage.merges : [];
+    const targetMerge = findNoteSheetMergeAtCoord(activeMerges, row, col);
+    const targetRow = Number.isFinite(Number(targetMerge?.row)) ? Number(targetMerge.row) : row;
+    const targetCol = Number.isFinite(Number(targetMerge?.col)) ? Number(targetMerge.col) : col;
+    const cellKey = getSheetCellKey(targetRow, targetCol);
     const safeText = String(nextText || '').slice(0, 2000);
     updateActivePage((page) => {
       const currentCells = page.cells && typeof page.cells === 'object' ? page.cells : {};
@@ -17292,6 +17447,85 @@ function NoteEditor({
       };
     });
     schedulePresenceUpdate('');
+  };
+  const mergeSelectedSheetCells = () => {
+    if (!isActiveSheetPage) return;
+    if (sheetSelectionCellCount <= 1) return;
+    const nextMerge = normalizeNoteSheetMergeEntry(
+      {
+        row: sheetSelectionBounds.minRow,
+        col: sheetSelectionBounds.minCol,
+        rowSpan: sheetSelectionBounds.maxRow - sheetSelectionBounds.minRow + 1,
+        colSpan: sheetSelectionBounds.maxCol - sheetSelectionBounds.minCol + 1,
+      },
+      sheetRows,
+      sheetCols
+    );
+    if (!nextMerge) return;
+    const selectedBounds = getSheetMergeBounds(nextMerge);
+    updateActivePage((page) => {
+      const currentMerges = normalizeNoteSheetMerges(page.merges, page.rows, page.cols);
+      const filteredMerges = currentMerges.filter((mergeEntry) => {
+        const mergeBounds = getSheetMergeBounds(mergeEntry);
+        if (!mergeBounds) return false;
+        return !doesSheetRangeOverlap(selectedBounds, mergeBounds);
+      });
+      return {
+        ...page,
+        merges: [...filteredMerges, nextMerge],
+      };
+    });
+    const anchorCoord = { row: nextMerge.row, col: nextMerge.col };
+    setSheetSelection(anchorCoord);
+    setSheetSelectionRange({
+      start: anchorCoord,
+      end: {
+        row: nextMerge.row + nextMerge.rowSpan - 1,
+        col: nextMerge.col + nextMerge.colSpan - 1,
+      },
+    });
+    setSheetEditingCell(null);
+    setSheetQuickMenu(null);
+    schedulePresenceUpdate('');
+  };
+  const unmergeSelectedSheetCells = () => {
+    if (!isActiveSheetPage) return;
+    const currentMerges = normalizeNoteSheetMerges(activePage?.merges, sheetRows, sheetCols);
+    const targetMerge = findNoteSheetMergeAtCoord(currentMerges, sheetSelection.row, sheetSelection.col);
+    if (!targetMerge) return;
+    updateActivePage((page) => {
+      const pageMerges = normalizeNoteSheetMerges(page.merges, page.rows, page.cols);
+      return {
+        ...page,
+        merges: pageMerges.filter(
+          (mergeEntry) =>
+            !(
+              mergeEntry.row === targetMerge.row &&
+              mergeEntry.col === targetMerge.col &&
+              mergeEntry.rowSpan === targetMerge.rowSpan &&
+              mergeEntry.colSpan === targetMerge.colSpan
+            )
+        ),
+      };
+    });
+    const anchorCoord = { row: targetMerge.row, col: targetMerge.col };
+    setSheetSelection(anchorCoord);
+    setSheetSelectionRange({
+      start: anchorCoord,
+      end: anchorCoord,
+    });
+    setSheetEditingCell(null);
+    setSheetQuickMenu(null);
+    schedulePresenceUpdate('');
+  };
+  const toggleSelectedSheetMerge = () => {
+    const currentMerges = normalizeNoteSheetMerges(activePage?.merges, sheetRows, sheetCols);
+    const activeMerge = findNoteSheetMergeAtCoord(currentMerges, sheetSelection.row, sheetSelection.col);
+    if (activeMerge) {
+      unmergeSelectedSheetCells();
+      return;
+    }
+    mergeSelectedSheetCells();
   };
   const buildSheetSelectionClipboardText = () => {
     if (!isActiveSheetPage) return '';
@@ -17868,6 +18102,10 @@ function NoteEditor({
   }, [isMobileFullSheetToolbarMode, mobileToolbarSection]);
   const sheetRows = Math.max(1, Number(activePage?.rows || 1));
   const sheetCols = Math.max(1, Number(activePage?.cols || 1));
+  const activeSheetMerges = React.useMemo(
+    () => normalizeNoteSheetMerges(activePage?.merges, sheetRows, sheetCols),
+    [activePage?.merges, sheetRows, sheetCols]
+  );
   const sheetSelectionBounds = React.useMemo(() => {
     const start = normalizeSheetCellCoord(
       sheetSelectionRange?.start?.row ?? sheetSelection.row,
@@ -17877,12 +18115,28 @@ function NoteEditor({
       sheetSelectionRange?.end?.row ?? sheetSelection.row,
       sheetSelectionRange?.end?.col ?? sheetSelection.col
     );
-    return {
+    const baseBounds = {
       minRow: Math.min(start.row, end.row),
       maxRow: Math.max(start.row, end.row),
       minCol: Math.min(start.col, end.col),
       maxCol: Math.max(start.col, end.col),
     };
+    if (baseBounds.minRow === baseBounds.maxRow && baseBounds.minCol === baseBounds.maxCol) {
+      const selectedMerge = findNoteSheetMergeAtCoord(
+        activeSheetMerges,
+        baseBounds.minRow,
+        baseBounds.minCol
+      );
+      if (selectedMerge) {
+        return {
+          minRow: selectedMerge.row,
+          maxRow: selectedMerge.row + selectedMerge.rowSpan - 1,
+          minCol: selectedMerge.col,
+          maxCol: selectedMerge.col + selectedMerge.colSpan - 1,
+        };
+      }
+    }
+    return baseBounds;
   }, [
     sheetSelectionRange?.start?.row,
     sheetSelectionRange?.start?.col,
@@ -17892,6 +18146,7 @@ function NoteEditor({
     sheetSelection.col,
     activePage?.rows,
     activePage?.cols,
+    activeSheetMerges,
   ]);
   const sheetSelectionStartLabel = `${toSheetColumnLabel(sheetSelectionBounds.minCol)}${sheetSelectionBounds.minRow + 1}`;
   const sheetSelectionEndLabel = `${toSheetColumnLabel(sheetSelectionBounds.maxCol)}${sheetSelectionBounds.maxRow + 1}`;
@@ -17899,8 +18154,14 @@ function NoteEditor({
   const sheetSelectionColCount = sheetSelectionBounds.maxCol - sheetSelectionBounds.minCol + 1;
   const sheetSelectionCellCount = sheetSelectionRowCount * sheetSelectionColCount;
   const isSheetRangeSelection = sheetSelectionCellCount > 1;
+  const selectedSheetMerge = React.useMemo(
+    () => findNoteSheetMergeAtCoord(activeSheetMerges, sheetSelection.row, sheetSelection.col),
+    [activeSheetMerges, sheetSelection.row, sheetSelection.col]
+  );
+  const canUnmergeSheetSelection = Boolean(selectedSheetMerge);
+  const canMergeSheetSelection = !canUnmergeSheetSelection && sheetSelectionCellCount > 1;
   const sheetSelectionSummary = isSheetRangeSelection
-    ? `Range ${sheetSelectionStartLabel} to ${sheetSelectionEndLabel} • Rows ${sheetSelectionRowCount} • Cols ${sheetSelectionColCount} • Total ${sheetSelectionCellCount} cells`
+    ? `Range ${sheetSelectionStartLabel} to ${sheetSelectionEndLabel} | Rows ${sheetSelectionRowCount} | Cols ${sheetSelectionColCount} | Total ${sheetSelectionCellCount} cells`
     : `Selected cell: ${sheetSelectionStartLabel}`;
   const sheetClipboardBounds = React.useMemo(() => {
     if (!isActiveSheetPage || !sheetClipboardState) return null;
@@ -17988,6 +18249,27 @@ function NoteEditor({
     });
     return nextMap;
   }, [isActiveSheetPage, activePresenceItems, sheetRows, sheetCols]);
+  const sheetMergeRenderMeta = React.useMemo(() => {
+    const hiddenCellKeys = new Set();
+    const anchorByCellKey = new Map();
+    activeSheetMerges.forEach((mergeEntry) => {
+      const bounds = getSheetMergeBounds(mergeEntry);
+      if (!bounds) return;
+      const anchorKey = getSheetCoordKey(bounds.minRow, bounds.minCol);
+      anchorByCellKey.set(anchorKey, mergeEntry);
+      for (let row = bounds.minRow; row <= bounds.maxRow; row += 1) {
+        for (let col = bounds.minCol; col <= bounds.maxCol; col += 1) {
+          const cellKey = getSheetCoordKey(row, col);
+          if (cellKey === anchorKey) continue;
+          hiddenCellKeys.add(cellKey);
+        }
+      }
+    });
+    return {
+      hiddenCellKeys,
+      anchorByCellKey,
+    };
+  }, [activeSheetMerges]);
   const refreshDocPresenceCursorFrames = React.useCallback(() => {
     if (!isActiveDocPage) {
       setDocPresenceCursorFrames([]);
@@ -19577,6 +19859,20 @@ function NoteEditor({
                       title="Wrap text"
                     >
                       Wrap
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={handleFormatMouseDown}
+                      onClick={toggleSelectedSheetMerge}
+                      disabled={!canMergeSheetSelection && !canUnmergeSheetSelection}
+                      className={`h-8 px-2.5 shrink-0 rounded-md border text-xs ${
+                        canMergeSheetSelection || canUnmergeSheetSelection
+                          ? 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                          : 'border-gray-100 bg-gray-50 text-gray-400 cursor-not-allowed'
+                      }`}
+                      title={canUnmergeSheetSelection ? 'Unmerge selected cells' : 'Merge selected cells'}
+                    >
+                      {canUnmergeSheetSelection ? 'Unmerge' : 'Merge'}
                     </button>
                     <label className="shrink-0 inline-flex items-center gap-1 text-[11px] text-gray-500">
                       Fill
@@ -21335,6 +21631,20 @@ function NoteEditor({
                 >
                   Wrap
                 </button>
+                <button
+                  type="button"
+                  onMouseDown={handleFormatMouseDown}
+                  onClick={toggleSelectedSheetMerge}
+                  disabled={!canMergeSheetSelection && !canUnmergeSheetSelection}
+                  className={`px-2 py-1 text-xs rounded border ${
+                    canMergeSheetSelection || canUnmergeSheetSelection
+                      ? 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
+                      : 'border-gray-100 bg-gray-50 text-gray-400 cursor-not-allowed'
+                  }`}
+                  title={canUnmergeSheetSelection ? 'Unmerge selected cells' : 'Merge selected cells'}
+                >
+                  {canUnmergeSheetSelection ? 'Unmerge' : 'Merge'}
+                </button>
                 <label className="inline-flex items-center gap-1 text-[11px] text-gray-500">
                   Fill
                   <input
@@ -21477,6 +21787,15 @@ function NoteEditor({
                       {rowIndex + 1}
                     </th>
                     {Array.from({ length: sheetCols }, (_, colIndex) => {
+                      const sheetCoordKey = getSheetCoordKey(rowIndex, colIndex);
+                      if (sheetMergeRenderMeta.hiddenCellKeys.has(sheetCoordKey)) {
+                        return null;
+                      }
+                      const mergeEntry = sheetMergeRenderMeta.anchorByCellKey.get(sheetCoordKey) || null;
+                      const rowSpan = Math.max(1, Number(mergeEntry?.rowSpan || 1));
+                      const colSpan = Math.max(1, Number(mergeEntry?.colSpan || 1));
+                      const cellMaxRow = rowIndex + rowSpan - 1;
+                      const cellMaxCol = colIndex + colSpan - 1;
                       const cellKey = getSheetCellKey(rowIndex, colIndex);
                       const cell = normalizeNoteSheetCell(activePage?.cells?.[cellKey] || {});
                       const isSelected = rowIndex === sheetSelection.row && colIndex === sheetSelection.col;
@@ -21484,19 +21803,20 @@ function NoteEditor({
                         sheetEditingCell &&
                         rowIndex === sheetEditingCell.row &&
                         colIndex === sheetEditingCell.col;
-                      const isInSelectionRange =
-                        rowIndex >= sheetSelectionBounds.minRow &&
-                        rowIndex <= sheetSelectionBounds.maxRow &&
-                        colIndex >= sheetSelectionBounds.minCol &&
-                        colIndex <= sheetSelectionBounds.maxCol;
+                      const isInSelectionRange = !(
+                        cellMaxRow < sheetSelectionBounds.minRow ||
+                        rowIndex > sheetSelectionBounds.maxRow ||
+                        cellMaxCol < sheetSelectionBounds.minCol ||
+                        colIndex > sheetSelectionBounds.maxCol
+                      );
                       const isRangeTop = isInSelectionRange && rowIndex === sheetSelectionBounds.minRow;
-                      const isRangeBottom = isInSelectionRange && rowIndex === sheetSelectionBounds.maxRow;
+                      const isRangeBottom = isInSelectionRange && cellMaxRow === sheetSelectionBounds.maxRow;
                       const isRangeLeft = isInSelectionRange && colIndex === sheetSelectionBounds.minCol;
-                      const isRangeRight = isInSelectionRange && colIndex === sheetSelectionBounds.maxCol;
+                      const isRangeRight = isInSelectionRange && cellMaxCol === sheetSelectionBounds.maxCol;
                       const isRangeBottomRightCorner =
                         isInSelectionRange &&
-                        rowIndex === sheetSelectionBounds.maxRow &&
-                        colIndex === sheetSelectionBounds.maxCol;
+                        cellMaxRow === sheetSelectionBounds.maxRow &&
+                        cellMaxCol === sheetSelectionBounds.maxCol;
                       const isInClipboardRange =
                         Boolean(sheetClipboardBounds) &&
                         rowIndex >= sheetClipboardBounds.minRow &&
@@ -21537,6 +21857,8 @@ function NoteEditor({
                           data-note-sheet-cell="true"
                           data-sheet-row={rowIndex}
                           data-sheet-col={colIndex}
+                          rowSpan={rowSpan > 1 ? rowSpan : undefined}
+                          colSpan={colSpan > 1 ? colSpan : undefined}
                           onMouseDown={(event) => handleSheetCellMouseDown(event, rowIndex, colIndex)}
                           onMouseEnter={(event) => handleSheetCellMouseEnter(event, rowIndex, colIndex)}
                           onMouseUp={endSheetRangeSelection}
