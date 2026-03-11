@@ -1882,6 +1882,7 @@ const requestCloudDataApi = async (path, options = {}) => {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: options.body ? JSON.stringify(options.body) : undefined,
+    cache: 'no-store',
   });
 
   let result = null;
@@ -1936,17 +1937,21 @@ const normalizeGoogleCalendarStatus = (status) => ({
   redirectUri: String(status?.redirectUri || '').trim(),
 });
 
-const loadAccountDbPayload = async (userId) => {
+const loadAccountDbPayload = async (userId, options = {}) => {
   const normalizedUserId = String(userId || '').trim();
   if (!normalizedUserId) return {};
   const localPayload = readAccountDbPayload(normalizedUserId);
+  const shouldAllowStaleLocalWhilePendingSave =
+    options && typeof options === 'object'
+      ? options.allowStaleWhilePendingQueue !== false
+      : true;
 
   if (!AUTH_API_BASE_URL) {
     return localPayload;
   }
 
   try {
-    if (hasPendingAccountSaveQueue(normalizedUserId)) {
+    if (shouldAllowStaleLocalWhilePendingSave && hasPendingAccountSaveQueue(normalizedUserId)) {
       return localPayload;
     }
     const result = await requestCloudDataApi(`/data/account/${encodeURIComponent(normalizedUserId)}`);
@@ -1962,6 +1967,10 @@ const loadAccountDbPayload = async (userId) => {
       return localPayload;
     }
 
+    if (!shouldAllowStaleLocalWhilePendingSave && hasPendingAccountSaveQueue(normalizedUserId)) {
+      // Keep unsynced local cache intact while callers explicitly request fresh remote data for merge logic.
+      return remotePayload;
+    }
     writeAccountDbPayload(normalizedUserId, remotePayload);
     return remotePayload;
   } catch (error) {
@@ -4864,11 +4873,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     const refreshCollaborativeSnapshot = async () => {
       try {
-        if (hasPendingAccountSaveQueue(currentUser.id)) {
-          return;
-        }
         const [latestPayload, latestInvites] = await Promise.all([
-          loadAccountDbPayload(currentUser.id),
+          loadAccountDbPayload(currentUser.id, {
+            allowStaleWhilePendingQueue: false,
+          }),
           loadProjectInvitesStore(),
         ]);
         if (isCancelled) return;
@@ -5702,7 +5710,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (String(targetProject.ownerId || '').trim() !== currentUser.id) return;
 
     try {
-      const remotePayload = await loadAccountDbPayload(currentUser.id);
+      const remotePayload = await loadAccountDbPayload(currentUser.id, {
+        allowStaleWhilePendingQueue: false,
+      });
       const remoteProjects = Array.isArray(remotePayload.projects) ? remotePayload.projects : [];
       const projectIndex = remoteProjects.findIndex(
         (project) => String(project?.id || '').trim() === normalizedProjectId
