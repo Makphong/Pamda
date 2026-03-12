@@ -4718,7 +4718,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     [visibleProjects, mobileCalendarProjectId]
   );
   const effectiveMergeView = isCompactViewport ? !selectedMobileProject : isMergeView;
-  const shouldShowTodoBoard = !isCompactViewport && !effectiveMergeView && isTodoSplitView;
+  const shouldShowTodoBoard = !isCompactViewport && isTodoSplitView;
+  const shouldHideCalendarScrollbar = !shouldShowTodoBoard;
   const mergeViewProjects = useMemo(() => {
     if (!googleCalendarStatus.linked) return visibleProjects;
     const alreadyIncluded = visibleProjects.some((project) => project.id === GOOGLE_CALENDAR_PROJECT_ID);
@@ -4749,6 +4750,32 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const mobileCalendarEvents = selectedMobileProject
     ? events.filter((event) => event.projectId === selectedMobileProject.id)
     : mergeViewEvents;
+  const mergedTodoBoardItems = useMemo(() => {
+    const visibleProjectById = new Map(
+      visibleProjects.map((project) => [String(project.id || '').trim(), project])
+    );
+    const mergedItems = [];
+    Object.entries(normalizeProjectTodosByProjectId(projectTodosByProjectId)).forEach(
+      ([projectId, items]) => {
+        const project = visibleProjectById.get(projectId);
+        if (!project) return;
+        (Array.isArray(items) ? items : []).forEach((item) => {
+          const normalizedItem = normalizeProjectTodoItem(item);
+          if (!normalizedItem) return;
+          mergedItems.push({
+            ...normalizedItem,
+            projectId,
+            projectName: project.name,
+            colorIndex: project.colorIndex,
+          });
+        });
+      }
+    );
+    return mergedItems.sort(
+      (left, right) =>
+        toProjectBoardItemTimestampMs(right) - toProjectBoardItemTimestampMs(left)
+    );
+  }, [projectTodosByProjectId, visibleProjects]);
   const pendingProjectInvitations = useMemo(
     () =>
       projectInvitations.filter(
@@ -7704,7 +7731,6 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           <div className="flex items-center gap-4">
             <button
               onClick={() => {
-                setIsMergeView(false);
                 setIsTodoSplitView((prev) => !prev);
               }}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border font-medium transition-colors ${
@@ -7712,7 +7738,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
               }`}
-              title="Switch split calendar to Todo board"
+              title="Toggle Todo mode"
             >
               <CheckSquare className="w-4 h-4" />
               <span className="hidden sm:inline">Todo</span>
@@ -7720,12 +7746,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
             <div className="flex bg-gray-100 p-1 rounded-lg border">
               <button
-                onClick={() => {
-                  setIsTodoSplitView(false);
-                  setIsMergeView(false);
-                }}
+                onClick={() => setIsMergeView(false)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
-                  !isMergeView && !isTodoSplitView
+                  !isMergeView
                     ? 'bg-white shadow-sm font-medium text-blue-600'
                     : 'text-gray-500 hover:bg-gray-200'
                 }`}
@@ -7734,10 +7757,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                 <span className="hidden sm:inline">Split View</span>
               </button>
               <button
-                onClick={() => {
-                  setIsTodoSplitView(false);
-                  setIsMergeView(true);
-                }}
+                onClick={() => setIsMergeView(true)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
                   isMergeView ? 'bg-white shadow-sm font-medium text-blue-600' : 'text-gray-500 hover:bg-gray-200'
                 }`}
@@ -7793,14 +7813,24 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       </header>
 
       {/* --- Main Calendar Board --- */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden bg-gray-50 relative">
+      <main
+        className={`flex-1 overflow-y-auto overflow-x-hidden bg-gray-50 relative ${
+          shouldHideCalendarScrollbar ? '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : ''
+        }`}
+      >
         {visibleProjects.length === 0 ? (
           <div className="flex h-full items-center justify-center flex-col text-gray-400 gap-4">
             <LayoutGrid className="w-16 h-16 opacity-50" />
             <p className="text-lg">กรุณาเลือกหรือเพิ่มโปรเจกต์จากเมนู "จัดการ Project"</p>
           </div>
         ) : (
-          <div className={!isCompactViewport && !effectiveMergeView ? 'min-w-[800px]' : 'w-full'}> {/* Ensure it doesn't squish too much on small screens */}
+          <div
+            className={
+              !isCompactViewport && !effectiveMergeView && !shouldShowTodoBoard
+                ? 'min-w-[800px] w-full'
+                : 'w-full'
+            }
+          > {/* Ensure it doesn't squish too much on small screens */}
             
             {!isCompactViewport && (
               <>
@@ -7843,18 +7873,28 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
             {/* Months List (Continuous Scroll) */}
             {shouldShowTodoBoard ? (
-              <div className="flex min-h-[620px] border-b border-gray-200 bg-white">
-                {visibleProjects.map((project) => (
-                  <ProjectTodoBoard
-                    key={`todo-board-${project.id}`}
-                    project={project}
-                    items={projectTodosByProjectId[project.id] || []}
-                    onCreateItem={handleCreateProjectBoardItem}
-                    onUpdateItem={handleUpdateProjectBoardItem}
-                    onDeleteItem={handleDeleteProjectBoardItem}
-                  />
-                ))}
-              </div>
+              effectiveMergeView ? (
+                <MergedProjectTodoBoard
+                  projects={visibleProjects}
+                  items={mergedTodoBoardItems}
+                  onCreateItem={handleCreateProjectBoardItem}
+                  onUpdateItem={handleUpdateProjectBoardItem}
+                  onDeleteItem={handleDeleteProjectBoardItem}
+                />
+              ) : (
+                <div className="flex min-h-[620px] border-b border-gray-200 bg-white">
+                  {visibleProjects.map((project) => (
+                    <ProjectTodoBoard
+                      key={`todo-board-${project.id}`}
+                      project={project}
+                      items={projectTodosByProjectId[project.id] || []}
+                      onCreateItem={handleCreateProjectBoardItem}
+                      onUpdateItem={handleUpdateProjectBoardItem}
+                      onDeleteItem={handleDeleteProjectBoardItem}
+                    />
+                  ))}
+                </div>
+              )
             ) : (
               monthsToRender.length === 0 ? (
               <div className="flex justify-center items-center h-48 text-gray-500">
@@ -23201,6 +23241,290 @@ function ProjectTodoBoard({
         </div>
       </div>
     </section>
+  );
+}
+
+function MergedProjectTodoBoard({
+  projects = [],
+  items = [],
+  onCreateItem,
+  onUpdateItem,
+  onDeleteItem,
+}) {
+  const normalizedProjects = useMemo(
+    () =>
+      (Array.isArray(projects) ? projects : [])
+        .filter((project) => project && String(project.id || '').trim())
+        .map((project) => ({
+          ...project,
+          id: String(project.id || '').trim(),
+          name: String(project.name || '').trim() || 'Untitled project',
+          colorIndex: Number.isFinite(Number(project.colorIndex)) ? Number(project.colorIndex) : 0,
+        })),
+    [projects]
+  );
+  const normalizedItems = useMemo(
+    () =>
+      (Array.isArray(items) ? items : [])
+        .map((item) => {
+          const normalizedItem = normalizeProjectTodoItem(item);
+          const projectId = String(item?.projectId || '').trim();
+          if (!normalizedItem || !projectId) return null;
+          const project = normalizedProjects.find((projectItem) => projectItem.id === projectId);
+          if (!project) return null;
+          return {
+            ...normalizedItem,
+            projectId,
+            projectName: project.name,
+            colorIndex: project.colorIndex,
+          };
+        })
+        .filter(Boolean)
+        .sort(
+          (left, right) =>
+            toProjectBoardItemTimestampMs(right) - toProjectBoardItemTimestampMs(left)
+        ),
+    [items, normalizedProjects]
+  );
+  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+  const [editingDraftById, setEditingDraftById] = useState({});
+  const createMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!isCreateMenuOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (createMenuRef.current && !createMenuRef.current.contains(event.target)) {
+        setIsCreateMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [isCreateMenuOpen]);
+
+  const getMergedItemKey = (item) =>
+    `${String(item?.projectId || '').trim()}:${String(item?.id || '').trim()}`;
+
+  const startEditing = (item) => {
+    const normalizedItem = normalizeProjectTodoItem(item);
+    const mergedKey = getMergedItemKey(item);
+    if (!normalizedItem || !mergedKey) return;
+    setEditingDraftById((prev) => ({
+      ...prev,
+      [mergedKey]: normalizedItem.text,
+    }));
+  };
+
+  const cancelEditing = (item) => {
+    const mergedKey = getMergedItemKey(item);
+    if (!mergedKey) return;
+    setEditingDraftById((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, mergedKey)) return prev;
+      const next = { ...prev };
+      delete next[mergedKey];
+      return next;
+    });
+  };
+
+  const saveEditing = (item) => {
+    const normalizedItem = normalizeProjectTodoItem(item);
+    const mergedKey = getMergedItemKey(item);
+    const projectId = String(item?.projectId || '').trim();
+    if (!normalizedItem || !mergedKey || !projectId) return;
+    const draftText = String(editingDraftById[mergedKey] ?? normalizedItem.text).trim();
+    if (!draftText) return;
+    onUpdateItem(projectId, normalizedItem.id, {
+      text: draftText,
+    });
+    cancelEditing(item);
+  };
+
+  const updateDraft = (item, value) => {
+    const mergedKey = getMergedItemKey(item);
+    if (!mergedKey) return;
+    setEditingDraftById((prev) => ({
+      ...prev,
+      [mergedKey]: value,
+    }));
+  };
+
+  return (
+    <div className="min-h-[620px] border-b border-gray-200 bg-white">
+      <section className="relative h-full min-h-[620px] bg-white p-2">
+        <div ref={createMenuRef} className="absolute top-2 right-2 z-20">
+          <button
+            type="button"
+            onClick={() => setIsCreateMenuOpen((prev) => !prev)}
+            className="h-7 w-7 inline-flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            title="Add item"
+            disabled={normalizedProjects.length === 0}
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+          {isCreateMenuOpen && normalizedProjects.length > 0 && (
+            <div className="absolute right-0 mt-1 min-w-[220px] rounded-md border border-slate-200 bg-white shadow-lg py-1 px-1">
+              <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                Add Item To Project
+              </p>
+              {normalizedProjects.map((project) => {
+                const projectColor = PROJECT_COLORS[project.colorIndex] || PROJECT_COLORS[0];
+                return (
+                  <div key={`merged-create-${project.id}`} className="px-1 py-1">
+                    <div className="flex items-center gap-1.5 px-1">
+                      <span className={`w-2 h-2 rounded-full ${projectColor.bg}`} />
+                      <span className="text-[11px] font-medium text-slate-600 truncate">
+                        {project.name}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreateMenuOpen(false);
+                          onCreateItem(project.id, 'todo');
+                        }}
+                        className="flex-1 rounded px-2 py-1 text-[11px] text-left text-slate-700 hover:bg-slate-100"
+                      >
+                        Todo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreateMenuOpen(false);
+                          onCreateItem(project.id, 'note');
+                        }}
+                        className="flex-1 rounded px-2 py-1 text-[11px] text-left text-slate-700 hover:bg-slate-100"
+                      >
+                        Note
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="h-full bg-white pt-11 px-2 pb-3 overflow-y-auto">
+          {normalizedItems.length > 0 ? (
+            <div className="space-y-1">
+              {normalizedItems.map((item) => {
+                const mergedKey = getMergedItemKey(item);
+                const isEditing = Object.prototype.hasOwnProperty.call(editingDraftById, mergedKey);
+                const draftText = String(editingDraftById[mergedKey] ?? item.text);
+                const isTodoItem = item.itemType === 'todo';
+                const projectColor = PROJECT_COLORS[item.colorIndex] || PROJECT_COLORS[0];
+
+                return (
+                  <article
+                    key={`merged-item-${mergedKey}`}
+                    className="group relative rounded-md px-2 py-2 bg-transparent hover:bg-slate-100/70 focus-within:bg-slate-100/70"
+                  >
+                    <div className="mb-0.5 flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${projectColor.bg}`} />
+                      <span className="text-[10px] font-medium text-slate-500">{item.projectName}</span>
+                    </div>
+
+                    <div className="pr-20">
+                      <div className="flex items-start gap-2">
+                        {isTodoItem ? (
+                          <input
+                            type="checkbox"
+                            checked={Boolean(item.checked)}
+                            onChange={(event) =>
+                              onUpdateItem(item.projectId, item.id, {
+                                checked: Boolean(event.target.checked),
+                              })
+                            }
+                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-400"
+                          />
+                        ) : (
+                          <span className="mt-0.5 inline-block h-4 w-4 shrink-0" />
+                        )}
+
+                        {isEditing ? (
+                          <textarea
+                            value={draftText}
+                            onChange={(event) => updateDraft(item, event.target.value)}
+                            className="w-full resize-none bg-white/80 text-sm text-slate-700 rounded-sm px-1.5 py-1 outline-none focus:ring-1 focus:ring-blue-300"
+                            rows={2}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                                event.preventDefault();
+                                saveEditing(item);
+                              }
+                            }}
+                          />
+                        ) : (
+                          <p
+                            className={`text-sm whitespace-pre-wrap break-words ${
+                              isTodoItem && item.checked ? 'line-through text-slate-400' : 'text-slate-700'
+                            }`}
+                          >
+                            {item.text}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div
+                      className={`absolute top-1.5 right-1.5 flex items-center gap-1 transition-opacity ${
+                        isEditing
+                          ? 'opacity-100'
+                          : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+                      }`}
+                    >
+                      {isEditing ? (
+                        <button
+                          type="button"
+                          onClick={() => saveEditing(item)}
+                          className="px-1.5 py-0.5 rounded text-[10px] font-medium text-blue-600 hover:bg-blue-50"
+                          title="Save"
+                        >
+                          Save
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startEditing(item)}
+                          className="h-5 w-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200/70"
+                          title="Edit"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void onDeleteItem(item.projectId, item.id, item);
+                        }}
+                        className="h-5 w-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+
+                      {isEditing && (
+                        <button
+                          type="button"
+                          onClick={() => cancelEditing(item)}
+                          className="h-5 w-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200/70"
+                          title="Cancel"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      </section>
+    </div>
   );
 }
 
