@@ -1937,6 +1937,106 @@ const normalizeGoogleCalendarStatus = (status) => ({
   configured: Boolean(status?.configured),
   redirectUri: String(status?.redirectUri || '').trim(),
 });
+const PROJECT_BOARD_ITEM_TYPES = new Set(['todo', 'note']);
+const toProjectBoardItemTimestampMs = (item) => {
+  const updatedAtMs = toTimestampMs(item?.updatedAt);
+  if (updatedAtMs > 0) return updatedAtMs;
+  return toTimestampMs(item?.createdAt);
+};
+const normalizeProjectTodoItem = (todo) => {
+  const id = String(todo?.id || generateId()).trim();
+  const text = String(todo?.text || '').trim();
+  if (!id || !text) return null;
+
+  const createdAtRaw = String(todo?.createdAt || '').trim();
+  const createdAt =
+    createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime())
+      ? createdAtRaw
+      : new Date().toISOString();
+  const updatedAtRaw = String(todo?.updatedAt || '').trim();
+  const updatedAt =
+    updatedAtRaw && !Number.isNaN(new Date(updatedAtRaw).getTime()) ? updatedAtRaw : createdAt;
+  const itemTypeRaw = String(todo?.itemType || todo?.type || 'todo')
+    .trim()
+    .toLowerCase();
+  const itemType = PROJECT_BOARD_ITEM_TYPES.has(itemTypeRaw) ? itemTypeRaw : 'todo';
+
+  return {
+    id,
+    text,
+    createdAt,
+    updatedAt,
+    itemType,
+    checked: itemType === 'todo' ? Boolean(todo?.checked) : false,
+  };
+};
+const normalizeProjectTodosByProjectId = (projectTodosInput) => {
+  if (
+    !projectTodosInput ||
+    typeof projectTodosInput !== 'object' ||
+    Array.isArray(projectTodosInput)
+  ) {
+    return {};
+  }
+
+  const normalized = {};
+
+  Object.entries(projectTodosInput).forEach(([projectIdInput, todosInput]) => {
+    const projectId = String(projectIdInput || '').trim();
+    if (!projectId) return;
+
+    const todoMap = new Map();
+    (Array.isArray(todosInput) ? todosInput : []).forEach((todoInput) => {
+      const todo = normalizeProjectTodoItem(todoInput);
+      if (!todo || todoMap.has(todo.id)) return;
+      todoMap.set(todo.id, todo);
+    });
+
+    const todos = Array.from(todoMap.values()).sort(
+      (left, right) =>
+        toProjectBoardItemTimestampMs(right) - toProjectBoardItemTimestampMs(left)
+    );
+    if (todos.length > 0) {
+      normalized[projectId] = todos;
+    }
+  });
+
+  return normalized;
+};
+const mergeProjectTodosByProjectId = (baseTodosInput, incomingTodosInput) => {
+  const baseTodos = normalizeProjectTodosByProjectId(baseTodosInput);
+  const incomingTodos = normalizeProjectTodosByProjectId(incomingTodosInput);
+  const projectIds = Array.from(
+    new Set([...Object.keys(baseTodos), ...Object.keys(incomingTodos)])
+  );
+  const merged = {};
+
+  projectIds.forEach((projectId) => {
+    const todoMap = new Map();
+    [...(baseTodos[projectId] || []), ...(incomingTodos[projectId] || [])].forEach((todo) => {
+      if (!todo?.id) return;
+      const existingTodo = todoMap.get(todo.id);
+      if (!existingTodo) {
+        todoMap.set(todo.id, todo);
+        return;
+      }
+      const existingMs = toProjectBoardItemTimestampMs(existingTodo);
+      const incomingMs = toProjectBoardItemTimestampMs(todo);
+      if (incomingMs >= existingMs) {
+        todoMap.set(todo.id, todo);
+      }
+    });
+    const todos = Array.from(todoMap.values()).sort(
+      (left, right) =>
+        toProjectBoardItemTimestampMs(right) - toProjectBoardItemTimestampMs(left)
+    );
+    if (todos.length > 0) {
+      merged[projectId] = todos;
+    }
+  });
+
+  return merged;
+};
 
 const loadAccountDbPayload = async (userId, options = {}) => {
   const normalizedUserId = String(userId || '').trim();
@@ -3974,6 +4074,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [isAccountDataHydrated, setIsAccountDataHydrated] = useState(false);
 
   const [isMergeView, setIsMergeView] = useState(false);
+  const [isTodoSplitView, setIsTodoSplitView] = useState(false);
   const [mobileCalendarProjectId, setMobileCalendarProjectId] = useState(null);
   const [isCompactViewport, setIsCompactViewport] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -4039,6 +4140,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }, [googleCalendarSelectedCalendarIds, writableGoogleCalendars]);
   const projectsRef = useRef(projects);
   const eventsRef = useRef(events);
+  const projectTodosByProjectIdRef = useRef({});
+  const [projectTodosByProjectId, setProjectTodosByProjectId] = useState({});
   const accountAutoSaveComparableRef = useRef('');
   const ownerNotePatchSyncStateRef = useRef(new Map());
   const sharedOwnerNotePatchSyncStateRef = useRef(new Map());
@@ -4055,7 +4158,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }, [events]);
 
   useEffect(() => {
+    projectTodosByProjectIdRef.current = projectTodosByProjectId;
+  }, [projectTodosByProjectId]);
+
+  useEffect(() => {
     accountAutoSaveComparableRef.current = '';
+    projectTodosByProjectIdRef.current = {};
     ownerNotePatchSyncStateRef.current.forEach((state) => {
       if (state?.timerId) {
         window.clearTimeout(state.timerId);
@@ -4120,6 +4228,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           setEvents([]);
         }
 
+        setProjectTodosByProjectId(
+          normalizeProjectTodosByProjectId(accountPayload.projectTodosByProjectId)
+        );
+
         if (accountPayload.displayRange?.start && accountPayload.displayRange?.end) {
           setDisplayRange(accountPayload.displayRange);
         }
@@ -4158,6 +4270,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         if (isCancelled) return;
         setProjects([]);
         setEvents([]);
+        setProjectTodosByProjectId({});
         setStartupView(STARTUP_VIEW_MODES.LAST);
         setLastVisitedView({ ...DEFAULT_LAST_VISITED_VIEW });
         setProjectUpdatePopupMode(DEFAULT_PROJECT_UPDATE_POPUP_MODE);
@@ -4406,6 +4519,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     const dbPayload = {
       projects,
       events,
+      projectTodosByProjectId,
       displayRange,
       hidePastWeeks,
       startupView,
@@ -4426,6 +4540,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     currentUser.id,
     projects,
     events,
+    projectTodosByProjectId,
     displayRange,
     hidePastWeeks,
     startupView,
@@ -4603,6 +4718,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     [visibleProjects, mobileCalendarProjectId]
   );
   const effectiveMergeView = isCompactViewport ? !selectedMobileProject : isMergeView;
+  const shouldShowTodoBoard = !isCompactViewport && !effectiveMergeView && isTodoSplitView;
   const mergeViewProjects = useMemo(() => {
     if (!googleCalendarStatus.linked) return visibleProjects;
     const alreadyIncluded = visibleProjects.some((project) => project.id === GOOGLE_CALENDAR_PROJECT_ID);
@@ -4991,10 +5107,16 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           ensureProjectOwnershipForAccount(project, currentUser, ownerIdByUsername)
         );
         const localEventsSnapshot = Array.isArray(eventsRef.current) ? eventsRef.current : [];
+        const localProjectTodosSnapshot = normalizeProjectTodosByProjectId(
+          projectTodosByProjectIdRef.current
+        );
         const baseProjects = baseProjectsRaw.map((project) =>
           ensureProjectOwnershipForAccount(project, currentUser, ownerIdByUsername)
         );
         const baseEvents = Array.isArray(latestPayload.events) ? latestPayload.events : [];
+        const baseProjectTodosSnapshot = normalizeProjectTodosByProjectId(
+          latestPayload.projectTodosByProjectId
+        );
         const invitedOwnerIds = normalizedInvites
           .filter(
             (invite) =>
@@ -5326,9 +5448,16 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           dedupedEventsMap.set(dedupeKey, event);
         });
         const nextEvents = Array.from(dedupedEventsMap.values());
+        const nextProjectTodos = mergeProjectTodosByProjectId(
+          baseProjectTodosSnapshot,
+          localProjectTodosSnapshot
+        );
 
         setProjects((prevProjects) => (isJsonEqual(prevProjects, nextProjects) ? prevProjects : nextProjects));
         setEvents((prevEvents) => (isJsonEqual(prevEvents, nextEvents) ? prevEvents : nextEvents));
+        setProjectTodosByProjectId((prevTodos) =>
+          isJsonEqual(prevTodos, nextProjectTodos) ? prevTodos : nextProjectTodos
+        );
       } catch (error) {
         if (!isCancelled) {
           console.warn('Failed to refresh collaborative snapshot from cloud:', error.message);
@@ -6244,6 +6373,140 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     setShowEventModal(true);
   };
 
+  const handleCreateProjectBoardItem = async (projectId, itemTypeInput = 'todo') => {
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) return;
+    const itemType = String(itemTypeInput || '').trim().toLowerCase() === 'note' ? 'note' : 'todo';
+
+    const targetProject = projects.find((project) => project.id === normalizedProjectId);
+    if (!targetProject) return;
+
+    const itemLabel = itemType === 'note' ? 'Note' : 'Todo';
+    const itemText = await popup.prompt({
+      title: `Add ${itemLabel} - ${targetProject.name}`,
+      message: `Type ${itemLabel.toLowerCase()} content for this project.`,
+      placeholder: `New ${itemLabel.toLowerCase()}`,
+      confirmText: 'Add',
+      cancelText: 'Cancel',
+    });
+
+    if (itemText === null) return;
+    const normalizedText = String(itemText || '').trim();
+    if (!normalizedText) {
+      await popup.alert({
+        title: `Missing ${itemLabel.toLowerCase()} text`,
+        message: `Please enter ${itemLabel.toLowerCase()} text before adding.`,
+      });
+      return;
+    }
+
+    const createdItem = normalizeProjectTodoItem({
+      id: generateId(),
+      text: normalizedText,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      itemType,
+      checked: false,
+    });
+    if (!createdItem) return;
+
+    setProjectTodosByProjectId((prevTodos) => {
+      const normalizedTodos = normalizeProjectTodosByProjectId(prevTodos);
+      const projectTodos = Array.isArray(normalizedTodos[normalizedProjectId])
+        ? normalizedTodos[normalizedProjectId]
+        : [];
+      const nextProjectTodos = [createdItem, ...projectTodos].sort(
+        (left, right) =>
+          toProjectBoardItemTimestampMs(right) - toProjectBoardItemTimestampMs(left)
+      );
+      return {
+        ...normalizedTodos,
+        [normalizedProjectId]: nextProjectTodos,
+      };
+    });
+  };
+
+  const handleUpdateProjectBoardItem = (projectId, itemId, updatesInput = {}) => {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedItemId = String(itemId || '').trim();
+    if (!normalizedProjectId || !normalizedItemId) return;
+    const updates =
+      updatesInput && typeof updatesInput === 'object' && !Array.isArray(updatesInput)
+        ? updatesInput
+        : {};
+
+    setProjectTodosByProjectId((prevTodos) => {
+      const normalizedTodos = normalizeProjectTodosByProjectId(prevTodos);
+      const projectTodos = Array.isArray(normalizedTodos[normalizedProjectId])
+        ? normalizedTodos[normalizedProjectId]
+        : [];
+      let didUpdate = false;
+      const nextProjectTodos = projectTodos
+        .map((item) => {
+          if (String(item.id || '').trim() !== normalizedItemId) return item;
+          didUpdate = true;
+          return normalizeProjectTodoItem({
+            ...item,
+            ...updates,
+            updatedAt: new Date().toISOString(),
+          });
+        })
+        .filter(Boolean)
+        .sort(
+          (left, right) =>
+            toProjectBoardItemTimestampMs(right) - toProjectBoardItemTimestampMs(left)
+        );
+
+      if (!didUpdate) return normalizedTodos;
+      return {
+        ...normalizedTodos,
+        [normalizedProjectId]: nextProjectTodos,
+      };
+    });
+  };
+
+  const handleDeleteProjectBoardItem = async (projectId, itemId, itemInput = null) => {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedItemId = String(itemId || '').trim();
+    if (!normalizedProjectId || !normalizedItemId) return;
+    const normalizedItem = normalizeProjectTodoItem(itemInput);
+    const itemTypeLabel =
+      String(normalizedItem?.itemType || '').trim().toLowerCase() === 'note' ? 'note' : 'todo';
+    const itemTextPreview = String(normalizedItem?.text || '').trim();
+    const shouldDelete = await popup.confirm({
+      title: 'Delete item',
+      message: itemTextPreview
+        ? `Delete this ${itemTypeLabel}?\n\n${itemTextPreview}`
+        : `Delete this ${itemTypeLabel}?`,
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      tone: 'danger',
+    });
+    if (!shouldDelete) return;
+
+    setProjectTodosByProjectId((prevTodos) => {
+      const normalizedTodos = normalizeProjectTodosByProjectId(prevTodos);
+      const projectTodos = Array.isArray(normalizedTodos[normalizedProjectId])
+        ? normalizedTodos[normalizedProjectId]
+        : [];
+      const nextProjectTodos = projectTodos.filter(
+        (item) => String(item.id || '').trim() !== normalizedItemId
+      );
+      if (nextProjectTodos.length === projectTodos.length) return normalizedTodos;
+
+      if (nextProjectTodos.length === 0) {
+        const nextTodos = { ...normalizedTodos };
+        delete nextTodos[normalizedProjectId];
+        return nextTodos;
+      }
+
+      return {
+        ...normalizedTodos,
+        [normalizedProjectId]: nextProjectTodos,
+      };
+    });
+  };
+
   const handleMobileProjectSelect = (projectId) => {
     if (!isCompactViewport) return;
     if (!projectId) {
@@ -7150,6 +7413,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     void saveAccountDbPayload(currentUser.id, {
       projects: nextProjects,
       events,
+      projectTodosByProjectId,
       displayRange,
       hidePastWeeks,
       startupView,
@@ -7438,18 +7702,42 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           </div>
 
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => {
+                setIsMergeView(false);
+                setIsTodoSplitView((prev) => !prev);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border font-medium transition-colors ${
+                isTodoSplitView
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+              }`}
+              title="Switch split calendar to Todo board"
+            >
+              <CheckSquare className="w-4 h-4" />
+              <span className="hidden sm:inline">Todo</span>
+            </button>
+
             <div className="flex bg-gray-100 p-1 rounded-lg border">
               <button
-                onClick={() => setIsMergeView(false)}
+                onClick={() => {
+                  setIsTodoSplitView(false);
+                  setIsMergeView(false);
+                }}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
-                  !isMergeView ? 'bg-white shadow-sm font-medium text-blue-600' : 'text-gray-500 hover:bg-gray-200'
+                  !isMergeView && !isTodoSplitView
+                    ? 'bg-white shadow-sm font-medium text-blue-600'
+                    : 'text-gray-500 hover:bg-gray-200'
                 }`}
               >
                 <LayoutGrid className="w-4 h-4" />
                 <span className="hidden sm:inline">Split View</span>
               </button>
               <button
-                onClick={() => setIsMergeView(true)}
+                onClick={() => {
+                  setIsTodoSplitView(false);
+                  setIsMergeView(true);
+                }}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
                   isMergeView ? 'bg-white shadow-sm font-medium text-blue-600' : 'text-gray-500 hover:bg-gray-200'
                 }`}
@@ -7554,7 +7842,21 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             )}
 
             {/* Months List (Continuous Scroll) */}
-            {monthsToRender.length === 0 ? (
+            {shouldShowTodoBoard ? (
+              <div className="flex min-h-[620px] border-b border-gray-200 bg-white">
+                {visibleProjects.map((project) => (
+                  <ProjectTodoBoard
+                    key={`todo-board-${project.id}`}
+                    project={project}
+                    items={projectTodosByProjectId[project.id] || []}
+                    onCreateItem={handleCreateProjectBoardItem}
+                    onUpdateItem={handleUpdateProjectBoardItem}
+                    onDeleteItem={handleDeleteProjectBoardItem}
+                  />
+                ))}
+              </div>
+            ) : (
+              monthsToRender.length === 0 ? (
               <div className="flex justify-center items-center h-48 text-gray-500">
                 ไม่มีสัปดาห์ที่จะแสดงผลในช่วงเวลาที่เลือก
               </div>
@@ -7624,6 +7926,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                   </div>
                 ))}
               </div>
+              )
             )}
           </div>
         )}
@@ -22677,6 +22980,230 @@ function NoteEditor({
     </div>
   );
 }
+function ProjectTodoBoard({
+  project,
+  items = [],
+  onCreateItem,
+  onUpdateItem,
+  onDeleteItem,
+}) {
+  const normalizedItems = useMemo(
+    () =>
+      (Array.isArray(items) ? items : [])
+        .map((item) => normalizeProjectTodoItem(item))
+        .filter(Boolean),
+    [items]
+  );
+  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
+  const [editingDraftById, setEditingDraftById] = useState({});
+  const createMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!isCreateMenuOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (createMenuRef.current && !createMenuRef.current.contains(event.target)) {
+        setIsCreateMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [isCreateMenuOpen]);
+
+  const startEditing = (item) => {
+    const normalizedItem = normalizeProjectTodoItem(item);
+    if (!normalizedItem) return;
+    setEditingDraftById((prev) => ({
+      ...prev,
+      [normalizedItem.id]: normalizedItem.text,
+    }));
+  };
+
+  const cancelEditing = (itemId) => {
+    const normalizedItemId = String(itemId || '').trim();
+    if (!normalizedItemId) return;
+    setEditingDraftById((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, normalizedItemId)) return prev;
+      const next = { ...prev };
+      delete next[normalizedItemId];
+      return next;
+    });
+  };
+
+  const saveEditing = (item) => {
+    const normalizedItem = normalizeProjectTodoItem(item);
+    if (!normalizedItem) return;
+    const draftText = String(editingDraftById[normalizedItem.id] ?? normalizedItem.text).trim();
+    if (!draftText) return;
+    onUpdateItem(project.id, normalizedItem.id, {
+      text: draftText,
+    });
+    cancelEditing(normalizedItem.id);
+  };
+
+  const updateDraft = (itemId, value) => {
+    const normalizedItemId = String(itemId || '').trim();
+    if (!normalizedItemId) return;
+    setEditingDraftById((prev) => ({
+      ...prev,
+      [normalizedItemId]: value,
+    }));
+  };
+
+  return (
+    <section className="flex-1 border-r last:border-r-0 border-gray-200 bg-white p-2">
+      <div className="relative h-full min-h-[600px] rounded-lg bg-white">
+        <div ref={createMenuRef} className="absolute top-2 right-2 z-20">
+          <button
+            type="button"
+            onClick={() => setIsCreateMenuOpen((prev) => !prev)}
+            className="h-7 w-7 inline-flex items-center justify-center rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+            title={`Add item for ${project.name}`}
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+          {isCreateMenuOpen && (
+            <div className="absolute right-0 mt-1 min-w-[110px] rounded-md border border-slate-200 bg-white shadow-lg py-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreateMenuOpen(false);
+                  onCreateItem(project.id, 'todo');
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+              >
+                Todo
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreateMenuOpen(false);
+                  onCreateItem(project.id, 'note');
+                }}
+                className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+              >
+                Note
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="h-full bg-white pt-11 px-2 pb-3 overflow-y-auto">
+          {normalizedItems.length > 0 ? (
+            <div className="space-y-1">
+              {normalizedItems.map((item) => {
+                const isEditing = Object.prototype.hasOwnProperty.call(editingDraftById, item.id);
+                const draftText = String(editingDraftById[item.id] ?? item.text);
+                const isTodoItem = item.itemType === 'todo';
+
+                return (
+                  <article
+                    key={item.id}
+                    className="group relative rounded-md px-2 py-2 bg-transparent hover:bg-slate-100/70 focus-within:bg-slate-100/70"
+                  >
+                    <div className="pr-20">
+                      <div className="flex items-start gap-2">
+                        {isTodoItem ? (
+                          <input
+                            type="checkbox"
+                            checked={Boolean(item.checked)}
+                            onChange={(event) =>
+                              onUpdateItem(project.id, item.id, {
+                                checked: Boolean(event.target.checked),
+                              })
+                            }
+                            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-400"
+                          />
+                        ) : (
+                          <span className="mt-0.5 inline-block h-4 w-4 shrink-0" />
+                        )}
+
+                        {isEditing ? (
+                          <textarea
+                            value={draftText}
+                            onChange={(event) => updateDraft(item.id, event.target.value)}
+                            className="w-full resize-none bg-white/80 text-sm text-slate-700 rounded-sm px-1.5 py-1 outline-none focus:ring-1 focus:ring-blue-300"
+                            rows={2}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                                event.preventDefault();
+                                saveEditing(item);
+                              }
+                            }}
+                          />
+                        ) : (
+                          <p
+                            className={`text-sm whitespace-pre-wrap break-words ${
+                              isTodoItem && item.checked ? 'line-through text-slate-400' : 'text-slate-700'
+                            }`}
+                          >
+                            {item.text}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div
+                      className={`absolute top-1.5 right-1.5 flex items-center gap-1 transition-opacity ${
+                        isEditing
+                          ? 'opacity-100'
+                          : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+                      }`}
+                    >
+                      {isEditing ? (
+                        <button
+                          type="button"
+                          onClick={() => saveEditing(item)}
+                          className="px-1.5 py-0.5 rounded text-[10px] font-medium text-blue-600 hover:bg-blue-50"
+                          title="Save"
+                        >
+                          Save
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startEditing(item)}
+                          className="h-5 w-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200/70"
+                          title="Edit"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void onDeleteItem(project.id, item.id, item);
+                        }}
+                        className="h-5 w-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+
+                      {isEditing && (
+                        <button
+                          type="button"
+                          onClick={() => cancelEditing(item.id)}
+                          className="h-5 w-5 inline-flex items-center justify-center rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200/70"
+                          title="Cancel"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function MonthGrid({
   year,
   month,
