@@ -4719,7 +4719,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   );
   const effectiveMergeView = isCompactViewport ? !selectedMobileProject : isMergeView;
   const shouldShowTodoBoard = !isCompactViewport && isTodoSplitView;
-  const shouldHideCalendarScrollbar = !shouldShowTodoBoard;
+  const shouldHideCalendarScrollbar = !isCompactViewport;
   const mergeViewProjects = useMemo(() => {
     if (!googleCalendarStatus.linked) return visibleProjects;
     const alreadyIncluded = visibleProjects.some((project) => project.id === GOOGLE_CALENDAR_PROJECT_ID);
