@@ -24,7 +24,6 @@ import {
   BarChart2,
   Users,
   MessageSquare,
-  Lock,
   Search,
   Filter,
   Link as LinkIcon,
@@ -55,6 +54,579 @@ const THAI_MONTHS = [
   'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
 ];
 const DAYS_OF_WEEK = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+const PERSONAL_WORKSPACE_TABS = {
+  JOURNAL: 'journal',
+  DASHBOARD: 'dashboard',
+};
+const PERSONAL_WORKSPACE_TAB_SET = new Set(Object.values(PERSONAL_WORKSPACE_TABS));
+const normalizePersonalWorkspaceTab = (value) =>
+  PERSONAL_WORKSPACE_TAB_SET.has(value) ? value : PERSONAL_WORKSPACE_TABS.JOURNAL;
+const PERSONAL_DASHBOARD_RANGES = [
+  { id: 'month', label: 'เดือนนี้' },
+  { id: 'week', label: 'สัปดาห์นี้' },
+  { id: 'year', label: 'ปีนี้' },
+  { id: 'all', label: 'ตั้งแต่เริ่ม' },
+];
+const PERSONAL_DASHBOARD_RANGE_SET = new Set(PERSONAL_DASHBOARD_RANGES.map((option) => option.id));
+const PERSONAL_DEFAULT_DASHBOARD_RANGE = 'month';
+const normalizePersonalDashboardRange = (value) =>
+  PERSONAL_DASHBOARD_RANGE_SET.has(value) ? value : PERSONAL_DEFAULT_DASHBOARD_RANGE;
+const PERSONAL_MIN_LIST_ITEMS = 1;
+const PERSONAL_DEFAULT_SCORE = 3;
+const PERSONAL_SCORE_DIMENSIONS = [
+  { id: 'body', label: 'ร่างกายและสุขภาพ', color: '#2563eb' },
+  { id: 'mindset', label: 'ความคิดและทัศนคติ', color: '#059669' },
+  { id: 'emotion', label: 'จิตใจและความรู้สึก', color: '#d97706' },
+];
+const PERSONAL_SCORE_LEVELS = [
+  { value: 1, label: '1 ต้องปรับปรุง' },
+  { value: 2, label: '2 ควรปรับปรุง' },
+  { value: 3, label: '3 ปกติ' },
+  { value: 4, label: '4 ดี' },
+  { value: 5, label: '5 ดีมาก' },
+];
+const PERSONAL_DEFAULT_HABITS = Object.freeze([
+  { id: 'habit_water', name: 'ดื่มน้ำให้พอ', createdAt: '2024-01-01T00:00:00.000Z' },
+  { id: 'habit_move', name: 'ขยับร่างกาย/ออกกำลังกาย', createdAt: '2024-01-01T00:00:00.000Z' },
+  { id: 'habit_reflect', name: 'ทบทวนตัวเองก่อนนอน', createdAt: '2024-01-01T00:00:00.000Z' },
+]);
+const PERSONAL_DEFAULT_HABIT_ID_SET = new Set(PERSONAL_DEFAULT_HABITS.map((habit) => habit.id));
+const PERSONAL_MORNING_PROMPTS = [
+  '1.ขอบคุณ: วันนี้นึกถึงสิ่งดีๆและรู้สึกขอบคุณ สำนึกบุญคุณในเรื่อง',
+  '2. คาดหวัง: เรื่องอะไรบ้างที่จะทำให้วันนี้เป็นวันที่ดีสำหรับฉัน',
+  '3. สัญญา: สัญญา กับตนเองหรือขอปฏิญาณตนว่าวันนี้จะทำอะไร',
+];
+const PERSONAL_EVENING_PROMPTS = [
+  '1. ทบทวน: วันนี้มีสิ่งดีๆอะไรเกิดขึ้นกับฉัน',
+  '2. วางแผน: พรุ่งนี้ฉันจะทำอย่างไรหรืออะไรเพื่อให้วันพรุ่งนี้ดีขึ้นกว่าวันนี้',
+];
+const PERSONAL_EVENING_SCORE_TITLE = 'รายการประเมิณสามด้าน';
+const toPersonalDateKey = (dateInput = new Date()) => {
+  const date = dateInput instanceof Date ? new Date(dateInput.getTime()) : new Date(dateInput);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+const parsePersonalDateKey = (dateInput) => {
+  const normalized = String(dateInput || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null;
+  const [year, month, day] = normalized.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date;
+};
+const formatPersonalDateLabel = (dateInput, options = {}) => {
+  const parsed = parsePersonalDateKey(dateInput);
+  if (!parsed) return String(dateInput || '');
+  return parsed.toLocaleDateString('th-TH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    ...options,
+  });
+};
+const formatPersonalShortDateLabel = (dateInput) =>
+  formatPersonalDateLabel(dateInput, { month: 'short', day: 'numeric', year: undefined });
+const createPersonalListWithMinimum = (itemsInput) => {
+  const normalized = (Array.isArray(itemsInput) ? itemsInput : []).map((item) => String(item || ''));
+  if (normalized.length === 0) {
+    return Array.from({ length: Math.max(1, PERSONAL_MIN_LIST_ITEMS) }, () => '');
+  }
+  while (normalized.length < PERSONAL_MIN_LIST_ITEMS) {
+    normalized.push('');
+  }
+  return normalized;
+};
+const clampPersonalScore = (valueInput) => {
+  const numericValue = Number(valueInput);
+  if (!Number.isFinite(numericValue)) return PERSONAL_DEFAULT_SCORE;
+  return Math.min(5, Math.max(1, Math.round(numericValue)));
+};
+const normalizePersonalRemovedHabitIds = (removedHabitIdsInput) =>
+  Array.from(
+    new Set(
+      (Array.isArray(removedHabitIdsInput) ? removedHabitIdsInput : [])
+        .map((habitId) => String(habitId || '').trim())
+        .filter((habitId) => PERSONAL_DEFAULT_HABIT_ID_SET.has(habitId))
+    )
+  );
+const normalizePersonalHabitList = (habitsInput, removedHabitIdsInput = []) => {
+  const removedHabitIdSet = new Set(normalizePersonalRemovedHabitIds(removedHabitIdsInput));
+  const habitMap = new Map();
+  PERSONAL_DEFAULT_HABITS.forEach((habit) => {
+    if (removedHabitIdSet.has(habit.id)) return;
+    habitMap.set(habit.id, {
+      id: habit.id,
+      name: habit.name,
+      createdAt: habit.createdAt,
+    });
+  });
+
+  (Array.isArray(habitsInput) ? habitsInput : []).forEach((habitInput) => {
+    const habitId = String(habitInput?.id || '').trim() || `habit_${generateId()}`;
+    if (removedHabitIdSet.has(habitId)) return;
+    const name = String(habitInput?.name || '').trim();
+    if (!habitId || !name) return;
+    const createdAtRaw = String(habitInput?.createdAt || '').trim();
+    const createdAt =
+      createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime())
+        ? createdAtRaw
+        : new Date().toISOString();
+    habitMap.set(habitId, {
+      id: habitId,
+      name,
+      createdAt,
+    });
+  });
+
+  return Array.from(habitMap.values()).sort((left, right) => {
+    const leftMs = Number(new Date(left.createdAt).getTime()) || 0;
+    const rightMs = Number(new Date(right.createdAt).getTime()) || 0;
+    if (leftMs !== rightMs) return leftMs - rightMs;
+    return String(left.name || '').localeCompare(String(right.name || ''), undefined, {
+      sensitivity: 'base',
+    });
+  });
+};
+const buildDefaultPersonalWorkspaceEntry = (dateInput = toPersonalDateKey(new Date())) => {
+  const safeDate = parsePersonalDateKey(dateInput) ? String(dateInput) : toPersonalDateKey(new Date());
+  const nowIso = new Date().toISOString();
+  return {
+    date: safeDate,
+    morning: {
+      gratitude: createPersonalListWithMinimum([]),
+      expectation: createPersonalListWithMinimum([]),
+      promise: createPersonalListWithMinimum([]),
+      isSubmitted: false,
+    },
+    evening: {
+      review: createPersonalListWithMinimum([]),
+      plan: createPersonalListWithMinimum([]),
+      scores: {
+        body: PERSONAL_DEFAULT_SCORE,
+        mindset: PERSONAL_DEFAULT_SCORE,
+        emotion: PERSONAL_DEFAULT_SCORE,
+      },
+      scoresTouched: false,
+      isSubmitted: false,
+    },
+    habitChecks: {},
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+};
+const normalizePersonalWorkspaceEntry = (entryInput, dateInput = '') => {
+  const fallbackDate = parsePersonalDateKey(dateInput) ? String(dateInput) : toPersonalDateKey(new Date());
+  const defaultEntry = buildDefaultPersonalWorkspaceEntry(fallbackDate);
+  const entry = entryInput && typeof entryInput === 'object' && !Array.isArray(entryInput) ? entryInput : {};
+  const parsedDate = parsePersonalDateKey(entry.date);
+  const habitChecksRaw =
+    entry.habitChecks && typeof entry.habitChecks === 'object' && !Array.isArray(entry.habitChecks)
+      ? entry.habitChecks
+      : {};
+  const habitChecks = {};
+  Object.entries(habitChecksRaw).forEach(([habitIdInput, checked]) => {
+    const habitId = String(habitIdInput || '').trim();
+    if (!habitId) return;
+    habitChecks[habitId] = Boolean(checked);
+  });
+  const createdAtRaw = String(entry.createdAt || '').trim();
+  const createdAt =
+    createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime())
+      ? createdAtRaw
+      : defaultEntry.createdAt;
+  const updatedAtRaw = String(entry.updatedAt || '').trim();
+  const updatedAt =
+    updatedAtRaw && !Number.isNaN(new Date(updatedAtRaw).getTime()) ? updatedAtRaw : createdAt;
+
+  return {
+    ...defaultEntry,
+    ...entry,
+    date: parsedDate ? toPersonalDateKey(parsedDate) : fallbackDate,
+    morning: {
+      gratitude: createPersonalListWithMinimum(entry?.morning?.gratitude),
+      expectation: createPersonalListWithMinimum(entry?.morning?.expectation),
+      promise: createPersonalListWithMinimum(entry?.morning?.promise),
+      isSubmitted: Boolean(entry?.morning?.isSubmitted),
+    },
+    evening: {
+      review: createPersonalListWithMinimum(entry?.evening?.review),
+      plan: createPersonalListWithMinimum(entry?.evening?.plan),
+      scores: {
+        body: clampPersonalScore(entry?.evening?.scores?.body),
+        mindset: clampPersonalScore(entry?.evening?.scores?.mindset),
+        emotion: clampPersonalScore(entry?.evening?.scores?.emotion),
+      },
+      scoresTouched: Boolean(entry?.evening?.scoresTouched),
+      isSubmitted: Boolean(entry?.evening?.isSubmitted),
+    },
+    habitChecks,
+    createdAt,
+    updatedAt,
+  };
+};
+const normalizePersonalWorkspaceData = (dataInput) => {
+  const data = dataInput && typeof dataInput === 'object' && !Array.isArray(dataInput) ? dataInput : {};
+  const removedHabitIds = normalizePersonalRemovedHabitIds(data.removedHabitIds);
+  const entriesInput =
+    data.entriesByDate && typeof data.entriesByDate === 'object' && !Array.isArray(data.entriesByDate)
+      ? data.entriesByDate
+      : {};
+  const entriesByDate = {};
+  Object.entries(entriesInput).forEach(([dateKeyInput, entryInput]) => {
+    const parsed = parsePersonalDateKey(dateKeyInput);
+    if (!parsed) return;
+    const dateKey = toPersonalDateKey(parsed);
+    entriesByDate[dateKey] = normalizePersonalWorkspaceEntry(entryInput, dateKey);
+  });
+  return {
+    habits: normalizePersonalHabitList(data.habits, removedHabitIds),
+    entriesByDate,
+    removedHabitIds,
+  };
+};
+const hasPersonalListContent = (itemsInput) =>
+  (Array.isArray(itemsInput) ? itemsInput : []).some((item) => String(item || '').trim().length > 0);
+const hasPersonalEveningContent = (entryInput) =>
+  hasPersonalListContent(entryInput?.evening?.review) ||
+  hasPersonalListContent(entryInput?.evening?.plan) ||
+  Boolean(entryInput?.evening?.scoresTouched);
+const isPersonalEntrySubmitted = (entryInput) =>
+  Boolean(entryInput?.morning?.isSubmitted) && Boolean(entryInput?.evening?.isSubmitted);
+const getPersonalRangeStartDate = (rangeInput, nowInput = new Date()) => {
+  const nowDate = nowInput instanceof Date ? new Date(nowInput.getTime()) : new Date(nowInput);
+  if (Number.isNaN(nowDate.getTime())) return null;
+  const normalizedNow = new Date(
+    nowDate.getFullYear(),
+    nowDate.getMonth(),
+    nowDate.getDate(),
+    0,
+    0,
+    0,
+    0
+  );
+  const range = normalizePersonalDashboardRange(rangeInput);
+  if (range === 'all') return null;
+  if (range === 'year') {
+    return new Date(normalizedNow.getFullYear(), 0, 1);
+  }
+  if (range === 'month') {
+    return new Date(normalizedNow.getFullYear(), normalizedNow.getMonth(), 1);
+  }
+  if (range === 'week') {
+    const day = normalizedNow.getDay();
+    const offsetToMonday = day === 0 ? 6 : day - 1;
+    const start = new Date(normalizedNow);
+    start.setDate(start.getDate() - offsetToMonday);
+    return start;
+  }
+  return null;
+};
+const isPersonalDateWithinRange = (dateInput, rangeInput, nowInput = new Date()) => {
+  const parsedDate = parsePersonalDateKey(dateInput);
+  if (!parsedDate) return false;
+  const normalizedDate = new Date(
+    parsedDate.getFullYear(),
+    parsedDate.getMonth(),
+    parsedDate.getDate(),
+    0,
+    0,
+    0,
+    0
+  );
+  const nowDate = nowInput instanceof Date ? new Date(nowInput.getTime()) : new Date(nowInput);
+  if (Number.isNaN(nowDate.getTime())) return false;
+  const endDate = new Date(
+    nowDate.getFullYear(),
+    nowDate.getMonth(),
+    nowDate.getDate(),
+    23,
+    59,
+    59,
+    999
+  );
+  if (normalizedDate > endDate) return false;
+  const startDate = getPersonalRangeStartDate(rangeInput, nowDate);
+  if (!startDate) return true;
+  return normalizedDate >= startDate;
+};
+const splitTextForCanvasWidth = (ctx, textInput, maxWidth) => {
+  const text = String(textInput || '').replace(/\r\n/g, '\n');
+  if (!text) return [''];
+  const rawBlocks = text.split('\n');
+  const lines = [];
+  rawBlocks.forEach((block) => {
+    if (!block) {
+      lines.push('');
+      return;
+    }
+    let currentLine = '';
+    for (const char of block) {
+      const nextLine = `${currentLine}${char}`;
+      if (!currentLine || ctx.measureText(nextLine).width <= maxWidth) {
+        currentLine = nextLine;
+      } else {
+        lines.push(currentLine);
+        currentLine = char;
+      }
+    }
+    lines.push(currentLine);
+  });
+  return lines.length > 0 ? lines : [''];
+};
+const drawWrappedCanvasText = (ctx, text, x, y, maxWidth, lineHeight) => {
+  const lines = splitTextForCanvasWidth(ctx, text, maxWidth);
+  let currentY = y;
+  lines.forEach((line) => {
+    ctx.fillText(line, x, currentY);
+    currentY += lineHeight;
+  });
+  return currentY;
+};
+const convertDataUrlToUint8Array = (dataUrl) => {
+  const base64 = String(dataUrl || '').split(',')[1] || '';
+  if (!base64) return new Uint8Array();
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+};
+const renderPersonalEntryToPdfJpegPage = (dateKey, entryInput, habitsInput = []) => {
+  const entry = normalizePersonalWorkspaceEntry(entryInput, dateKey);
+  const habits = Array.isArray(habitsInput) ? habitsInput : [];
+  const canvas = document.createElement('canvas');
+  canvas.width = 1240;
+  canvas.height = 1754;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      bytes: new Uint8Array(),
+    };
+  }
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const pagePadding = 78;
+  let cursorY = 92;
+
+  ctx.fillStyle = '#0f172a';
+  ctx.font = '700 46px "Segoe UI", "Noto Sans Thai", sans-serif';
+  ctx.fillText('Personal Reflection Report', pagePadding, cursorY);
+
+  cursorY += 52;
+  ctx.font = '500 26px "Segoe UI", "Noto Sans Thai", sans-serif';
+  ctx.fillStyle = '#475569';
+  ctx.fillText(`วันที่ ${formatPersonalDateLabel(dateKey, { month: 'long', day: 'numeric', year: 'numeric' })}`, pagePadding, cursorY);
+
+  const drawSectionTitle = (title, colorHex) => {
+    cursorY += 42;
+    ctx.fillStyle = colorHex;
+    ctx.font = '700 30px "Segoe UI", "Noto Sans Thai", sans-serif';
+    ctx.fillText(title, pagePadding, cursorY);
+    cursorY += 18;
+    ctx.strokeStyle = colorHex;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(pagePadding, cursorY);
+    ctx.lineTo(canvas.width - pagePadding, cursorY);
+    ctx.stroke();
+    cursorY += 34;
+  };
+
+  const drawBulletPrompt = (prompt, itemsInput) => {
+    ctx.fillStyle = '#1f2937';
+    ctx.font = '700 24px "Segoe UI", "Noto Sans Thai", sans-serif';
+    cursorY = drawWrappedCanvasText(
+      ctx,
+      prompt,
+      pagePadding,
+      cursorY,
+      canvas.width - pagePadding * 2,
+      33
+    );
+    cursorY += 8;
+    ctx.fillStyle = '#334155';
+    ctx.font = '400 22px "Segoe UI", "Noto Sans Thai", sans-serif';
+    const filledItems = (Array.isArray(itemsInput) ? itemsInput : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    const displayItems = filledItems.length > 0 ? filledItems : ['ยังไม่มีข้อมูล'];
+    displayItems.forEach((item) => {
+      cursorY = drawWrappedCanvasText(
+        ctx,
+        `- ${item}`,
+        pagePadding + 18,
+        cursorY,
+        canvas.width - pagePadding * 2 - 18,
+        30
+      );
+      cursorY += 4;
+    });
+    cursorY += 12;
+  };
+
+  drawSectionTitle('ตอนเช้า', '#2563eb');
+  drawBulletPrompt(PERSONAL_MORNING_PROMPTS[0], entry.morning.gratitude);
+  drawBulletPrompt(PERSONAL_MORNING_PROMPTS[1], entry.morning.expectation);
+  drawBulletPrompt(PERSONAL_MORNING_PROMPTS[2], entry.morning.promise);
+
+  drawSectionTitle('ตอนเย็น', '#4f46e5');
+  drawBulletPrompt(PERSONAL_EVENING_PROMPTS[0], entry.evening.review);
+  drawBulletPrompt(PERSONAL_EVENING_PROMPTS[1], entry.evening.plan);
+  drawBulletPrompt(
+    PERSONAL_EVENING_SCORE_TITLE,
+    PERSONAL_SCORE_DIMENSIONS.map((dimension) => {
+      const score = clampPersonalScore(entry.evening.scores?.[dimension.id]);
+      const scoreLabel =
+        PERSONAL_SCORE_LEVELS.find((level) => level.value === score)?.label || `${score} คะแนน`;
+      return `${dimension.label}: ${scoreLabel}`;
+    })
+  );
+
+  drawSectionTitle('Habit Tracker', '#059669');
+  const checkedHabitIds =
+    entry.habitChecks && typeof entry.habitChecks === 'object' ? entry.habitChecks : {};
+  const habitLines =
+    habits.length > 0
+      ? habits.map((habit) => {
+          const isChecked = Boolean(checkedHabitIds[habit.id]);
+          return `[${isChecked ? 'x' : ' '}] ${habit.name}`;
+        })
+      : ['ยังไม่มีนิสัยที่ตั้งไว้'];
+  drawBulletPrompt('สรุปนิสัยของวัน', habitLines);
+
+  const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+  return {
+    width: canvas.width,
+    height: canvas.height,
+    bytes: convertDataUrlToUint8Array(jpegDataUrl),
+  };
+};
+const buildPdfFromJpegPages = (pagesInput) => {
+  const pages = (Array.isArray(pagesInput) ? pagesInput : []).filter(
+    (page) => page?.bytes instanceof Uint8Array && page.bytes.length > 0
+  );
+  if (pages.length === 0) return null;
+
+  const encoder = new TextEncoder();
+  const segments = [];
+  let totalLength = 0;
+  const pushBytes = (bytes) => {
+    const chunk = bytes instanceof Uint8Array ? bytes : new Uint8Array();
+    segments.push(chunk);
+    totalLength += chunk.length;
+  };
+  const pushText = (text) => pushBytes(encoder.encode(String(text || '')));
+
+  const headerBytes = new Uint8Array([37, 80, 68, 70, 45, 49, 46, 52, 10, 37, 226, 227, 207, 211, 10]);
+  pushBytes(headerBytes);
+
+  const objectOffsets = [0];
+  const pageCount = pages.length;
+  const objectCount = 2 + pageCount * 3;
+  const pageObjectNumbers = pages.map((_, index) => 5 + index * 3);
+
+  for (let objectNumber = 1; objectNumber <= objectCount; objectNumber += 1) {
+    objectOffsets[objectNumber] = totalLength;
+    pushText(`${objectNumber} 0 obj\n`);
+
+    if (objectNumber === 1) {
+      pushText('<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+      continue;
+    }
+
+    if (objectNumber === 2) {
+      const kids = pageObjectNumbers.map((pageNumber) => `${pageNumber} 0 R`).join(' ');
+      pushText(`<< /Type /Pages /Kids [${kids}] /Count ${pageCount} >>\nendobj\n`);
+      continue;
+    }
+
+    const pageIndex = Math.floor((objectNumber - 3) / 3);
+    const slot = (objectNumber - 3) % 3;
+    const page = pages[pageIndex];
+    const imageObjectNumber = 3 + pageIndex * 3;
+    const contentObjectNumber = imageObjectNumber + 1;
+    const imageName = `/Im${pageIndex + 1}`;
+
+    if (slot === 0) {
+      const width = Number(page.width) > 0 ? Number(page.width) : 1240;
+      const height = Number(page.height) > 0 ? Number(page.height) : 1754;
+      pushText(
+        `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.bytes.length} >>\n`
+      );
+      pushText('stream\n');
+      pushBytes(page.bytes);
+      pushText('\nendstream\nendobj\n');
+      continue;
+    }
+
+    if (slot === 1) {
+      const contentStream = `q\n595.28 0 0 841.89 0 0 cm\n${imageName} Do\nQ\n`;
+      const contentBytes = encoder.encode(contentStream);
+      pushText(`<< /Length ${contentBytes.length} >>\nstream\n`);
+      pushBytes(contentBytes);
+      pushText('endstream\nendobj\n');
+      continue;
+    }
+
+    if (slot === 2) {
+      pushText(
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << ${imageName} ${imageObjectNumber} 0 R >> >> /Contents ${contentObjectNumber} 0 R >>\n`
+      );
+      pushText('endobj\n');
+      continue;
+    }
+
+  }
+
+  const xrefOffset = totalLength;
+  pushText(`xref\n0 ${objectCount + 1}\n`);
+  pushText('0000000000 65535 f \n');
+  for (let objectNumber = 1; objectNumber <= objectCount; objectNumber += 1) {
+    const offset = String(objectOffsets[objectNumber] || 0).padStart(10, '0');
+    pushText(`${offset} 00000 n \n`);
+  }
+  pushText(`trailer\n<< /Size ${objectCount + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+
+  const pdfBytes = new Uint8Array(totalLength);
+  let cursor = 0;
+  segments.forEach((segment) => {
+    pdfBytes.set(segment, cursor);
+    cursor += segment.length;
+  });
+  return pdfBytes;
+};
+const downloadPdfBytes = (bytesInput, fileNameInput = 'personal-journal.pdf') => {
+  if (typeof window === 'undefined') return;
+  const bytes = bytesInput instanceof Uint8Array ? bytesInput : null;
+  if (!bytes || bytes.length === 0) return;
+  const fileName = String(fileNameInput || '').trim() || 'personal-journal.pdf';
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = fileName;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.setTimeout(() => {
+    URL.revokeObjectURL(objectUrl);
+  }, 2000);
+};
 const NOTE_TITLE_OWNER_PREFIX_TH = '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E02\u0E2D\u0E07';
 const NOTE_TITLE_DEPARTMENT_PREFIX_TH =
   '\u0E1A\u0E31\u0E19\u0E17\u0E36\u0E01\u0E02\u0E2D\u0E07\u0E1D\u0E48\u0E32\u0E22';
@@ -4087,6 +4659,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [activeDashboardProjectId, setActiveDashboardProjectId] = useState(null);
   const [activeDashboardTab, setActiveDashboardTab] = useState(DEFAULT_PROJECT_DASHBOARD_TAB);
   const [isProfileViewOpen, setIsProfileViewOpen] = useState(false);
+  const [isPersonalWorkspaceOpen, setIsPersonalWorkspaceOpen] = useState(false);
+  const [personalWorkspaceTab, setPersonalWorkspaceTab] = useState(
+    PERSONAL_WORKSPACE_TABS.JOURNAL
+  );
+  const [personalWorkspaceData, setPersonalWorkspaceData] = useState(() =>
+    normalizePersonalWorkspaceData({})
+  );
 
   // Data for Event Modal
   const [editingEvent, setEditingEvent] = useState(null);
@@ -4201,6 +4780,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     let isCancelled = false;
     setIsAccountDataHydrated(false);
     setHasAppliedStartupView(false);
+    setIsPersonalWorkspaceOpen(false);
+    setPersonalWorkspaceTab(PERSONAL_WORKSPACE_TABS.JOURNAL);
 
     const hydrateFromStore = async () => {
       try {
@@ -4230,6 +4811,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
         setProjectTodosByProjectId(
           normalizeProjectTodosByProjectId(accountPayload.projectTodosByProjectId)
+        );
+        setPersonalWorkspaceData(
+          normalizePersonalWorkspaceData(accountPayload.personalWorkspaceData)
         );
 
         if (accountPayload.displayRange?.start && accountPayload.displayRange?.end) {
@@ -4271,6 +4855,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         setProjects([]);
         setEvents([]);
         setProjectTodosByProjectId({});
+        setPersonalWorkspaceData(normalizePersonalWorkspaceData({}));
         setStartupView(STARTUP_VIEW_MODES.LAST);
         setLastVisitedView({ ...DEFAULT_LAST_VISITED_VIEW });
         setProjectUpdatePopupMode(DEFAULT_PROJECT_UPDATE_POPUP_MODE);
@@ -4520,6 +5105,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       projects,
       events,
       projectTodosByProjectId,
+      personalWorkspaceData,
       displayRange,
       hidePastWeeks,
       startupView,
@@ -4541,6 +5127,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     projects,
     events,
     projectTodosByProjectId,
+    personalWorkspaceData,
     displayRange,
     hidePastWeeks,
     startupView,
@@ -6381,6 +6968,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   };
 
   const handleDayClick = (dateStr, projectId) => {
+    setIsPersonalWorkspaceOpen(false);
     setEditingEvent(null);
     setSelectedDateForNewEvent(dateStr);
     setPreSelectedProjectId(projectId || (visibleProjects.length > 0 ? visibleProjects[0].id : ''));
@@ -6388,6 +6976,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   };
 
   const handleNewEventClick = () => {
+    setIsPersonalWorkspaceOpen(false);
     setEditingEvent(null);
     // ตั้งค่าเริ่มต้นเป็นวันที่ปัจจุบัน
     const now = new Date();
@@ -6398,6 +6987,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         (visibleProjects.length > 0 ? visibleProjects[0].id : (projects.length > 0 ? projects[0].id : ''))
     );
     setShowEventModal(true);
+  };
+  const togglePersonalWorkspace = () => {
+    setIsPersonalWorkspaceOpen((prev) => {
+      const nextValue = !prev;
+      if (nextValue) {
+        setShowEventModal(false);
+        setShowProjectModal(false);
+        setIsTodoSplitView(false);
+      }
+      return nextValue;
+    });
+    setPersonalWorkspaceTab((prev) => normalizePersonalWorkspaceTab(prev));
   };
 
   const handleCreateProjectBoardItem = async (projectId, itemTypeInput = 'todo') => {
@@ -6536,6 +7137,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
   const handleMobileProjectSelect = (projectId) => {
     if (!isCompactViewport) return;
+    setIsPersonalWorkspaceOpen(false);
     if (!projectId) {
       setMobileCalendarProjectId(null);
       return;
@@ -7441,6 +8043,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       projects: nextProjects,
       events,
       projectTodosByProjectId,
+      personalWorkspaceData,
       displayRange,
       hidePastWeeks,
       startupView,
@@ -7678,14 +8281,19 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         <div className="md:hidden">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0">
-              <CalendarDays className="w-6 h-6 text-blue-600 shrink-0" />
-              <h1 className="text-lg font-bold text-gray-800 truncate">Multi-Project Calendar</h1>
+              <CalendarDays className="w-6 h-6 shrink-0 text-blue-600" />
+              <h1 className="text-lg font-bold text-gray-800 truncate">
+                {isPersonalWorkspaceOpen ? 'Personal Reflection Space' : 'Multi-Project Calendar'}
+              </h1>
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
-                onClick={() => setShowProjectModal(true)}
+                onClick={() => {
+                  setIsPersonalWorkspaceOpen(false);
+                  setShowProjectModal(true);
+                }}
                 className="h-8 w-8 inline-flex items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
                 title="Manage projects"
               >
@@ -7708,82 +8316,184 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           >
             <button
               type="button"
-              onClick={() => handleMobileProjectSelect(null)}
+              onClick={togglePersonalWorkspace}
               className={`h-9 w-auto flex-none inline-flex items-center justify-center gap-1 rounded-lg px-2.5 text-[10px] font-semibold border whitespace-nowrap transition-colors ${
-                !selectedMobileProject
-                  ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
+                isPersonalWorkspaceOpen
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
                   : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
               }`}
             >
-              <Layers className="w-3 h-3" />
-              Merge
+              <FileText className="w-3 h-3" />
+              Personal
             </button>
-            {mobileVisibleProjects.map((project) => renderMobileProjectButton(project))}
+
+            {isPersonalWorkspaceOpen ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setPersonalWorkspaceTab(PERSONAL_WORKSPACE_TABS.JOURNAL)}
+                  className={`h-9 w-auto flex-none inline-flex items-center justify-center gap-1 rounded-lg px-2.5 text-[10px] font-semibold border whitespace-nowrap transition-colors ${
+                    personalWorkspaceTab === PERSONAL_WORKSPACE_TABS.JOURNAL
+                      ? 'bg-blue-50 text-blue-700 border-blue-200 shadow-sm'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <CheckSquare className="w-3 h-3" />
+                  บันทึกประจำวัน
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPersonalWorkspaceTab(PERSONAL_WORKSPACE_TABS.DASHBOARD)}
+                  className={`h-9 w-auto flex-none inline-flex items-center justify-center gap-1 rounded-lg px-2.5 text-[10px] font-semibold border whitespace-nowrap transition-colors ${
+                    personalWorkspaceTab === PERSONAL_WORKSPACE_TABS.DASHBOARD
+                      ? 'bg-blue-50 text-blue-700 border-blue-200 shadow-sm'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <BarChart2 className="w-3 h-3" />
+                  Dashboard
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleMobileProjectSelect(null)}
+                  className={`h-9 w-auto flex-none inline-flex items-center justify-center gap-1 rounded-lg px-2.5 text-[10px] font-semibold border whitespace-nowrap transition-colors ${
+                    !selectedMobileProject
+                      ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  <Layers className="w-3 h-3" />
+                  Merge
+                </button>
+                {mobileVisibleProjects.map((project) => renderMobileProjectButton(project))}
+              </>
+            )}
           </div>
         </div>
 
         <div className="hidden md:flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <CalendarDays className="w-6 h-6 text-blue-600" />
-            <h1 className="text-xl font-bold text-gray-800">Multi-Project Calendar</h1>
+            <h1 className="text-xl font-bold text-gray-800">
+              {isPersonalWorkspaceOpen ? 'Personal Reflection Space' : 'Multi-Project Calendar'}
+            </h1>
           </div>
 
           <div className="flex items-center gap-4">
             <button
-              onClick={() => {
-                setIsTodoSplitView((prev) => !prev);
-              }}
+              onClick={togglePersonalWorkspace}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border font-medium transition-colors ${
-                isTodoSplitView
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                isPersonalWorkspaceOpen
+                  ? 'bg-blue-50 text-blue-700 border-blue-200'
                   : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
               }`}
-              title="Toggle Todo mode"
+              title="Open personal workspace"
             >
-              <CheckSquare className="w-4 h-4" />
-              <span className="hidden sm:inline">Todo</span>
+              <FileText className="w-4 h-4" />
+              <span className="hidden sm:inline">Personal</span>
             </button>
 
-            <div className="flex bg-gray-100 p-1 rounded-lg border">
-              <button
-                onClick={() => setIsMergeView(false)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
-                  !isMergeView
-                    ? 'bg-white shadow-sm font-medium text-blue-600'
-                    : 'text-gray-500 hover:bg-gray-200'
-                }`}
-              >
-                <LayoutGrid className="w-4 h-4" />
-                <span className="hidden sm:inline">Split View</span>
-              </button>
-              <button
-                onClick={() => setIsMergeView(true)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
-                  isMergeView ? 'bg-white shadow-sm font-medium text-blue-600' : 'text-gray-500 hover:bg-gray-200'
-                }`}
-              >
-                <Layers className="w-4 h-4" />
-                <span className="hidden sm:inline">Merge View</span>
-              </button>
-            </div>
+            {isPersonalWorkspaceOpen ? (
+              <div className="flex bg-gray-100 p-1 rounded-lg border">
+                <button
+                  type="button"
+                  onClick={() => setPersonalWorkspaceTab(PERSONAL_WORKSPACE_TABS.JOURNAL)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
+                    personalWorkspaceTab === PERSONAL_WORKSPACE_TABS.JOURNAL
+                      ? 'bg-white shadow-sm font-medium text-blue-600'
+                      : 'text-gray-500 hover:bg-gray-200'
+                  }`}
+                >
+                  <CheckSquare className="w-4 h-4" />
+                  <span className="hidden sm:inline">Daily Journal</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPersonalWorkspaceTab(PERSONAL_WORKSPACE_TABS.DASHBOARD)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
+                    personalWorkspaceTab === PERSONAL_WORKSPACE_TABS.DASHBOARD
+                      ? 'bg-white shadow-sm font-medium text-blue-600'
+                      : 'text-gray-500 hover:bg-gray-200'
+                  }`}
+                >
+                  <BarChart2 className="w-4 h-4" />
+                  <span className="hidden sm:inline">Personal Dashboard</span>
+                </button>
+              </div>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    setIsPersonalWorkspaceOpen(false);
+                    setIsTodoSplitView((prev) => !prev);
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border font-medium transition-colors ${
+                    isTodoSplitView
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                  }`}
+                  title="Toggle Todo mode"
+                >
+                  <CheckSquare className="w-4 h-4" />
+                  <span className="hidden sm:inline">Todo</span>
+                </button>
 
-            <div className="w-px h-6 bg-gray-300"></div>
+                <div className="flex bg-gray-100 p-1 rounded-lg border">
+                  <button
+                    onClick={() => {
+                      setIsPersonalWorkspaceOpen(false);
+                      setIsMergeView(false);
+                    }}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
+                      !isMergeView
+                        ? 'bg-white shadow-sm font-medium text-blue-600'
+                        : 'text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    <LayoutGrid className="w-4 h-4" />
+                    <span className="hidden sm:inline">Split View</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsPersonalWorkspaceOpen(false);
+                      setIsMergeView(true);
+                    }}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
+                      isMergeView
+                        ? 'bg-white shadow-sm font-medium text-blue-600'
+                        : 'text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    <Layers className="w-4 h-4" />
+                    <span className="hidden sm:inline">Merge View</span>
+                  </button>
+                </div>
 
-            <button
-              onClick={handleNewEventClick}
-              className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg font-medium transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Add Event</span>
-            </button>
+                <div className="w-px h-6 bg-gray-300"></div>
 
-            <button
-              onClick={() => setShowProjectModal(true)}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-              <span>Manage Project</span>
-            </button>
+                <button
+                  onClick={handleNewEventClick}
+                  className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg font-medium transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span className="hidden sm:inline">Add Event</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsPersonalWorkspaceOpen(false);
+                    setShowProjectModal(true);
+                  }}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                >
+                  <Settings className="w-4 h-4" />
+                  <span>Manage Project</span>
+                </button>
+              </>
+            )}
 
             <button
               type="button"
@@ -7818,7 +8528,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           shouldHideCalendarScrollbar ? '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : ''
         }`}
       >
-        {visibleProjects.length === 0 ? (
+        {isPersonalWorkspaceOpen ? (
+          <PersonalWorkspace
+            data={personalWorkspaceData}
+            onChangeData={setPersonalWorkspaceData}
+            activeTab={personalWorkspaceTab}
+            isCompactViewport={isCompactViewport}
+          />
+        ) : visibleProjects.length === 0 ? (
           <div className="flex h-full items-center justify-center flex-col text-gray-400 gap-4">
             <LayoutGrid className="w-16 h-16 opacity-50" />
             <p className="text-lg">กรุณาเลือกหรือเพิ่มโปรเจกต์จากเมนู "จัดการ Project"</p>
@@ -7972,7 +8689,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         )}
       </main>
 
-      {isCompactViewport && (
+      {isCompactViewport && !isPersonalWorkspaceOpen && (
         <button
           type="button"
           onClick={handleNewEventClick}
@@ -8238,6 +8955,1338 @@ const NoteTargetSelect = ({
     </div>
   );
 };
+
+function PersonalLineChart({
+  labels = [],
+  series = [],
+  minValue = 1,
+  maxValue = 5,
+  emptyMessage = 'ยังไม่มีข้อมูลสำหรับกราฟนี้',
+}) {
+  const safeLabels = Array.isArray(labels) ? labels : [];
+  const safeSeries = (Array.isArray(series) ? series : []).filter(
+    (item) => Array.isArray(item?.values) && item.values.length === safeLabels.length
+  );
+  if (safeLabels.length === 0 || safeSeries.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-gray-300 bg-white/70 p-6 text-center text-sm text-gray-400">
+        {emptyMessage}
+      </div>
+    );
+  }
+
+  const chartWidth = 760;
+  const chartHeight = 280;
+  const padding = { top: 20, right: 14, bottom: 42, left: 32 };
+  const innerWidth = chartWidth - padding.left - padding.right;
+  const innerHeight = chartHeight - padding.top - padding.bottom;
+  const valueGap = Math.max(1, maxValue - minValue);
+  const xStep = safeLabels.length > 1 ? innerWidth / (safeLabels.length - 1) : 0;
+
+  const getPoint = (index, valueInput) => {
+    const value = Math.min(maxValue, Math.max(minValue, Number(valueInput)));
+    const x = padding.left + xStep * index;
+    const y = padding.top + ((maxValue - value) / valueGap) * innerHeight;
+    return { x, y };
+  };
+
+  const buildPath = (valuesInput) =>
+    valuesInput
+      .map((value, index) => {
+        const point = getPoint(index, value);
+        return `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`;
+      })
+      .join(' ');
+
+  const xLabelStep = Math.max(1, Math.ceil(safeLabels.length / 6));
+  const shownLabelIndexes = new Set();
+  safeLabels.forEach((_, index) => {
+    if (index % xLabelStep === 0 || index === safeLabels.length - 1) {
+      shownLabelIndexes.add(index);
+    }
+  });
+
+  return (
+    <div className="rounded-xl border border-gray-100 bg-white p-3 md:p-4 shadow-sm">
+      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-[250px]">
+        {Array.from({ length: maxValue - minValue + 1 }).map((_, index) => {
+          const value = minValue + index;
+          const y = getPoint(0, value).y;
+          return (
+            <g key={`personal-y-grid-${value}`}>
+              <line
+                x1={padding.left}
+                y1={y}
+                x2={chartWidth - padding.right}
+                y2={y}
+                stroke="#e5e7eb"
+                strokeWidth="1"
+              />
+              <text
+                x={padding.left - 10}
+                y={y + 4}
+                textAnchor="end"
+                className="fill-gray-400 text-[10px]"
+              >
+                {value}
+              </text>
+            </g>
+          );
+        })}
+
+        {safeSeries.map((line) => (
+          <g key={`personal-line-${line.id || line.label}`}>
+            <path
+              d={buildPath(line.values)}
+              fill="none"
+              stroke={line.color || '#2563eb'}
+              strokeWidth="3"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+            {line.values.map((value, index) => {
+              const point = getPoint(index, value);
+              return (
+                <circle
+                  key={`personal-point-${line.id || line.label}-${index}`}
+                  cx={point.x}
+                  cy={point.y}
+                  r="3.5"
+                  fill={line.color || '#2563eb'}
+                />
+              );
+            })}
+          </g>
+        ))}
+
+        {safeLabels.map((label, index) => {
+          if (!shownLabelIndexes.has(index)) return null;
+          const point = getPoint(index, minValue);
+          return (
+            <text
+              key={`personal-x-label-${index}`}
+              x={point.x}
+              y={chartHeight - 14}
+              textAnchor="middle"
+              className="fill-gray-400 text-[10px]"
+            >
+              {label}
+            </text>
+          );
+        })}
+      </svg>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+        {safeSeries.map((line) => (
+          <div
+            key={`personal-legend-${line.id || line.label}`}
+            className="inline-flex items-center gap-1.5 text-gray-600"
+          >
+            <span
+              className="inline-block w-2.5 h-2.5 rounded-full"
+              style={{ backgroundColor: line.color || '#2563eb' }}
+            />
+            <span>{line.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PersonalPromptEditor({
+  title,
+  items = [],
+  onChangeItem,
+  onAddItem,
+  onRemoveItem,
+  isReadOnly = false,
+}) {
+  const safeItems = Array.isArray(items) ? items : [];
+  return (
+    <div className="p-0 border-0 bg-transparent">
+      <h4 className="text-sm md:text-base font-semibold text-slate-700 leading-relaxed">{title}</h4>
+      <div className="mt-3 space-y-2">
+        {safeItems.map((item, index) => (
+          <div key={`prompt-item-${title}-${index}`} className="group flex items-start gap-2">
+            <span className="mt-2 text-xs font-semibold text-slate-400">{index + 1}.</span>
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={item}
+                onChange={(event) => onChangeItem(index, event.target.value)}
+                readOnly={isReadOnly}
+                placeholder=""
+                className={`w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-10 text-sm text-slate-700 outline-none ${
+                  isReadOnly ? 'opacity-80 cursor-not-allowed' : 'focus:ring-2 focus:ring-blue-300 focus:border-blue-300'
+                }`}
+              />
+              {isReadOnly ? null : (
+                <button
+                  type="button"
+                  onClick={() => onRemoveItem?.(index)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-300 opacity-0 pointer-events-none transition-all group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto hover:text-slate-500 focus-visible:opacity-100 focus-visible:pointer-events-auto focus-visible:text-slate-600"
+                  aria-label={`ลบข้อที่ ${index + 1}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          onClick={() => {
+            if (isReadOnly) return;
+            onAddItem();
+          }}
+          disabled={isReadOnly}
+          className={`inline-flex items-center gap-1.5 px-1 py-1.5 text-xs font-semibold transition-colors ${
+            isReadOnly
+              ? 'text-slate-300 cursor-not-allowed'
+              : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <Plus className="w-3.5 h-3.5" />
+          เพิ่มข้อ
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PersonalWorkspace({
+  data,
+  onChangeData,
+  activeTab,
+  isCompactViewport = false,
+}) {
+  const popup = usePopup();
+  const [editingHabitId, setEditingHabitId] = useState('');
+  const [editingHabitDraft, setEditingHabitDraft] = useState('');
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [moodRange, setMoodRange] = useState(PERSONAL_DEFAULT_DASHBOARD_RANGE);
+  const [habitSummaryRange, setHabitSummaryRange] = useState(PERSONAL_DEFAULT_DASHBOARD_RANGE);
+  const [historyRange, setHistoryRange] = useState(PERSONAL_DEFAULT_DASHBOARD_RANGE);
+  const [exportFromDate, setExportFromDate] = useState('');
+  const [exportToDate, setExportToDate] = useState('');
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isBackfillOtherPeriodVisible, setIsBackfillOtherPeriodVisible] = useState(false);
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 60 * 1000);
+    return () => window.clearInterval(timerId);
+  }, []);
+
+  const normalizedData = useMemo(() => normalizePersonalWorkspaceData(data), [data]);
+  const habits = normalizedData.habits;
+  const entriesByDate = normalizedData.entriesByDate;
+  const normalizedActiveTab = normalizePersonalWorkspaceTab(activeTab);
+  const nowDate = useMemo(() => new Date(nowMs), [nowMs]);
+  const activeDateKey = toPersonalDateKey(nowDate);
+
+  const scoreLabelMap = useMemo(
+    () =>
+      PERSONAL_SCORE_LEVELS.reduce((map, item) => {
+        map[item.value] = item.label;
+        return map;
+      }, {}),
+    []
+  );
+
+  const updateData = useCallback(
+    (updater) => {
+      if (typeof onChangeData !== 'function') return;
+      onChangeData((previousInput) => {
+        const currentData = normalizePersonalWorkspaceData(previousInput);
+        const nextData =
+          typeof updater === 'function' ? updater(currentData) : currentData;
+        return normalizePersonalWorkspaceData(nextData);
+      });
+    },
+    [onChangeData]
+  );
+
+  const selectedEntry = useMemo(
+    () => normalizePersonalWorkspaceEntry(entriesByDate[activeDateKey], activeDateKey),
+    [entriesByDate, activeDateKey]
+  );
+
+  const updateSelectedEntry = useCallback(
+    (updater) => {
+      updateData((currentData) => {
+        const nextEntriesByDate = { ...currentData.entriesByDate };
+        const currentEntry = normalizePersonalWorkspaceEntry(
+          nextEntriesByDate[activeDateKey],
+          activeDateKey
+        );
+        const nextEntryRaw =
+          typeof updater === 'function' ? updater(currentEntry) : currentEntry;
+        const normalizedNextEntry = normalizePersonalWorkspaceEntry(nextEntryRaw, activeDateKey);
+        const nowIso = new Date().toISOString();
+        nextEntriesByDate[activeDateKey] = {
+          ...normalizedNextEntry,
+          createdAt: String(currentEntry.createdAt || normalizedNextEntry.createdAt || nowIso),
+          updatedAt: nowIso,
+        };
+        return {
+          ...currentData,
+          entriesByDate: nextEntriesByDate,
+        };
+      });
+    },
+    [activeDateKey, updateData]
+  );
+
+  const updatePromptItem = (periodKey, listKey, index, value) => {
+    if (!Number.isInteger(index) || index < 0) return;
+    updateSelectedEntry((entry) => {
+      const section = periodKey === 'evening' ? entry.evening : entry.morning;
+      const list = createPersonalListWithMinimum(section?.[listKey]);
+      const nextList = [...list];
+      while (nextList.length <= index) {
+        nextList.push('');
+      }
+      nextList[index] = value;
+      if (periodKey === 'evening') {
+        return {
+          ...entry,
+          evening: {
+            ...entry.evening,
+            [listKey]: nextList,
+            isSubmitted: false,
+          },
+        };
+      }
+      return {
+        ...entry,
+        morning: {
+          ...entry.morning,
+          [listKey]: nextList,
+          isSubmitted: false,
+        },
+      };
+    });
+  };
+
+  const addPromptItem = (periodKey, listKey) => {
+    updateSelectedEntry((entry) => {
+      const section = periodKey === 'evening' ? entry.evening : entry.morning;
+      const nextList = [...createPersonalListWithMinimum(section?.[listKey]), ''];
+      if (periodKey === 'evening') {
+        return {
+          ...entry,
+          evening: {
+            ...entry.evening,
+            [listKey]: nextList,
+            isSubmitted: false,
+          },
+        };
+      }
+      return {
+        ...entry,
+        morning: {
+          ...entry.morning,
+          [listKey]: nextList,
+          isSubmitted: false,
+        },
+      };
+    });
+  };
+
+  const removePromptItem = (periodKey, listKey, index) => {
+    if (!Number.isInteger(index) || index < 0) return;
+    updateSelectedEntry((entry) => {
+      const section = periodKey === 'evening' ? entry.evening : entry.morning;
+      const list = createPersonalListWithMinimum(section?.[listKey]);
+      if (index >= list.length) return entry;
+      let nextList;
+      if (list.length <= PERSONAL_MIN_LIST_ITEMS) {
+        nextList = [...list];
+        nextList[0] = '';
+      } else {
+        nextList = list.filter((_, itemIndex) => itemIndex !== index);
+        while (nextList.length < PERSONAL_MIN_LIST_ITEMS) {
+          nextList.push('');
+        }
+      }
+      if (periodKey === 'evening') {
+        return {
+          ...entry,
+          evening: {
+            ...entry.evening,
+            [listKey]: nextList,
+            isSubmitted: false,
+          },
+        };
+      }
+      return {
+        ...entry,
+        morning: {
+          ...entry.morning,
+          [listKey]: nextList,
+          isSubmitted: false,
+        },
+      };
+    });
+  };
+
+  const handleScoreSelect = (dimensionId, scoreValue) => {
+    updateSelectedEntry((entry) => ({
+      ...entry,
+      evening: {
+        ...entry.evening,
+        scores: {
+          ...entry.evening.scores,
+          [dimensionId]: clampPersonalScore(scoreValue),
+        },
+        scoresTouched: true,
+        isSubmitted: false,
+      },
+    }));
+  };
+
+  const handleToggleHabitForDay = (habitId, checked) => {
+    const normalizedHabitId = String(habitId || '').trim();
+    if (!normalizedHabitId) return;
+    updateSelectedEntry((entry) => ({
+      ...entry,
+      habitChecks: {
+        ...(entry.habitChecks || {}),
+        [normalizedHabitId]: Boolean(checked),
+      },
+    }));
+  };
+
+  const handleAddHabit = async () => {
+    const nextNameRaw = await popup.prompt({
+      title: 'เพิ่ม Habit',
+      message: 'เพิ่มนิสัยที่ต้องการติดตามใน Daily Journal',
+      placeholder: 'ชื่อนิสัยใหม่',
+      confirmText: 'เพิ่ม',
+      cancelText: 'ยกเลิก',
+    });
+    if (nextNameRaw === null) return;
+    const name = String(nextNameRaw || '').trim();
+    if (!name) {
+      await popup.alert({
+        title: 'ชื่อนิสัยว่าง',
+        message: 'กรุณาระบุชื่อนิสัยก่อนเพิ่ม',
+      });
+      return;
+    }
+    const duplicated = habits.some(
+      (habit) => String(habit.name || '').trim().toLowerCase() === name.toLowerCase()
+    );
+    if (duplicated) {
+      await popup.alert({
+        title: 'ชื่อนิสัยซ้ำ',
+        message: 'มีนิสัยชื่อนี้แล้ว กรุณาใช้ชื่ออื่น',
+      });
+      return;
+    }
+    updateData((currentData) => ({
+      ...currentData,
+      habits: [
+        ...currentData.habits,
+        {
+          id: `habit_${generateId()}`,
+          name,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }));
+  };
+
+  const handleTogglePeriodSubmitState = (periodKey) => {
+    const normalizedPeriod = periodKey === 'evening' ? 'evening' : 'morning';
+    updateSelectedEntry((entry) => {
+      if (normalizedPeriod === 'evening') {
+        return {
+          ...entry,
+          evening: {
+            ...entry.evening,
+            isSubmitted: !Boolean(entry?.evening?.isSubmitted),
+          },
+        };
+      }
+      return {
+        ...entry,
+        morning: {
+          ...entry.morning,
+          isSubmitted: !Boolean(entry?.morning?.isSubmitted),
+        },
+      };
+    });
+  };
+
+  const handleStartEditHabit = (habitInput) => {
+    const habitId = String(habitInput?.id || '').trim();
+    if (!habitId) return;
+    setEditingHabitId(habitId);
+    setEditingHabitDraft(String(habitInput?.name || '').trim());
+  };
+
+  const handleCancelEditHabit = () => {
+    setEditingHabitId('');
+    setEditingHabitDraft('');
+  };
+
+  const handleSaveEditHabit = async () => {
+    const targetHabitId = String(editingHabitId || '').trim();
+    const nextName = String(editingHabitDraft || '').trim();
+    if (!targetHabitId) return;
+    if (!nextName) {
+      await popup.alert({
+        title: 'ชื่อ Habit ว่าง',
+        message: 'กรุณาระบุชื่อ Habit ก่อนบันทึก',
+      });
+      return;
+    }
+
+    const duplicated = habits.some(
+      (habit) =>
+        habit.id !== targetHabitId &&
+        String(habit.name || '').trim().toLowerCase() === nextName.toLowerCase()
+    );
+    if (duplicated) {
+      await popup.alert({
+        title: 'ชื่อ Habit ซ้ำ',
+        message: 'มี Habit ชื่อนี้แล้ว กรุณาใช้ชื่ออื่น',
+      });
+      return;
+    }
+
+    updateData((currentData) => ({
+      ...currentData,
+      habits: currentData.habits.map((habit) =>
+        habit.id === targetHabitId ? { ...habit, name: nextName } : habit
+      ),
+    }));
+    handleCancelEditHabit();
+  };
+
+  const handleDeleteHabit = async (habitInput) => {
+    const targetHabitId = String(habitInput?.id || '').trim();
+    const targetHabitName = String(habitInput?.name || '').trim();
+    if (!targetHabitId) return;
+    const isDefaultHabit = PERSONAL_DEFAULT_HABIT_ID_SET.has(targetHabitId);
+
+    const shouldDelete = await popup.confirm({
+      title: 'ลบ Habit',
+      message: targetHabitName
+        ? `ต้องการลบ Habit "${targetHabitName}" ใช่ไหม?`
+        : 'ต้องการลบ Habit นี้ใช่ไหม?',
+      confirmText: 'ลบ',
+      cancelText: 'ยกเลิก',
+      tone: 'danger',
+    });
+    if (!shouldDelete) return;
+
+    updateData((currentData) => {
+      const nextEntriesByDate = {};
+      Object.entries(currentData.entriesByDate).forEach(([dateKey, entryInput]) => {
+        const entry = normalizePersonalWorkspaceEntry(entryInput, dateKey);
+        const nextChecks = { ...(entry.habitChecks || {}) };
+        if (Object.prototype.hasOwnProperty.call(nextChecks, targetHabitId)) {
+          delete nextChecks[targetHabitId];
+        }
+        nextEntriesByDate[dateKey] = {
+          ...entry,
+          habitChecks: nextChecks,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      return {
+        ...currentData,
+        habits: currentData.habits.filter((habit) => habit.id !== targetHabitId),
+        entriesByDate: nextEntriesByDate,
+        removedHabitIds: isDefaultHabit
+          ? Array.from(new Set([...(currentData.removedHabitIds || []), targetHabitId]))
+          : currentData.removedHabitIds,
+      };
+    });
+
+    if (editingHabitId === targetHabitId) {
+      handleCancelEditHabit();
+    }
+  };
+
+  const todayDateKey = toPersonalDateKey(nowDate);
+  const isTodayEntry = activeDateKey === todayDateKey;
+  const currentHour = nowDate.getHours();
+  const activeTimePeriod = currentHour >= 4 && currentHour < 18 ? 'morning' : 'evening';
+  const backfillPeriod = activeTimePeriod === 'morning' ? 'evening' : 'morning';
+  const backfillPeriodLabel = backfillPeriod === 'morning' ? 'ช่วงเช้า' : 'ช่วงเย็น';
+  const isMorningSubmitted = Boolean(selectedEntry?.morning?.isSubmitted);
+  const isEveningSubmitted = Boolean(selectedEntry?.evening?.isSubmitted);
+  const isBackfillPeriodCompleted =
+    backfillPeriod === 'morning' ? isMorningSubmitted : isEveningSubmitted;
+  const shouldShowBackfillButton =
+    normalizedActiveTab === PERSONAL_WORKSPACE_TABS.JOURNAL &&
+    isTodayEntry &&
+    !isBackfillPeriodCompleted;
+  const shouldShowMorningSection =
+    !isTodayEntry
+      ? true
+      : isBackfillOtherPeriodVisible
+        ? backfillPeriod === 'morning'
+        : activeTimePeriod === 'morning';
+  const shouldShowEveningSection =
+    !isTodayEntry
+      ? true
+      : isBackfillOtherPeriodVisible
+        ? backfillPeriod === 'evening'
+        : activeTimePeriod === 'evening';
+
+  useEffect(() => {
+    if (!shouldShowBackfillButton && isBackfillOtherPeriodVisible) {
+      setIsBackfillOtherPeriodVisible(false);
+    }
+  }, [shouldShowBackfillButton, isBackfillOtherPeriodVisible]);
+
+  const entryRecordsAsc = useMemo(
+    () =>
+      Object.entries(entriesByDate)
+        .map(([date, entry]) => ({
+          date,
+          entry: normalizePersonalWorkspaceEntry(entry, date),
+        }))
+        .sort((left, right) => left.date.localeCompare(right.date)),
+    [entriesByDate]
+  );
+  const entryRecordsDesc = useMemo(() => [...entryRecordsAsc].reverse(), [entryRecordsAsc]);
+  const eveningRecordsAsc = useMemo(
+    () => entryRecordsAsc.filter(({ entry }) => hasPersonalEveningContent(entry)),
+    [entryRecordsAsc]
+  );
+
+  const buildHabitSummary = useCallback(
+    (recordsInput) => {
+      const records = Array.isArray(recordsInput) ? recordsInput : [];
+      const total = records.length * habits.length;
+      let success = 0;
+      const perHabit = habits.map((habit) => {
+        const habitSuccess = records.reduce(
+          (count, record) => count + (record?.entry?.habitChecks?.[habit.id] ? 1 : 0),
+          0
+        );
+        success += habitSuccess;
+        const habitTotal = records.length;
+        return {
+          id: habit.id,
+          name: habit.name,
+          success: habitSuccess,
+          total: habitTotal,
+          percent: habitTotal > 0 ? (habitSuccess / habitTotal) * 100 : 0,
+        };
+      });
+      return {
+        success,
+        total,
+        percent: total > 0 ? (success / total) * 100 : 0,
+        perHabit,
+      };
+    },
+    [habits]
+  );
+
+  const moodRecords = useMemo(
+    () =>
+      eveningRecordsAsc.filter(({ date }) =>
+        isPersonalDateWithinRange(date, moodRange, nowDate)
+      ),
+    [eveningRecordsAsc, moodRange, nowDate]
+  );
+  const moodLabels = useMemo(
+    () => moodRecords.map(({ date }) => formatPersonalShortDateLabel(date)),
+    [moodRecords]
+  );
+  const moodSeries = useMemo(
+    () => [
+      {
+        id: 'mood-average',
+        label: 'ค่าเฉลี่ยอารมณ์ (1-5)',
+        color: '#ec4899',
+        values: moodRecords.map(({ entry }) => {
+          const body = clampPersonalScore(entry?.evening?.scores?.body);
+          const mindset = clampPersonalScore(entry?.evening?.scores?.mindset);
+          const emotion = clampPersonalScore(entry?.evening?.scores?.emotion);
+          return Number(((body + mindset + emotion) / 3).toFixed(2));
+        }),
+      },
+    ],
+    [moodRecords]
+  );
+  const habitRangeRecords = useMemo(
+    () =>
+      entryRecordsAsc.filter(({ date }) =>
+        isPersonalDateWithinRange(date, habitSummaryRange, nowDate)
+      ),
+    [entryRecordsAsc, habitSummaryRange, nowDate]
+  );
+  const habitRangeSummary = useMemo(
+    () => buildHabitSummary(habitRangeRecords),
+    [buildHabitSummary, habitRangeRecords]
+  );
+  const historyRecords = useMemo(
+    () =>
+      entryRecordsDesc.filter(
+        ({ date, entry }) =>
+          isPersonalEntrySubmitted(entry) &&
+          isPersonalDateWithinRange(date, historyRange, nowDate)
+      ),
+    [entryRecordsDesc, historyRange, nowDate]
+  );
+
+  useEffect(() => {
+    if (historyRecords.length === 0) {
+      setExportFromDate('');
+      setExportToDate('');
+      return;
+    }
+    const ascending = [...historyRecords].sort((left, right) => left.date.localeCompare(right.date));
+    const minDate = ascending[0].date;
+    const maxDate = ascending[ascending.length - 1].date;
+    setExportFromDate((previous) => {
+      if (!parsePersonalDateKey(previous) || previous < minDate || previous > maxDate) {
+        return minDate;
+      }
+      return previous;
+    });
+    setExportToDate((previous) => {
+      if (!parsePersonalDateKey(previous) || previous > maxDate || previous < minDate) {
+        return maxDate;
+      }
+      return previous;
+    });
+  }, [historyRecords]);
+
+  const handleDownloadHistoryPdf = async () => {
+    if (isExportingPdf) return;
+    if (!parsePersonalDateKey(exportFromDate) || !parsePersonalDateKey(exportToDate)) {
+      if (popup?.alert) {
+        await popup.alert({
+          title: 'เลือกช่วงวันที่ไม่ครบ',
+          message: 'กรุณาเลือกวันเริ่มต้นและวันสิ้นสุดก่อนดาวน์โหลด PDF',
+        });
+      }
+      return;
+    }
+    if (exportFromDate > exportToDate) {
+      if (popup?.alert) {
+        await popup.alert({
+          title: 'ช่วงวันไม่ถูกต้อง',
+          message: 'วันเริ่มต้นต้องไม่มากกว่าวันสิ้นสุด',
+        });
+      }
+      return;
+    }
+    const recordsToExport = historyRecords
+      .filter(({ date }) => date >= exportFromDate && date <= exportToDate)
+      .sort((left, right) => left.date.localeCompare(right.date));
+    if (recordsToExport.length === 0) {
+      if (popup?.alert) {
+        await popup.alert({
+          title: 'ไม่มีข้อมูล',
+          message: 'ไม่มีบันทึกในช่วงวันที่ที่เลือก',
+        });
+      }
+      return;
+    }
+    setIsExportingPdf(true);
+    try {
+      const pages = recordsToExport.map(({ date, entry }) =>
+        renderPersonalEntryToPdfJpegPage(date, entry, habits)
+      );
+      const pdfBytes = buildPdfFromJpegPages(pages);
+      if (!pdfBytes || pdfBytes.length === 0) {
+        throw new Error('Failed to build PDF file.');
+      }
+      const fileName = `personal-journal-${recordsToExport[0].date}-to-${
+        recordsToExport[recordsToExport.length - 1].date
+      }.pdf`;
+      downloadPdfBytes(pdfBytes, fileName);
+    } catch (error) {
+      if (popup?.alert) {
+        await popup.alert({
+          title: 'ดาวน์โหลดไม่สำเร็จ',
+          message: error?.message || 'ไม่สามารถสร้างไฟล์ PDF ได้',
+        });
+      }
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  const handleDeleteHistoryRecord = async (dateKeyInput) => {
+    const dateKey = String(dateKeyInput || '').trim();
+    if (!dateKey) return;
+    const formattedDate = formatPersonalDateLabel(dateKey, {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+    const shouldDelete = await popup.confirm({
+      title: 'ลบบันทึกย้อนหลัง',
+      message: `ต้องการลบบันทึกวันที่ ${formattedDate} ใช่ไหม?`,
+      confirmText: 'ลบ',
+      cancelText: 'ยกเลิก',
+      tone: 'danger',
+    });
+    if (!shouldDelete) return;
+    updateData((currentData) => {
+      const nextEntriesByDate = { ...(currentData.entriesByDate || {}) };
+      if (!Object.prototype.hasOwnProperty.call(nextEntriesByDate, dateKey)) {
+        return currentData;
+      }
+      delete nextEntriesByDate[dateKey];
+      return {
+        ...currentData,
+        entriesByDate: nextEntriesByDate,
+      };
+    });
+  };
+
+  const getFilledItems = (itemsInput) =>
+    (Array.isArray(itemsInput) ? itemsInput : [])
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+
+  return (
+    <div className="w-full min-h-full px-3 py-3 sm:px-5 sm:py-5 md:px-8 md:py-6">
+      <div className={`max-w-6xl mx-auto ${isCompactViewport ? 'space-y-4' : 'space-y-6'}`}>
+        <section className="rounded-3xl border border-blue-100 bg-gradient-to-r from-white via-blue-50/60 to-white p-4 md:p-6 shadow-sm">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h2 className="text-xl md:text-2xl font-bold text-slate-800">พื้นที่จัดการส่วนตัว</h2>
+              <p className="text-sm text-slate-600 mt-1">
+                บันทึกประจำวันส่วนตัว พร้อม Habit และภาพรวมย้อนหลัง
+              </p>
+            </div>
+            <div className="flex w-full items-center justify-between gap-2 md:w-auto md:flex-col md:items-end md:justify-start md:gap-1.5">
+              <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-600">
+                <CalendarDays className="w-4 h-4 text-blue-600" />
+                {formatPersonalDateLabel(activeDateKey, {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </div>
+              {shouldShowBackfillButton ? (
+                <button
+                  type="button"
+                  onClick={() => setIsBackfillOtherPeriodVisible((prev) => !prev)}
+                  className="inline-flex shrink-0 items-center rounded-lg border border-slate-200 bg-white/80 px-2.5 py-1 text-[11px] font-medium text-slate-400 hover:text-slate-600 hover:border-slate-300 transition-colors"
+                  title={`เปิด/ซ่อนฟอร์ม${backfillPeriodLabel}ย้อนหลัง`}
+                >
+                  {isBackfillOtherPeriodVisible
+                    ? `ซ่อนฟอร์ม${backfillPeriodLabel}ย้อนหลัง`
+                    : `กรอก${backfillPeriodLabel}ย้อนหลัง`}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </section>
+
+        {normalizedActiveTab === PERSONAL_WORKSPACE_TABS.JOURNAL ? (
+          <>
+            <div
+              className={`grid gap-4 ${
+                shouldShowMorningSection && shouldShowEveningSection ? 'lg:grid-cols-2' : 'grid-cols-1'
+              }`}
+            >
+              {shouldShowMorningSection ? (
+              <section className="rounded-2xl border border-blue-100 bg-white p-4 md:p-5 shadow-sm space-y-3">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="w-4 h-4 text-blue-500" />
+                  <h3 className="text-base md:text-lg font-bold text-slate-800">ช่วงเช้า</h3>
+                </div>
+                <PersonalPromptEditor
+                  title={PERSONAL_MORNING_PROMPTS[0]}
+                  items={selectedEntry.morning.gratitude}
+                  onChangeItem={(index, value) => updatePromptItem('morning', 'gratitude', index, value)}
+                  onAddItem={() => addPromptItem('morning', 'gratitude')}
+                  onRemoveItem={(index) => removePromptItem('morning', 'gratitude', index)}
+                  isReadOnly={isMorningSubmitted}
+                />
+                <PersonalPromptEditor
+                  title={PERSONAL_MORNING_PROMPTS[1]}
+                  items={selectedEntry.morning.expectation}
+                  onChangeItem={(index, value) => updatePromptItem('morning', 'expectation', index, value)}
+                  onAddItem={() => addPromptItem('morning', 'expectation')}
+                  onRemoveItem={(index) => removePromptItem('morning', 'expectation', index)}
+                  isReadOnly={isMorningSubmitted}
+                />
+                <PersonalPromptEditor
+                  title={PERSONAL_MORNING_PROMPTS[2]}
+                  items={selectedEntry.morning.promise}
+                  onChangeItem={(index, value) => updatePromptItem('morning', 'promise', index, value)}
+                  onAddItem={() => addPromptItem('morning', 'promise')}
+                  onRemoveItem={(index) => removePromptItem('morning', 'promise', index)}
+                  isReadOnly={isMorningSubmitted}
+                />
+                <div className="pt-1 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleTogglePeriodSubmitState('morning')}
+                    className={`inline-flex items-center rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                      isMorningSubmitted
+                        ? 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                        : 'bg-blue-600 text-white hover:bg-blue-700'
+                    }`}
+                  >
+                    {isMorningSubmitted ? 'แก้ไข' : 'บันทึก'}
+                  </button>
+                </div>
+              </section>
+              ) : null}
+
+              {shouldShowEveningSection ? (
+                <section className="rounded-2xl border border-indigo-100 bg-white p-4 md:p-5 shadow-sm space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-indigo-500" />
+                    <h3 className="text-base md:text-lg font-bold text-slate-800">ช่วงเย็น</h3>
+                  </div>
+                  <PersonalPromptEditor
+                    title={PERSONAL_EVENING_PROMPTS[0]}
+                    items={selectedEntry.evening.review}
+                    onChangeItem={(index, value) => updatePromptItem('evening', 'review', index, value)}
+                    onAddItem={() => addPromptItem('evening', 'review')}
+                    onRemoveItem={(index) => removePromptItem('evening', 'review', index)}
+                    isReadOnly={isEveningSubmitted}
+                  />
+                  <PersonalPromptEditor
+                    title={PERSONAL_EVENING_PROMPTS[1]}
+                    items={selectedEntry.evening.plan}
+                    onChangeItem={(index, value) => updatePromptItem('evening', 'plan', index, value)}
+                    onAddItem={() => addPromptItem('evening', 'plan')}
+                    onRemoveItem={(index) => removePromptItem('evening', 'plan', index)}
+                    isReadOnly={isEveningSubmitted}
+                  />
+                  <div>
+                    <h4 className="text-sm md:text-base font-semibold text-slate-700">
+                      3. {PERSONAL_EVENING_SCORE_TITLE}
+                    </h4>
+                    <div className="mt-3 space-y-4">
+                      {PERSONAL_SCORE_DIMENSIONS.map((dimension) => {
+                        const selectedScore = clampPersonalScore(selectedEntry.evening.scores?.[dimension.id]);
+                        return (
+                          <div key={`score-dimension-${dimension.id}`} className="rounded-lg border border-white/80 bg-white p-3">
+                            <p className="text-sm font-semibold text-slate-700">{dimension.label}</p>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {PERSONAL_SCORE_LEVELS.map((level) => (
+                                <button
+                                  key={`score-level-${dimension.id}-${level.value}`}
+                                  type="button"
+                                  onClick={() => {
+                                    if (isEveningSubmitted) return;
+                                    handleScoreSelect(dimension.id, level.value);
+                                  }}
+                                  className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors ${
+                                    selectedScore === level.value
+                                      ? 'bg-blue-600 text-white border-blue-600'
+                                      : `bg-white text-slate-600 border-slate-200 ${
+                                          isEveningSubmitted ? 'cursor-not-allowed opacity-70' : 'hover:bg-slate-50'
+                                        }`
+                                  }`}
+                                  disabled={isEveningSubmitted}
+                                >
+                                  {level.value}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-emerald-100 bg-white p-3 md:p-4 space-y-3">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <CheckSquare className="w-4 h-4 text-emerald-600" />
+                        <h4 className="text-sm md:text-base font-semibold text-slate-800">Habit Tracker</h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isEveningSubmitted) return;
+                          void handleAddHabit();
+                        }}
+                        disabled={isEveningSubmitted}
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
+                          isEveningSubmitted
+                            ? 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed'
+                            : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        }`}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add นิสัย
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {habits.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-emerald-200 bg-white px-3 py-4 text-center text-sm text-slate-500">
+                          ยังไม่มี Habit, เพิ่มรายการใหม่ได้ด้านบน
+                        </div>
+                      ) : (
+                        habits.map((habit) => {
+                          const isEditing = editingHabitId === habit.id;
+                          return (
+                            <div
+                              key={`daily-habit-${habit.id}`}
+                              tabIndex={0}
+                              className="group flex items-center gap-2 rounded-lg border border-emerald-100 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={Boolean(selectedEntry.habitChecks?.[habit.id])}
+                                onChange={(event) => handleToggleHabitForDay(habit.id, event.target.checked)}
+                                disabled={isEveningSubmitted}
+                                className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-60"
+                              />
+                              {isEditing ? (
+                                <input
+                                  type="text"
+                                  value={editingHabitDraft}
+                                  onChange={(event) => setEditingHabitDraft(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter') {
+                                      event.preventDefault();
+                                      void handleSaveEditHabit();
+                                    }
+                                    if (event.key === 'Escape') {
+                                      event.preventDefault();
+                                      handleCancelEditHabit();
+                                    }
+                                  }}
+                                  className="flex-1 rounded-md border border-emerald-200 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-emerald-300"
+                                />
+                              ) : (
+                                <span className="flex-1">{habit.name}</span>
+                              )}
+                              {isEditing ? (
+                                <div className="inline-flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void handleSaveEditHabit();
+                                    }}
+                                    className="rounded-md border border-emerald-300 bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-200"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={handleCancelEditHabit}
+                                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="inline-flex items-center gap-1 opacity-0 pointer-events-none transition-opacity duration-150 group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartEditHabit(habit)}
+                                    disabled={isEveningSubmitted}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                    title="Edit habit"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void handleDeleteHabit(habit);
+                                    }}
+                                    disabled={isEveningSubmitted}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                    title="Delete habit"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                  <div className="pt-1 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleTogglePeriodSubmitState('evening')}
+                      className={`inline-flex items-center rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                        isEveningSubmitted
+                          ? 'border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                      }`}
+                    >
+                      {isEveningSubmitted ? 'แก้ไข' : 'บันทึก'}
+                    </button>
+                  </div>
+                </section>
+              ) : null}
+            </div>
+
+          </>
+        ) : (
+          <>
+            <section className="rounded-2xl border border-blue-100 bg-white p-4 md:p-5 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-blue-600" />
+                  <h3 className="text-base md:text-lg font-bold text-slate-800">กราฟอารมณ์ย้อนหลัง</h3>
+                </div>
+                <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+                  <span>ช่วงเวลา</span>
+                  <select
+                    value={moodRange}
+                    onChange={(event) => setMoodRange(normalizePersonalDashboardRange(event.target.value))}
+                    className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 outline-none focus:ring-2 focus:ring-blue-300"
+                  >
+                    {PERSONAL_DASHBOARD_RANGES.map((rangeOption) => (
+                      <option key={`mood-range-${rangeOption.id}`} value={rangeOption.id}>
+                        {rangeOption.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <PersonalLineChart
+                labels={moodLabels}
+                series={moodSeries}
+                emptyMessage="กราฟจะแสดงเมื่อมีบันทึกช่วงเย็นในช่วงเวลาที่เลือก"
+              />
+            </section>
+
+            <section className="rounded-2xl border border-emerald-100 bg-white p-4 md:p-5 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <h3 className="text-base md:text-lg font-bold text-slate-800">สรุป Habit Tracker</h3>
+                <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+                  <span>ช่วงเวลา</span>
+                  <select
+                    value={habitSummaryRange}
+                    onChange={(event) =>
+                      setHabitSummaryRange(normalizePersonalDashboardRange(event.target.value))
+                    }
+                    className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 outline-none focus:ring-2 focus:ring-blue-300"
+                  >
+                    {PERSONAL_DASHBOARD_RANGES.map((rangeOption) => (
+                      <option key={`habit-range-${rangeOption.id}`} value={rangeOption.id}>
+                        {rangeOption.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <p className="mt-3 text-sm text-slate-600">
+                สำเร็จ {habitRangeSummary.success} จาก {habitRangeSummary.total} ครั้ง ({habitRangeSummary.percent.toFixed(1)}%)
+              </p>
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                      <th className="py-2 pr-4">นิสัย</th>
+                      <th className="py-2 pr-4">สำเร็จ/ทั้งหมด</th>
+                      <th className="py-2 pr-4">% สำเร็จ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {habitRangeSummary.perHabit.map((habit) => (
+                      <tr key={`habit-summary-row-${habit.id}`} className="border-b border-slate-100">
+                        <td className="py-2 pr-4 text-slate-700">{habit.name}</td>
+                        <td className="py-2 pr-4 text-slate-500">{habit.success}/{habit.total}</td>
+                        <td className="py-2 pr-4 text-slate-500">{habit.percent.toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-indigo-100 bg-white p-4 md:p-5 shadow-sm space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <h3 className="text-base md:text-lg font-bold text-slate-800">ดูบันทึกย้อนหลัง</h3>
+                <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+                  <span>ช่วงเวลา</span>
+                  <select
+                    value={historyRange}
+                    onChange={(event) => setHistoryRange(normalizePersonalDashboardRange(event.target.value))}
+                    className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 outline-none focus:ring-2 focus:ring-blue-300"
+                  >
+                    {PERSONAL_DASHBOARD_RANGES.map((rangeOption) => (
+                      <option key={`history-range-${rangeOption.id}`} value={rangeOption.id}>
+                        {rangeOption.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3 md:p-4">
+                <p className="text-sm font-semibold text-blue-800 mb-3">
+                  Download PDF (1 วัน ต่อ 1 หน้า A4)
+                </p>
+                <div className="space-y-3 md:space-y-0 md:flex md:items-end md:gap-3">
+                  <div className="grid grid-cols-2 gap-2 md:flex-1 md:gap-3">
+                    <label className="text-xs text-slate-500">
+                      <span className="mb-1 block">จากวันที่</span>
+                      <div className="relative">
+                        <input
+                          type="date"
+                          value={exportFromDate}
+                          onChange={(event) => setExportFromDate(event.target.value)}
+                          className={`w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300 ${
+                            exportFromDate ? 'text-slate-700' : 'text-transparent'
+                          }`}
+                        />
+                        {!exportFromDate ? (
+                          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-slate-400">
+                            ยังไม่ได้ตั้ง
+                          </span>
+                        ) : null}
+                      </div>
+                    </label>
+                    <label className="text-xs text-slate-500">
+                      <span className="mb-1 block">ถึงวันที่</span>
+                      <div className="relative">
+                        <input
+                          type="date"
+                          value={exportToDate}
+                          onChange={(event) => setExportToDate(event.target.value)}
+                          className={`w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-300 ${
+                            exportToDate ? 'text-slate-700' : 'text-transparent'
+                          }`}
+                        />
+                        {!exportToDate ? (
+                          <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-slate-400">
+                            ยังไม่ได้ตั้ง
+                          </span>
+                        ) : null}
+                      </div>
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleDownloadHistoryPdf();
+                    }}
+                    disabled={isExportingPdf}
+                    className={`inline-flex w-full md:w-auto items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold ${
+                      isExportingPdf
+                        ? 'bg-blue-200 text-blue-600 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
+                  >
+                    <FileText className="w-4 h-4" />
+                    {isExportingPdf ? 'กำลังสร้างไฟล์...' : 'ดาวน์โหลด PDF'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {historyRecords.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-400">
+                    ยังไม่มีประวัติในช่วงเวลาที่เลือก
+                  </div>
+                ) : (
+                  historyRecords.map(({ date, entry }) => {
+                    const morningSections = [
+                      { title: PERSONAL_MORNING_PROMPTS[0], items: getFilledItems(entry?.morning?.gratitude) },
+                      { title: PERSONAL_MORNING_PROMPTS[1], items: getFilledItems(entry?.morning?.expectation) },
+                      { title: PERSONAL_MORNING_PROMPTS[2], items: getFilledItems(entry?.morning?.promise) },
+                    ];
+                    const eveningSections = [
+                      { title: PERSONAL_EVENING_PROMPTS[0], items: getFilledItems(entry?.evening?.review) },
+                      { title: PERSONAL_EVENING_PROMPTS[1], items: getFilledItems(entry?.evening?.plan) },
+                    ];
+                    return (
+                      <article
+                        key={`history-entry-${date}`}
+                        className="rounded-xl border border-slate-200 bg-white p-3 md:p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <h4 className="text-sm md:text-base font-bold text-slate-800">
+                            {formatPersonalDateLabel(date, {
+                              weekday: 'short',
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric',
+                            })}
+                          </h4>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleDeleteHistoryRecord(date);
+                            }}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                            title="ลบบันทึกวันนี้"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                          <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-3 space-y-2">
+                            <p className="text-xs font-semibold text-blue-700">ตอนเช้า</p>
+                            {morningSections.map((section) => (
+                              <div key={`history-morning-${date}-${section.title}`}>
+                                <p className="text-sm font-semibold text-slate-700">{section.title}</p>
+                                <ul className="list-disc pl-5 text-sm text-slate-600">
+                                  {(section.items.length > 0 ? section.items : ['-']).map((item, index) => (
+                                    <li key={`history-morning-item-${date}-${section.title}-${index}`}>{item}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="rounded-lg border border-emerald-100 bg-emerald-50/35 p-3 space-y-2">
+                            <p className="text-xs font-semibold text-emerald-700">ตอนเย็น</p>
+                            {eveningSections.map((section) => (
+                              <div key={`history-evening-${date}-${section.title}`}>
+                                <p className="text-sm font-semibold text-slate-700">{section.title}</p>
+                                <ul className="list-disc pl-5 text-sm text-slate-600">
+                                  {(section.items.length > 0 ? section.items : ['-']).map((item, index) => (
+                                    <li key={`history-evening-item-${date}-${section.title}-${index}`}>{item}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                            <div>
+                              <p className="text-sm font-semibold text-slate-700">{PERSONAL_EVENING_SCORE_TITLE}</p>
+                              <ul className="list-disc pl-5 text-sm text-slate-600">
+                                {PERSONAL_SCORE_DIMENSIONS.map((dimension) => {
+                                  const score = clampPersonalScore(entry?.evening?.scores?.[dimension.id]);
+                                  return (
+                                    <li key={`history-evening-score-${date}-${dimension.id}`}>
+                                      {dimension.label}: {scoreLabelMap[score]}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })
+                )}
+              </div>
+            </section>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // --- Project Dashboard View (Like Asana) ---
 function ProjectDashboard({
