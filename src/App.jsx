@@ -5589,7 +5589,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!ownerId || ownerId === currentUser.id) return;
 
     try {
-      const ownerPayload = await loadAccountDbPayload(ownerId);
+      const ownerPayload = await loadAccountDbPayload(ownerId, {
+        allowStaleWhilePendingQueue: false,
+      });
       const ownerEvents = Array.isArray(ownerPayload.events) ? ownerPayload.events : [];
       const sharedProjectEvents = (Array.isArray(nextEventsSnapshot) ? nextEventsSnapshot : []).filter(
         (event) => event.projectId === normalizedProjectId
@@ -5623,7 +5625,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!ownerId || ownerId === currentUser.id) return;
 
     try {
-      const ownerPayload = await loadAccountDbPayload(ownerId);
+      const ownerPayload = await loadAccountDbPayload(ownerId, {
+        allowStaleWhilePendingQueue: false,
+      });
       const ownerProjects = Array.isArray(ownerPayload.projects) ? ownerPayload.projects : [];
       const ownerProjectIndex = ownerProjects.findIndex(
         (project) => String(project?.id || '').trim() === normalizedProjectId
@@ -5793,7 +5797,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!hasNotePatchPayload(notePatch)) return;
 
     try {
-      const ownerPayload = await loadAccountDbPayload(ownerId);
+      const ownerPayload = await loadAccountDbPayload(ownerId, {
+        allowStaleWhilePendingQueue: false,
+      });
       const ownerProjects = Array.isArray(ownerPayload.projects) ? ownerPayload.projects : [];
       const ownerProjectIndex = ownerProjects.findIndex(
         (project) => String(project?.id || '').trim() === normalizedProjectId
