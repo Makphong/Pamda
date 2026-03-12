@@ -262,6 +262,7 @@ const PROJECT_UPDATE_POPUP_MODES = {
 const PROJECT_UPDATE_TOAST_AUTO_CLOSE_MS = 5000;
 const PROJECT_UPDATE_TOAST_EXIT_MS = 280;
 const COLLABORATIVE_REFRESH_INTERVAL_MS = 5000;
+const PROJECT_OWNER_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
 const VALID_PROJECT_UPDATE_POPUP_MODES = new Set(Object.values(PROJECT_UPDATE_POPUP_MODES));
 const DEFAULT_PROJECT_UPDATE_POPUP_MODE = PROJECT_UPDATE_POPUP_MODES.NEW_ONLY;
 const normalizeProjectActivityEntry = (entry, fallbackProject = null) => {
@@ -2353,6 +2354,40 @@ const ensureProjectOwnership = (project, owner) => {
     changeFeed,
   };
 };
+const inferProjectOwnerReference = (
+  project,
+  fallbackOwner = null,
+  ownerIdByUsernameInput = null
+) => {
+  const ownerIdRaw = String(project?.ownerId || '').trim();
+  const ownerUsernameRaw = String(project?.ownerUsername || '').trim().toLowerCase();
+  const fallbackOwnerId = String(fallbackOwner?.id || '').trim();
+  const fallbackOwnerUsername = String(
+    fallbackOwner?.username || fallbackOwner?.name || ''
+  )
+    .trim()
+    .toLowerCase();
+  let ownerId = ownerIdRaw;
+  if (!ownerId && ownerUsernameRaw && ownerIdByUsernameInput instanceof Map) {
+    ownerId = String(ownerIdByUsernameInput.get(ownerUsernameRaw) || '').trim();
+  }
+  if (!ownerId && (!ownerUsernameRaw || ownerUsernameRaw === fallbackOwnerUsername)) {
+    ownerId = fallbackOwnerId;
+  }
+  return {
+    id: ownerId,
+    username: ownerUsernameRaw || fallbackOwnerUsername,
+  };
+};
+const ensureProjectOwnershipForAccount = (
+  project,
+  fallbackOwner = null,
+  ownerIdByUsernameInput = null
+) =>
+  ensureProjectOwnership(
+    project,
+    inferProjectOwnerReference(project, fallbackOwner, ownerIdByUsernameInput)
+  );
 const getProjectSyncTimestampMs = (project) => {
   if (!project || typeof project !== 'object' || Array.isArray(project)) return 0;
   const updatedAtMs = toTimestampMs(project.updatedAt);
@@ -4007,6 +4042,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const accountAutoSaveComparableRef = useRef('');
   const ownerNotePatchSyncStateRef = useRef(new Map());
   const sharedOwnerNotePatchSyncStateRef = useRef(new Map());
+  const ownerIdLookupCacheRef = useRef(new Map());
   const previousUnseenProjectUpdateIdsRef = useRef([]);
   const projectUpdateToastTimersRef = useRef({ autoHide: null, clear: null });
 
@@ -4032,6 +4068,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       }
     });
     sharedOwnerNotePatchSyncStateRef.current.clear();
+    ownerIdLookupCacheRef.current.clear();
   }, [currentUser.id]);
 
   useEffect(() => {
@@ -4068,7 +4105,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         setProjectInvitations(invites);
 
         if (Array.isArray(accountPayload.projects)) {
-          setProjects(accountPayload.projects.map((project) => ensureProjectOwnership(project, currentUser)));
+          setProjects(
+            accountPayload.projects.map((project) =>
+              ensureProjectOwnershipForAccount(project, currentUser)
+            )
+          );
         } else {
           setProjects([]);
         }
@@ -4888,13 +4929,71 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           isJsonEqual(prevInvites, normalizedInvites) ? prevInvites : normalizedInvites
         );
 
-        const localProjectsSnapshot = Array.isArray(projectsRef.current)
-          ? projectsRef.current.map((project) => ensureProjectOwnership(project, currentUser))
-          : [];
+        const localProjectsRaw = Array.isArray(projectsRef.current) ? projectsRef.current : [];
+        const baseProjectsRaw = Array.isArray(latestPayload.projects) ? latestPayload.projects : [];
+        const normalizedCurrentUsername = String(currentUser?.username || '').trim().toLowerCase();
+        const ownerUsernamesToResolve = Array.from(
+          new Set(
+            [...localProjectsRaw, ...baseProjectsRaw]
+              .map((project) => ({
+                ownerId: String(project?.ownerId || '').trim(),
+                ownerUsername: String(project?.ownerUsername || '').trim().toLowerCase(),
+              }))
+              .filter(
+                (entry) =>
+                  !entry.ownerId &&
+                  entry.ownerUsername &&
+                  entry.ownerUsername !== normalizedCurrentUsername
+              )
+              .map((entry) => entry.ownerUsername)
+          )
+        );
+        const ownerIdByUsername = new Map();
+        const ownerUsernamesToLookup = [];
+        const ownerLookupNowMs = Date.now();
+        ownerUsernamesToResolve.forEach((ownerUsername) => {
+          const cachedEntry = ownerIdLookupCacheRef.current.get(ownerUsername);
+          const isCacheFresh =
+            cachedEntry &&
+            ownerLookupNowMs - Number(cachedEntry.resolvedAt || 0) <= PROJECT_OWNER_LOOKUP_CACHE_TTL_MS;
+          if (isCacheFresh) {
+            const cachedOwnerId = String(cachedEntry.ownerId || '').trim();
+            if (cachedOwnerId) {
+              ownerIdByUsername.set(ownerUsername, cachedOwnerId);
+            }
+            return;
+          }
+          ownerUsernamesToLookup.push(ownerUsername);
+        });
+        if (ownerUsernamesToLookup.length > 0) {
+          const ownerLookupResults = await Promise.all(
+            ownerUsernamesToLookup.map(async (ownerUsername) => {
+              try {
+                const matchedUser = await findUserByIdentifier(ownerUsername);
+                return [ownerUsername, String(matchedUser?.id || '').trim()];
+              } catch {
+                return [ownerUsername, ''];
+              }
+            })
+          );
+          if (isCancelled) return;
+          ownerLookupResults.forEach(([ownerUsername, ownerId]) => {
+            ownerIdLookupCacheRef.current.set(ownerUsername, {
+              ownerId,
+              resolvedAt: ownerLookupNowMs,
+            });
+            if (ownerId) {
+              ownerIdByUsername.set(ownerUsername, ownerId);
+            }
+          });
+        }
+        const localProjectsSnapshot = localProjectsRaw.map((project) =>
+          ensureProjectOwnershipForAccount(project, currentUser, ownerIdByUsername)
+        );
         const localEventsSnapshot = Array.isArray(eventsRef.current) ? eventsRef.current : [];
-        const baseProjects = Array.isArray(latestPayload.projects)
-          ? latestPayload.projects.map((project) => ensureProjectOwnership(project, currentUser))
-          : [];
+        const baseProjects = baseProjectsRaw.map((project) =>
+          ensureProjectOwnershipForAccount(project, currentUser, ownerIdByUsername)
+        );
         const baseEvents = Array.isArray(latestPayload.events) ? latestPayload.events : [];
         const invitedOwnerIds = normalizedInvites
           .filter(
@@ -4911,6 +5010,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                 .map((project) => String(project.ownerId || '').trim())
                 .filter((ownerId) => ownerId && ownerId !== currentUser.id),
               ...invitedOwnerIds,
+              ...Array.from(ownerIdByUsername.values()).filter(
+                (ownerId) => ownerId && ownerId !== currentUser.id
+              ),
             ].filter(Boolean)
           )
         );
@@ -4990,8 +5092,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           const hasExternalOwnerSnapshot = Boolean(
             ownerProject && ownerProjectOwnerId && ownerProjectOwnerId !== currentUser.id
           );
+          const projectOwnerUsername = String(project?.ownerUsername || '').trim().toLowerCase();
+          const isOwnedByCurrentUser =
+            String(project?.ownerId || '').trim() === currentUser.id &&
+            (!projectOwnerUsername || projectOwnerUsername === normalizedCurrentUsername);
 
-	          if (!hasExternalOwnerSnapshot && project.ownerId === currentUser.id) {
+	          if (!hasExternalOwnerSnapshot && isOwnedByCurrentUser) {
 	            const localProject = localProjectById.get(projectId);
 	            if (!localProject) {
 	              nextProjectsById.set(projectId, project);
@@ -5008,14 +5114,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
               project.notesPresence,
               localProject.notesPresence
             );
-            nextProjectsById.set(
-	              projectId,
-	              ensureProjectOwnership(
-	                {
-	                  ...sourceProject,
-	                  notesContent: mergedNotes.notesContent,
-	                  noteRevisionMap: mergedNotes.noteRevisionMap,
-	                  notesPresence: mergedNotesPresence,
+	            nextProjectsById.set(
+		              projectId,
+		              ensureProjectOwnershipForAccount(
+		                {
+		                  ...sourceProject,
+		                  notesContent: mergedNotes.notesContent,
+		                  noteRevisionMap: mergedNotes.noteRevisionMap,
+		                  notesPresence: mergedNotesPresence,
 	                  notesPreferences: resolveAccountScopedNotesPreferences(localProject.notesPreferences, {
 	                    currentUserId: currentUser.id,
                     projectOwnerId: project.ownerId,
@@ -5049,25 +5155,26 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             const preservedNotesPreferences = localNotesPreferencesByProjectId.has(projectId)
               ? localNotesPreferencesByProjectId.get(projectId)
               : {};
-            nextProjectsById.set(
-	              projectId,
-	              ensureProjectOwnership(
-	                {
-	                  ...sourceProject,
-	                  notesContent: mergedNotes.notesContent,
-	                  noteRevisionMap: mergedNotes.noteRevisionMap,
-	                  notesPresence: mergedNotesPresence,
-	                  notesPreferences: preservedNotesPreferences,
-	                  isVisible:
-                    typeof preservedVisibility === 'boolean'
-                      ? preservedVisibility
-                      : Boolean(project.isVisible),
-                },
-                currentUser
-              )
-            );
-            return;
-          }
+	            nextProjectsById.set(
+		              projectId,
+		              ensureProjectOwnershipForAccount(
+		                {
+		                  ...sourceProject,
+		                  notesContent: mergedNotes.notesContent,
+		                  noteRevisionMap: mergedNotes.noteRevisionMap,
+		                  notesPresence: mergedNotesPresence,
+		                  notesPreferences: preservedNotesPreferences,
+			                  isVisible:
+			                    typeof preservedVisibility === 'boolean'
+			                      ? preservedVisibility
+			                      : Boolean(project.isVisible),
+			                },
+			                currentUser,
+                    ownerIdByUsername
+		              )
+		            );
+	            return;
+	          }
 
 	          const localProject = localProjectById.get(projectId);
 	          const sourceProject = selectPreferredProjectSnapshot(ownerProject, localProject) || ownerProject;
@@ -5117,7 +5224,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
         localProjectsSnapshot.forEach((project) => {
           const projectId = String(project?.id || '').trim();
-          if (!projectId || project.ownerId !== currentUser.id) return;
+          const projectOwnerUsername = String(project?.ownerUsername || '').trim().toLowerCase();
+          const isOwnedByCurrentUser =
+            String(project?.ownerId || '').trim() === currentUser.id &&
+            (!projectOwnerUsername || projectOwnerUsername === normalizedCurrentUsername);
+          if (!projectId || !isOwnedByCurrentUser) return;
           if (!nextProjectsById.has(projectId)) {
             nextProjectsById.set(projectId, project);
           }
@@ -6632,7 +6743,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           }
         }
         const previousStatus = String(project.status || '').trim();
-        let nextProject = ensureProjectOwnership({ ...project, ...safeUpdates }, currentUser);
+        let nextProject = ensureProjectOwnershipForAccount(
+          { ...project, ...safeUpdates },
+          currentUser
+        );
         const nextStatus = String(nextProject.status || '').trim();
         if (nextStatus && previousStatus !== nextStatus) {
           nextProject = appendProjectActivityEntryToProject(nextProject, {
@@ -6992,7 +7106,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     const usernameChanged = Boolean(oldUsername && oldUsername !== normalizedUsername);
     const nextProjects = usernameChanged
       ? projects.map((project) =>
-          ensureProjectOwnership(
+          ensureProjectOwnershipForAccount(
             migrateProjectUsername(project, oldUsername, normalizedUsername),
             nextCurrentUser
           )
