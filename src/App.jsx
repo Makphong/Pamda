@@ -8220,7 +8220,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
   if (!isAccountDataHydrated) {
     return (
-      <div className="h-screen bg-gray-50 flex items-center justify-center">
+      <div className="h-screen bg-gray-50 flex items-center justify-center" style={{ height: '100dvh' }}>
         <div className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-600 shadow-sm">
           <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
           Loading your calendar...
@@ -8274,7 +8274,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100 font-sans text-sm md:text-base">
+    <div className="flex flex-col h-screen bg-gray-100 font-sans text-sm md:text-base" style={{ height: '100dvh' }}>
       
       {/* --- Top Navigation Bar --- */}
       <header className="bg-white shadow-sm border-b px-3 sm:px-4 md:px-6 py-3 shrink-0 z-20">
@@ -11682,7 +11682,7 @@ function ProjectDashboard({
   };
 
   return (
-    <div className="flex flex-col h-screen bg-white font-sans relative">
+    <div className="flex flex-col h-screen bg-white font-sans relative" style={{ height: '100dvh' }}>
       {/* Dashboard Header */}
       <header className={`px-3 md:px-6 py-2 md:py-4 flex items-center gap-2 md:gap-4 border-b shrink-0 ${projectColor.lightBg}`}>
         <button 
