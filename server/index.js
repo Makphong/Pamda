@@ -14,7 +14,14 @@ dotenv.config();
 const app = express();
 app.set('trust proxy', true);
 app.use(helmet());
-app.use(express.json({ limit: String(process.env.REQUEST_BODY_LIMIT || '10mb') }));
+app.use(
+  express.json({
+    limit: String(process.env.REQUEST_BODY_LIMIT || '10mb'),
+    verify: (req, _res, buffer) => {
+      req.rawBody = buffer;
+    },
+  })
+);
 
 const allowedOrigins = String(process.env.CLIENT_ORIGIN || '')
   .split(',')
@@ -57,6 +64,20 @@ const GOOGLE_CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/userinfo.email',
   'openid',
 ];
+const FIRESTORE_LINE_REMINDER_COLLECTION = String(
+  process.env.FIRESTORE_LINE_REMINDER_COLLECTION || 'line_project_reminders'
+).trim();
+const FIRESTORE_LINE_REMINDER_LOG_COLLECTION = String(
+  process.env.FIRESTORE_LINE_REMINDER_LOG_COLLECTION || 'line_reminder_logs'
+).trim();
+const LINE_REMINDER_CRON_SECRET = String(process.env.LINE_REMINDER_CRON_SECRET || '').trim();
+const DEFAULT_LINE_REMINDER_TIMEZONE = String(
+  process.env.LINE_REMINDER_DEFAULT_TIMEZONE || 'Asia/Bangkok'
+).trim();
+const DEFAULT_LINE_REMINDER_HOUR = Math.min(
+  23,
+  Math.max(0, Number(process.env.LINE_REMINDER_DEFAULT_HOUR || 9))
+);
 
 const loadGoogleOauthConfigFromJson = (filePath) => {
   const emptyConfig = { clientId: '', clientSecret: '', redirectUris: [] };
@@ -121,6 +142,8 @@ const usersRef = firestore.collection(USERS_COLLECTION);
 const otpRef = firestore.collection(OTP_COLLECTION);
 const appDataRef = firestore.collection(APP_DATA_COLLECTION);
 const invitesDocRef = firestore.collection(PROJECT_INVITES_COLLECTION).doc(PROJECT_INVITES_DOC_ID);
+const lineReminderConfigRef = firestore.collection(FIRESTORE_LINE_REMINDER_COLLECTION);
+const lineReminderLogRef = firestore.collection(FIRESTORE_LINE_REMINDER_LOG_COLLECTION);
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 const resolveGoogleCalendarRedirectUri = (req) => {
@@ -204,6 +227,195 @@ const shiftIsoDateByDays = (dateString, diffDays) => {
   if (Number.isNaN(date.getTime())) return normalized;
   date.setUTCDate(date.getUTCDate() + diffDays);
   return date.toISOString().slice(0, 10);
+};
+
+const isValidIanaTimeZone = (timeZoneInput) => {
+  const timeZone = String(timeZoneInput || '').trim();
+  if (!timeZone) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const normalizeLineReminderTimezone = (timeZoneInput) => {
+  const normalized = String(timeZoneInput || '').trim();
+  if (normalized && isValidIanaTimeZone(normalized)) return normalized;
+  if (isValidIanaTimeZone(DEFAULT_LINE_REMINDER_TIMEZONE)) return DEFAULT_LINE_REMINDER_TIMEZONE;
+  return 'UTC';
+};
+
+const normalizeLineReminderHour = (hourInput) => {
+  const parsed = Number.parseInt(String(hourInput ?? ''), 10);
+  if (!Number.isInteger(parsed)) return DEFAULT_LINE_REMINDER_HOUR;
+  return Math.min(23, Math.max(0, parsed));
+};
+
+const lineReminderDocIdFor = (userIdInput, projectIdInput) =>
+  crypto
+    .createHash('sha256')
+    .update(`${sanitizeUserId(userIdInput)}|${String(projectIdInput || '').trim()}`)
+    .digest('hex');
+
+const lineReminderLogDocIdFor = (userIdInput, projectIdInput, targetDateInput) =>
+  crypto
+    .createHash('sha256')
+    .update(
+      `${sanitizeUserId(userIdInput)}|${String(projectIdInput || '').trim()}|${String(
+        targetDateInput || ''
+      ).trim()}`
+    )
+    .digest('hex');
+
+const buildLineTokenPreview = (tokenInput) => {
+  const token = String(tokenInput || '').trim();
+  if (!token) return '';
+  if (token.length <= 10) return `${token.slice(0, 3)}...${token.slice(-2)}`;
+  return `${token.slice(0, 6)}...${token.slice(-4)}`;
+};
+
+const getIsoDateInTimeZone = (dateInput, timeZoneInput) => {
+  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (Number.isNaN(date.getTime())) return '';
+  const timeZone = normalizeLineReminderTimezone(timeZoneInput);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const partMap = {};
+  parts.forEach((part) => {
+    partMap[part.type] = part.value;
+  });
+  const year = String(partMap.year || '').trim();
+  const month = String(partMap.month || '').trim();
+  const day = String(partMap.day || '').trim();
+  if (!year || !month || !day) return '';
+  return `${year}-${month}-${day}`;
+};
+
+const getHourInTimeZone = (dateInput, timeZoneInput) => {
+  const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  if (Number.isNaN(date.getTime())) return -1;
+  const timeZone = normalizeLineReminderTimezone(timeZoneInput);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const hourPart = parts.find((part) => part.type === 'hour');
+  const parsed = Number.parseInt(String(hourPart?.value || ''), 10);
+  if (!Number.isInteger(parsed)) return -1;
+  return Math.min(23, Math.max(0, parsed));
+};
+
+const normalizeLineReminderConfigRecord = (recordInput, options = {}) => {
+  const includeSecrets = options?.includeSecrets === true;
+  const record = recordInput && typeof recordInput === 'object' ? recordInput : {};
+  const channelAccessToken = String(record.channelAccessToken || '').trim();
+  const normalized = {
+    userId: sanitizeUserId(record.userId),
+    projectId: String(record.projectId || '').trim(),
+    projectName: String(record.projectName || '').trim(),
+    enabled: record.enabled === true,
+    groupId: String(record.groupId || '').trim(),
+    timezone: normalizeLineReminderTimezone(record.timezone),
+    reminderHour: normalizeLineReminderHour(record.reminderHour),
+    updatedAt: String(record.updatedAt || '').trim() || null,
+    createdAt: String(record.createdAt || '').trim() || null,
+    lastTestedAt: String(record.lastTestedAt || '').trim() || null,
+    tokenConfigured: Boolean(channelAccessToken),
+    tokenPreview: buildLineTokenPreview(channelAccessToken),
+  };
+  if (includeSecrets) {
+    normalized.channelAccessToken = channelAccessToken;
+  }
+  return normalized;
+};
+
+const toLineReminderPublicResponse = (recordInput) => {
+  const normalized = normalizeLineReminderConfigRecord(recordInput);
+  return {
+    enabled: normalized.enabled,
+    groupId: normalized.groupId,
+    timezone: normalized.timezone,
+    reminderHour: normalized.reminderHour,
+    tokenConfigured: normalized.tokenConfigured,
+    tokenPreview: normalized.tokenPreview,
+    updatedAt: normalized.updatedAt,
+    lastTestedAt: normalized.lastTestedAt,
+  };
+};
+
+const sendLinePushMessage = async ({
+  channelAccessToken,
+  to,
+  message,
+  notificationDisabled = false,
+}) => {
+  const token = String(channelAccessToken || '').trim();
+  const target = String(to || '').trim();
+  const text = String(message || '').trim();
+  if (!token) throw new Error('LINE channel access token is not configured.');
+  if (!target) throw new Error('LINE group ID is required.');
+  if (!text) throw new Error('LINE message is empty.');
+
+  const response = await fetch('https://api.line.me/v2/bot/message/push', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'X-Line-Retry-Key': crypto.randomUUID(),
+    },
+    body: JSON.stringify({
+      to: target,
+      messages: [{ type: 'text', text }],
+      notificationDisabled: notificationDisabled === true,
+    }),
+  });
+  if (!response.ok) {
+    const responseText = String(await response.text()).trim();
+    throw new Error(
+      `LINE push failed (${response.status})${responseText ? `: ${responseText.slice(0, 300)}` : ''}`
+    );
+  }
+};
+
+const isTaskRecord = (eventInput) => {
+  const event = eventInput && typeof eventInput === 'object' ? eventInput : {};
+  const recordType = String(event.recordType || '').trim().toLowerCase();
+  if (recordType === 'task') return true;
+  if (recordType === 'event') return false;
+  return Boolean(Array.isArray(event.assigneeIds));
+};
+
+const buildLineReminderMessage = ({ projectName, targetDate, tasks }) => {
+  const safeProjectName = String(projectName || '').trim() || 'Project';
+  const safeDate = String(targetDate || '').trim();
+  const taskList = Array.isArray(tasks) ? tasks : [];
+
+  const titleLines = [
+    '[PM Calendar] แจ้งเตือนงานล่วงหน้า 1 วัน',
+    `โปรเจกต์: ${safeProjectName}`,
+    `กำหนดส่ง: ${safeDate}`,
+    '',
+  ];
+
+  const taskLines = taskList.slice(0, 20).map((task, index) => {
+    const taskTitle = String(task?.title || '').trim() || 'Untitled task';
+    const department = String(task?.department || '').trim();
+    return `${index + 1}. ${taskTitle}${department ? ` (${department})` : ''}`;
+  });
+
+  const remaining = taskList.length - taskLines.length;
+  if (remaining > 0) {
+    taskLines.push(`... และอีก ${remaining} งาน`);
+  }
+
+  return [...titleLines, ...taskLines].join('\n').slice(0, 4900);
 };
 
 const normalizeGoogleEventColorId = (value) => {
@@ -590,6 +802,36 @@ const readAccountPayloadFromStore = async (userId) => {
     : {};
 };
 
+const loadOwnedProjectById = async ({ userId, projectId, authUsername }) => {
+  const normalizedUserId = sanitizeUserId(userId);
+  const normalizedProjectId = String(projectId || '').trim();
+  if (!normalizedUserId || !normalizedProjectId) {
+    return { payload: {}, foundProject: null, project: null, isOwner: false };
+  }
+
+  const payload = await readAccountPayloadFromStore(normalizedUserId);
+  const projects = Array.isArray(payload?.projects) ? payload.projects : [];
+  const foundProject =
+    projects.find((project) => String(project?.id || '').trim() === normalizedProjectId) || null;
+  if (!foundProject) {
+    return { payload, foundProject: null, project: null, isOwner: false };
+  }
+
+  const ownerId = sanitizeUserId(foundProject?.ownerId);
+  const ownerUsername = sanitizeUsername(foundProject?.ownerUsername);
+  const normalizedAuthUsername = sanitizeUsername(authUsername);
+  const isOwner =
+    (ownerId && ownerId === normalizedUserId) ||
+    (!ownerId && normalizedAuthUsername && ownerUsername === normalizedAuthUsername);
+
+  return {
+    payload,
+    foundProject,
+    project: isOwner ? foundProject : null,
+    isOwner,
+  };
+};
+
 const writeAccountPayloadToStore = async (userId, payload, options = {}) => {
   const userDataDocRef = appDataRef.doc(userId);
   const serializedPayload = JSON.stringify(payload);
@@ -853,9 +1095,14 @@ app.get('/health', (_req, res) => {
     firestoreCollectionAppDataChunks: APP_DATA_CHUNK_COLLECTION,
     firestoreCollectionProjectInvites: PROJECT_INVITES_COLLECTION,
     firestoreProjectInvitesDocId: PROJECT_INVITES_DOC_ID,
+    firestoreLineReminderCollection: FIRESTORE_LINE_REMINDER_COLLECTION,
+    firestoreLineReminderLogCollection: FIRESTORE_LINE_REMINDER_LOG_COLLECTION,
     googleClientConfigured: Boolean(GOOGLE_CLIENT_ID),
     googleCalendarOAuthConfigured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     googleCalendarRedirectUriPreview: redirectUriPreview,
+    lineReminderCronConfigured: Boolean(LINE_REMINDER_CRON_SECRET),
+    lineReminderDefaultTimezone: normalizeLineReminderTimezone(DEFAULT_LINE_REMINDER_TIMEZONE),
+    lineReminderDefaultHour: DEFAULT_LINE_REMINDER_HOUR,
   });
 });
 
@@ -2226,6 +2473,356 @@ app.put('/data/project-invites', requireAuth, async (req, res) => {
     return res.json({ message: 'Project invites saved.', count: invites.length });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to save project invites.' });
+  }
+});
+
+app.get('/line/reminder/config', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.query?.userId);
+    const projectId = String(req.query?.projectId || '').trim();
+    if (!userId || !projectId) {
+      return res.status(400).json({ message: 'userId and projectId are required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
+    }
+
+    const ownership = await loadOwnedProjectById({
+      userId,
+      projectId,
+      authUsername: req.authUser?.username,
+    });
+    if (!ownership.foundProject) {
+      return res.status(404).json({ message: 'Project not found.' });
+    }
+    if (!ownership.isOwner) {
+      return res
+        .status(403)
+        .json({ message: 'Only project host can configure LINE reminders for this project.' });
+    }
+
+    const docRef = lineReminderConfigRef.doc(lineReminderDocIdFor(userId, projectId));
+    const snapshot = await docRef.get();
+    const config = snapshot.exists
+      ? toLineReminderPublicResponse(snapshot.data() || {})
+      : toLineReminderPublicResponse({
+          enabled: false,
+          groupId: '',
+          timezone: DEFAULT_LINE_REMINDER_TIMEZONE,
+          reminderHour: DEFAULT_LINE_REMINDER_HOUR,
+        });
+
+    return res.json({ config });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load LINE reminder config.' });
+  }
+});
+
+app.put('/line/reminder/config', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.body?.userId);
+    const projectId = String(req.body?.projectId || '').trim();
+    if (!userId || !projectId) {
+      return res.status(400).json({ message: 'userId and projectId are required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
+    }
+
+    const ownership = await loadOwnedProjectById({
+      userId,
+      projectId,
+      authUsername: req.authUser?.username,
+    });
+    if (!ownership.foundProject) {
+      return res.status(404).json({ message: 'Project not found.' });
+    }
+    if (!ownership.isOwner) {
+      return res
+        .status(403)
+        .json({ message: 'Only project host can configure LINE reminders for this project.' });
+    }
+
+    const docRef = lineReminderConfigRef.doc(lineReminderDocIdFor(userId, projectId));
+    const existingDoc = await docRef.get();
+    const existingConfig = normalizeLineReminderConfigRecord(existingDoc.exists ? existingDoc.data() : {}, {
+      includeSecrets: true,
+    });
+
+    const clearChannelAccessToken = req.body?.clearChannelAccessToken === true;
+    const nextChannelAccessTokenInput = String(req.body?.channelAccessToken || '').trim();
+    const nextChannelAccessToken = clearChannelAccessToken
+      ? ''
+      : nextChannelAccessTokenInput || String(existingConfig.channelAccessToken || '').trim();
+    const nextEnabled = req.body?.enabled === true;
+    const nextGroupId = String(req.body?.groupId || '').trim();
+    const nextTimezone = normalizeLineReminderTimezone(req.body?.timezone);
+    const nextReminderHour = normalizeLineReminderHour(req.body?.reminderHour);
+
+    if (nextEnabled && !nextChannelAccessToken) {
+      return res.status(400).json({
+        message: 'LINE channel access token is required before enabling reminders.',
+      });
+    }
+    if (nextEnabled && !nextGroupId) {
+      return res.status(400).json({
+        message: 'LINE group ID is required before enabling reminders.',
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextConfig = {
+      userId,
+      projectId,
+      projectName: String(ownership.project?.name || '').trim(),
+      enabled: nextEnabled,
+      groupId: nextGroupId,
+      timezone: nextTimezone,
+      reminderHour: nextReminderHour,
+      channelAccessToken: nextChannelAccessToken,
+      createdAt: String(existingConfig.createdAt || '').trim() || nowIso,
+      updatedAt: nowIso,
+      lastTestedAt: String(existingConfig.lastTestedAt || '').trim() || null,
+    };
+
+    await docRef.set(nextConfig, { merge: true });
+
+    return res.json({
+      message: 'LINE reminder settings saved.',
+      config: toLineReminderPublicResponse(nextConfig),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to save LINE reminder config.' });
+  }
+});
+
+app.post('/line/reminder/test-push', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.body?.userId);
+    const projectId = String(req.body?.projectId || '').trim();
+    if (!userId || !projectId) {
+      return res.status(400).json({ message: 'userId and projectId are required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
+    }
+
+    const ownership = await loadOwnedProjectById({
+      userId,
+      projectId,
+      authUsername: req.authUser?.username,
+    });
+    if (!ownership.foundProject) {
+      return res.status(404).json({ message: 'Project not found.' });
+    }
+    if (!ownership.isOwner) {
+      return res
+        .status(403)
+        .json({ message: 'Only project host can send LINE test messages for this project.' });
+    }
+
+    const docRef = lineReminderConfigRef.doc(lineReminderDocIdFor(userId, projectId));
+    const snapshot = await docRef.get();
+    if (!snapshot.exists) {
+      return res.status(404).json({ message: 'LINE reminder settings not found for this project.' });
+    }
+    const config = normalizeLineReminderConfigRecord(snapshot.data() || {}, { includeSecrets: true });
+    if (!config.channelAccessToken) {
+      return res.status(400).json({ message: 'LINE channel access token is not configured.' });
+    }
+    if (!config.groupId) {
+      return res.status(400).json({ message: 'LINE group ID is not configured.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const userMessage = String(req.body?.message || '').trim();
+    const message =
+      userMessage ||
+      `[PM Calendar] Test message\nProject: ${
+        String(ownership.project?.name || '').trim() || projectId
+      }\nTime: ${nowIso}`;
+
+    await sendLinePushMessage({
+      channelAccessToken: config.channelAccessToken,
+      to: config.groupId,
+      message,
+    });
+
+    await docRef.set(
+      {
+        lastTestedAt: nowIso,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+
+    return res.json({
+      ok: true,
+      message: 'LINE test message sent.',
+      sentAt: nowIso,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to send LINE test message.' });
+  }
+});
+
+app.post('/internal/jobs/line/remind-due-tomorrow', async (req, res) => {
+  try {
+    if (!LINE_REMINDER_CRON_SECRET) {
+      return res.status(503).json({
+        message: 'LINE reminder cron secret is not configured on server.',
+      });
+    }
+    const incomingSecret = String(req.get('x-cron-secret') || '').trim();
+    if (!incomingSecret || incomingSecret !== LINE_REMINDER_CRON_SECRET) {
+      return res.status(401).json({ message: 'Unauthorized cron request.' });
+    }
+
+    const enabledConfigs = await lineReminderConfigRef.where('enabled', '==', true).get();
+    if (enabledConfigs.empty) {
+      return res.json({
+        ok: true,
+        checkedConfigs: 0,
+        sent: 0,
+        skippedNoTask: 0,
+        skippedTimeWindow: 0,
+        skippedAlreadySent: 0,
+        failed: 0,
+      });
+    }
+
+    const now = new Date();
+    const stats = {
+      checkedConfigs: 0,
+      sent: 0,
+      skippedNoTask: 0,
+      skippedTimeWindow: 0,
+      skippedAlreadySent: 0,
+      failed: 0,
+    };
+
+    for (const doc of enabledConfigs.docs) {
+      stats.checkedConfigs += 1;
+      const config = normalizeLineReminderConfigRecord(doc.data() || {}, { includeSecrets: true });
+      const userId = sanitizeUserId(config.userId);
+      const projectId = String(config.projectId || '').trim();
+      if (!userId || !projectId || !config.channelAccessToken || !config.groupId) {
+        stats.failed += 1;
+        continue;
+      }
+
+      const timezone = normalizeLineReminderTimezone(config.timezone);
+      const currentHour = getHourInTimeZone(now, timezone);
+      const reminderHour = normalizeLineReminderHour(config.reminderHour);
+      if (currentHour !== reminderHour) {
+        stats.skippedTimeWindow += 1;
+        continue;
+      }
+
+      const todayByTimezone = getIsoDateInTimeZone(now, timezone);
+      const targetDate = shiftIsoDateByDays(todayByTimezone, 1);
+      if (!targetDate) {
+        stats.failed += 1;
+        continue;
+      }
+
+      const ownership = await loadOwnedProjectById({
+        userId,
+        projectId,
+        authUsername: '',
+      });
+      if (!ownership.project) {
+        stats.failed += 1;
+        continue;
+      }
+
+      const ownerEvents = Array.isArray(ownership.payload?.events) ? ownership.payload.events : [];
+      const dueTasks = ownerEvents.filter((event) => {
+        if (!isTaskRecord(event)) return false;
+        if (String(event?.projectId || '').trim() !== projectId) return false;
+        if (String(event?.endDate || '').trim() !== targetDate) return false;
+        const status = String(event?.status || '').trim().toLowerCase();
+        if (status === 'done' || status === 'completed') return false;
+        return true;
+      });
+
+      if (dueTasks.length === 0) {
+        stats.skippedNoTask += 1;
+        continue;
+      }
+
+      const logDocRef = lineReminderLogRef.doc(lineReminderLogDocIdFor(userId, projectId, targetDate));
+      const shouldSend = await firestore.runTransaction(async (transaction) => {
+        const existingLogDoc = await transaction.get(logDocRef);
+        const logStatus = String(existingLogDoc.data()?.status || '').trim().toLowerCase();
+        if (existingLogDoc.exists && logStatus === 'sent') {
+          return false;
+        }
+
+        transaction.set(
+          logDocRef,
+          {
+            userId,
+            projectId,
+            targetDate,
+            timezone,
+            reminderHour,
+            status: 'sending',
+            taskCount: dueTasks.length,
+            updatedAt: now.toISOString(),
+            createdAt:
+              String(existingLogDoc.data()?.createdAt || '').trim() || now.toISOString(),
+          },
+          { merge: true }
+        );
+        return true;
+      });
+      if (!shouldSend) {
+        stats.skippedAlreadySent += 1;
+        continue;
+      }
+
+      try {
+        const message = buildLineReminderMessage({
+          projectName: ownership.project?.name || projectId,
+          targetDate,
+          tasks: dueTasks,
+        });
+        await sendLinePushMessage({
+          channelAccessToken: config.channelAccessToken,
+          to: config.groupId,
+          message,
+        });
+
+        await logDocRef.set(
+          {
+            status: 'sent',
+            sentAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            taskCount: dueTasks.length,
+          },
+          { merge: true }
+        );
+        stats.sent += 1;
+      } catch (error) {
+        await logDocRef.set(
+          {
+            status: 'failed',
+            errorMessage: String(error.message || '').slice(0, 400),
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+        stats.failed += 1;
+      }
+    }
+
+    return res.json({
+      ok: true,
+      ...stats,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to execute LINE reminder job.' });
   }
 });
 

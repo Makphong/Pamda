@@ -2116,6 +2116,48 @@ const DEFAULT_GOOGLE_CALENDAR_STATUS = {
   configured: false,
   redirectUri: '',
 };
+const LINE_REMINDER_TIMEZONE_OPTIONS = [
+  'Asia/Bangkok',
+  'Asia/Tokyo',
+  'Asia/Singapore',
+  'UTC',
+];
+const DEFAULT_LINE_REMINDER_PROJECT_CONFIG = {
+  enabled: false,
+  groupId: '',
+  timezone: 'Asia/Bangkok',
+  reminderHour: 9,
+  tokenConfigured: false,
+  tokenPreview: '',
+  updatedAt: null,
+  lastTestedAt: null,
+};
+const normalizeLineReminderProjectConfig = (configInput) => {
+  const config = configInput && typeof configInput === 'object' && !Array.isArray(configInput)
+    ? configInput
+    : {};
+  const timezoneRaw = String(config.timezone || '').trim();
+  const reminderHourRaw = Number.parseInt(String(config.reminderHour ?? ''), 10);
+  const reminderHour = Number.isInteger(reminderHourRaw)
+    ? Math.min(23, Math.max(0, reminderHourRaw))
+    : DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour;
+  return {
+    ...DEFAULT_LINE_REMINDER_PROJECT_CONFIG,
+    ...config,
+    enabled: Boolean(config.enabled),
+    groupId: String(config.groupId || '').trim(),
+    timezone: timezoneRaw || DEFAULT_LINE_REMINDER_PROJECT_CONFIG.timezone,
+    reminderHour,
+    tokenConfigured: Boolean(config.tokenConfigured),
+    tokenPreview: String(config.tokenPreview || '').trim(),
+    updatedAt: config.updatedAt ? String(config.updatedAt) : null,
+    lastTestedAt: config.lastTestedAt ? String(config.lastTestedAt) : null,
+  };
+};
+const LINE_REMINDER_HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => ({
+  value: hour,
+  label: `${String(hour).padStart(2, '0')}:00`,
+}));
 const GOOGLE_CALENDAR_EVENT_COLOR_PRESETS = [
   { id: '1', label: 'Lavender', hex: '#a4bdfc' },
   { id: '2', label: 'Sage', hex: '#7ae7bf' },
@@ -10983,6 +11025,23 @@ function ProjectDashboard({
   const [editingOptionDepartmentColor, setEditingOptionDepartmentColor] = useState('');
   const [announcementDraft, setAnnouncementDraft] = useState('');
   const [showAnnouncementHistory, setShowAnnouncementHistory] = useState(false);
+  const [lineReminderConfig, setLineReminderConfig] = useState(() =>
+    normalizeLineReminderProjectConfig({})
+  );
+  const [lineReminderGroupIdInput, setLineReminderGroupIdInput] = useState('');
+  const [lineReminderTimezoneInput, setLineReminderTimezoneInput] = useState(
+    DEFAULT_LINE_REMINDER_PROJECT_CONFIG.timezone
+  );
+  const [lineReminderHourInput, setLineReminderHourInput] = useState(
+    String(DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour)
+  );
+  const [lineReminderTokenInput, setLineReminderTokenInput] = useState('');
+  const [lineReminderEnabledInput, setLineReminderEnabledInput] = useState(false);
+  const [lineReminderConfigError, setLineReminderConfigError] = useState('');
+  const [isLineReminderConfigLoading, setIsLineReminderConfigLoading] = useState(false);
+  const [isLineReminderConfigSaving, setIsLineReminderConfigSaving] = useState(false);
+  const [isLineReminderTestSending, setIsLineReminderTestSending] = useState(false);
+  const [isLineReminderGuidePopupOpen, setIsLineReminderGuidePopupOpen] = useState(false);
 
   const normalizeAnnouncementRecord = (value) => {
     const message = String(value?.message || '').trim();
@@ -11080,6 +11139,61 @@ function ProjectDashboard({
     setIsNotesFullEditorOpen((prev) => (prev === nextFullEditorOpen ? prev : nextFullEditorOpen));
     setTaskView((prev) => (prev === nextTaskView ? prev : nextTaskView));
   }, [project.id, project.notesPreferences, project.ownerId, currentUser.id]);
+
+  useEffect(() => {
+    setLineReminderEnabledInput(Boolean(lineReminderConfig.enabled));
+    setLineReminderGroupIdInput(String(lineReminderConfig.groupId || '').trim());
+    setLineReminderTimezoneInput(
+      String(lineReminderConfig.timezone || '').trim() || DEFAULT_LINE_REMINDER_PROJECT_CONFIG.timezone
+    );
+    setLineReminderHourInput(
+      String(
+        Number.isInteger(Number(lineReminderConfig.reminderHour))
+          ? lineReminderConfig.reminderHour
+          : DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour
+      )
+    );
+    setLineReminderTokenInput('');
+  }, [
+    lineReminderConfig.enabled,
+    lineReminderConfig.groupId,
+    lineReminderConfig.timezone,
+    lineReminderConfig.reminderHour,
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== 'announcements') return undefined;
+    if (!isProjectHost) return undefined;
+    if (!AUTH_API_BASE_URL || !currentUser?.id || !project?.id) return undefined;
+
+    let cancelled = false;
+    setIsLineReminderConfigLoading(true);
+    setLineReminderConfigError('');
+
+    requestCloudDataApi(
+      `/line/reminder/config?userId=${encodeURIComponent(currentUser.id)}&projectId=${encodeURIComponent(
+        project.id
+      )}`
+    )
+      .then((result) => {
+        if (cancelled) return;
+        const normalized = normalizeLineReminderProjectConfig(result?.config);
+        setLineReminderConfig(normalized);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setLineReminderConfigError(error?.message || 'Failed to load LINE reminder settings.');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLineReminderConfigLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, isProjectHost, currentUser?.id, project?.id]);
   
   const statusConfig = {
     on_track: { label: 'On Track', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
@@ -11628,6 +11742,128 @@ function ProjectDashboard({
       changeFeed: nextProjectWithFeed.changeFeed,
     });
     setAnnouncementDraft('');
+  };
+  const handleSaveLineReminderConfig = async () => {
+    if (!isProjectHost) {
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'Only project host can update LINE reminder settings.',
+      });
+      return;
+    }
+    if (!AUTH_API_BASE_URL) {
+      void popup.alert({
+        title: 'API not configured',
+        message: 'Set AUTH_API_BASE_URL before using LINE reminder settings.',
+      });
+      return;
+    }
+    const reminderHourRaw = Number.parseInt(String(lineReminderHourInput || '').trim(), 10);
+    const reminderHour = Number.isInteger(reminderHourRaw)
+      ? Math.min(23, Math.max(0, reminderHourRaw))
+      : DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour;
+    const timezone = String(lineReminderTimezoneInput || '').trim() || DEFAULT_LINE_REMINDER_PROJECT_CONFIG.timezone;
+    const groupId = String(lineReminderGroupIdInput || '').trim();
+    const channelAccessToken = String(lineReminderTokenInput || '').trim();
+    const enabled = Boolean(lineReminderEnabledInput);
+
+    if (enabled && !groupId) {
+      void popup.alert({
+        title: 'Missing group ID',
+        message: 'Please enter LINE Group ID before enabling reminder.',
+      });
+      return;
+    }
+    if (enabled && !channelAccessToken && !lineReminderConfig.tokenConfigured) {
+      void popup.alert({
+        title: 'Missing token',
+        message: 'Please enter LINE Channel Access Token before enabling reminder.',
+      });
+      return;
+    }
+
+    setIsLineReminderConfigSaving(true);
+    setLineReminderConfigError('');
+    try {
+      const result = await requestCloudDataApi('/line/reminder/config', {
+        method: 'PUT',
+        body: {
+          userId: currentUser.id,
+          projectId: project.id,
+          enabled,
+          groupId,
+          timezone,
+          reminderHour,
+          channelAccessToken,
+        },
+      });
+      const normalized = normalizeLineReminderProjectConfig(result?.config);
+      setLineReminderConfig(normalized);
+      setLineReminderTokenInput('');
+      void popup.alert({
+        title: 'Saved',
+        message: 'LINE reminder settings saved successfully.',
+      });
+    } catch (error) {
+      const message = error?.message || 'Failed to save LINE reminder settings.';
+      setLineReminderConfigError(message);
+      void popup.alert({
+        title: 'Save failed',
+        message,
+      });
+    } finally {
+      setIsLineReminderConfigSaving(false);
+    }
+  };
+  const handleSendLineReminderTestMessage = async () => {
+    if (!isProjectHost) return;
+    if (!AUTH_API_BASE_URL) {
+      void popup.alert({
+        title: 'API not configured',
+        message: 'Set AUTH_API_BASE_URL before testing LINE reminder.',
+      });
+      return;
+    }
+    const messageInput = await popup.prompt({
+      title: 'LINE test message',
+      message: 'Enter optional test text (leave blank to use default).',
+      placeholder: '[PM Calendar] Test message',
+      confirmText: 'Send',
+    });
+    if (messageInput === null) return;
+
+    setIsLineReminderTestSending(true);
+    setLineReminderConfigError('');
+    try {
+      const result = await requestCloudDataApi('/line/reminder/test-push', {
+        method: 'POST',
+        body: {
+          userId: currentUser.id,
+          projectId: project.id,
+          message: String(messageInput || '').trim(),
+        },
+      });
+      const sentAt = String(result?.sentAt || '').trim();
+      setLineReminderConfig((prev) =>
+        normalizeLineReminderProjectConfig({
+          ...prev,
+          lastTestedAt: sentAt || new Date().toISOString(),
+        })
+      );
+      void popup.alert({
+        title: 'Sent',
+        message: 'Test message was sent to LINE group.',
+      });
+    } catch (error) {
+      const message = error?.message || 'Failed to send LINE test message.';
+      setLineReminderConfigError(message);
+      void popup.alert({
+        title: 'Send failed',
+        message,
+      });
+    } finally {
+      setIsLineReminderTestSending(false);
+    }
   };
 
   // --- Task Management View Logic ---
@@ -13403,6 +13639,148 @@ function ProjectDashboard({
                   </div>
                 </div>
 
+                {isProjectHost && (
+                  <div className="rounded-xl border border-gray-200 bg-white p-4 md:p-5 space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-base font-semibold text-gray-800">LINE Reminder (Host only)</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Send task reminder to LINE group 1 day before due date.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsLineReminderGuidePopupOpen(true)}
+                        className="text-xs font-semibold px-2.5 py-1.5 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50"
+                      >
+                        วิธีตั้งค่า
+                      </button>
+                    </div>
+
+                    {isLineReminderConfigLoading ? (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-500">
+                        Loading LINE reminder settings...
+                      </div>
+                    ) : (
+                      <>
+                        <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={lineReminderEnabledInput}
+                            onChange={(event) => setLineReminderEnabledInput(event.target.checked)}
+                            className="rounded border-gray-300"
+                          />
+                          Enable automatic reminder
+                        </label>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide block">
+                              LINE Group ID
+                            </label>
+                            <input
+                              type="text"
+                              value={lineReminderGroupIdInput}
+                              onChange={(event) => setLineReminderGroupIdInput(event.target.value)}
+                              placeholder="เช่น Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide block">
+                              Reminder Time
+                            </label>
+                            <select
+                              value={lineReminderHourInput}
+                              onChange={(event) => setLineReminderHourInput(event.target.value)}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            >
+                              {LINE_REMINDER_HOUR_OPTIONS.map((option) => (
+                                <option key={`line-hour-${option.value}`} value={String(option.value)}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide block">
+                              Timezone
+                            </label>
+                            <select
+                              value={lineReminderTimezoneInput}
+                              onChange={(event) => setLineReminderTimezoneInput(event.target.value)}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            >
+                              {LINE_REMINDER_TIMEZONE_OPTIONS.map((timezoneOption) => (
+                                <option key={`line-timezone-${timezoneOption}`} value={timezoneOption}>
+                                  {timezoneOption}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide block">
+                              Channel Access Token
+                            </label>
+                            <input
+                              type="password"
+                              value={lineReminderTokenInput}
+                              onChange={(event) => setLineReminderTokenInput(event.target.value)}
+                              placeholder={
+                                lineReminderConfig.tokenConfigured
+                                  ? `Configured (${lineReminderConfig.tokenPreview || 'hidden'}) - ใส่ใหม่เฉพาะตอนเปลี่ยน`
+                                  : 'ใส่ token จาก LINE Developers'
+                              }
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        </div>
+
+                        {lineReminderConfigError && (
+                          <p className="text-xs text-red-600">{lineReminderConfigError}</p>
+                        )}
+
+                        <div className="text-[11px] text-gray-500 space-y-0.5">
+                          <p>
+                            Last updated:{' '}
+                            {lineReminderConfig.updatedAt
+                              ? new Date(lineReminderConfig.updatedAt).toLocaleString()
+                              : '-'}
+                          </p>
+                          <p>
+                            Last test:{' '}
+                            {lineReminderConfig.lastTestedAt
+                              ? new Date(lineReminderConfig.lastTestedAt).toLocaleString()
+                              : '-'}
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleSendLineReminderTestMessage()}
+                            disabled={isLineReminderTestSending || isLineReminderConfigSaving}
+                            className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+                          >
+                            {isLineReminderTestSending ? 'Sending...' : 'Send test'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveLineReminderConfig()}
+                            disabled={isLineReminderConfigSaving || isLineReminderConfigLoading}
+                            className="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-60"
+                          >
+                            {isLineReminderConfigSaving ? 'Saving...' : 'Save settings'}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 <div className="rounded-xl border border-gray-200 bg-white p-4 md:p-5">
                   <h3 className="text-base font-semibold text-gray-800 mb-3">Project Update Log</h3>
                   {projectChangeFeed.length === 0 ? (
@@ -13865,9 +14243,9 @@ function ProjectDashboard({
 	      )}
 
 	      {/* Slide-over Task Detail/Edit Pane */}
-	      <TaskDetailPane 
-	        isOpen={isPaneOpen} 
-	        onClose={() => setIsPaneOpen(false)} 
+      <TaskDetailPane 
+        isOpen={isPaneOpen} 
+        onClose={() => setIsPaneOpen(false)} 
 	        task={paneTask} 
 	        onSave={(data) => { onSaveTask(data); setIsPaneOpen(false); }}
 	        onDelete={async (id) => {
@@ -13881,7 +14259,50 @@ function ProjectDashboard({
 	        TASK_STATUSES={TASK_STATUSES}
 	        DEPARTMENTS={DEPARTMENTS}
           departmentColors={projectDepartmentColors}
-	      />
+      />
+
+      {isLineReminderGuidePopupOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-800">LINE Reminder Setup</h3>
+              <button
+                type="button"
+                onClick={() => setIsLineReminderGuidePopupOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3 text-sm text-gray-700">
+              <p className="text-xs text-gray-500">
+                ทำครั้งเดียวต่อโปรเจกต์ (เฉพาะ Host)
+              </p>
+              <ol className="list-decimal pl-5 space-y-1.5">
+                <li>เข้า LINE Developers แล้วเปิด Messaging API channel ของบอท</li>
+                <li>กด Issue / Reissue เพื่อคัดลอก Channel Access Token</li>
+                <li>เชิญ LINE OA (บอท) เข้า LINE กลุ่มงาน</li>
+                <li>ใส่ Group ID + Token ในฟอร์มนี้ และกด Save settings</li>
+                <li>กด Send test เพื่อตรวจว่าบอทส่งเข้ากลุ่มได้จริง</li>
+                <li>ตั้ง Cloud Scheduler ให้เรียก endpoint งานเตือนทุกชั่วโมง</li>
+              </ol>
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                Endpoint สำหรับ Scheduler: <code>/internal/jobs/line/remind-due-tomorrow</code><br />
+                Header ที่ต้องส่ง: <code>x-cron-secret</code> = <code>LINE_REMINDER_CRON_SECRET</code>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsLineReminderGuidePopupOpen(false)}
+                className="px-3 py-1.5 rounded-md text-sm font-medium text-gray-700 border border-gray-300 hover:bg-gray-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {optionsPopupType && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
