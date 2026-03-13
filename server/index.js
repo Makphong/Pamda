@@ -85,6 +85,12 @@ const LINE_CHANNEL_SECRET = String(process.env.LINE_CHANNEL_SECRET || '').trim()
 const LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN = String(
   process.env.LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || process.env.LINE_CHANNEL_ACCESS_TOKEN || ''
 ).trim();
+const LINE_REMINDER_CHANNEL_ACCESS_TOKEN = String(
+  process.env.LINE_REMINDER_CHANNEL_ACCESS_TOKEN ||
+    process.env.LINE_CHANNEL_ACCESS_TOKEN ||
+    LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN ||
+    ''
+).trim();
 
 const loadGoogleOauthConfigFromJson = (filePath) => {
   const emptyConfig = { clientId: '', clientSecret: '', redirectUris: [] };
@@ -323,7 +329,6 @@ const getHourInTimeZone = (dateInput, timeZoneInput) => {
 const normalizeLineReminderConfigRecord = (recordInput, options = {}) => {
   const includeSecrets = options?.includeSecrets === true;
   const record = recordInput && typeof recordInput === 'object' ? recordInput : {};
-  const channelAccessToken = String(record.channelAccessToken || '').trim();
   const normalized = {
     userId: sanitizeUserId(record.userId),
     projectId: String(record.projectId || '').trim(),
@@ -336,11 +341,11 @@ const normalizeLineReminderConfigRecord = (recordInput, options = {}) => {
     createdAt: String(record.createdAt || '').trim() || null,
     lastTestedAt: String(record.lastTestedAt || '').trim() || null,
     lastOpenTaskDigestAt: String(record.lastOpenTaskDigestAt || '').trim() || null,
-    tokenConfigured: Boolean(channelAccessToken),
-    tokenPreview: buildLineTokenPreview(channelAccessToken),
+    tokenConfigured: Boolean(LINE_REMINDER_CHANNEL_ACCESS_TOKEN),
+    tokenPreview: buildLineTokenPreview(LINE_REMINDER_CHANNEL_ACCESS_TOKEN),
   };
   if (includeSecrets) {
-    normalized.channelAccessToken = channelAccessToken;
+    normalized.channelAccessToken = LINE_REMINDER_CHANNEL_ACCESS_TOKEN;
   }
   return normalized;
 };
@@ -352,8 +357,6 @@ const toLineReminderPublicResponse = (recordInput) => {
     groupId: normalized.groupId,
     timezone: normalized.timezone,
     reminderHour: normalized.reminderHour,
-    tokenConfigured: normalized.tokenConfigured,
-    tokenPreview: normalized.tokenPreview,
     updatedAt: normalized.updatedAt,
     lastTestedAt: normalized.lastTestedAt,
     lastOpenTaskDigestAt: normalized.lastOpenTaskDigestAt,
@@ -1766,6 +1769,7 @@ app.get('/health', (_req, res) => {
     googleCalendarOAuthConfigured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     googleCalendarRedirectUriPreview: redirectUriPreview,
     lineReminderCronConfigured: Boolean(LINE_REMINDER_CRON_SECRET),
+    lineReminderPushConfigured: Boolean(LINE_REMINDER_CHANNEL_ACCESS_TOKEN),
     lineReminderDefaultTimezone: normalizeLineReminderTimezone(DEFAULT_LINE_REMINDER_TIMEZONE),
     lineReminderDefaultHour: DEFAULT_LINE_REMINDER_HOUR,
     lineWebhookConfigured: Boolean(LINE_CHANNEL_SECRET),
@@ -3310,19 +3314,14 @@ app.put('/line/reminder/config', requireAuth, async (req, res) => {
       includeSecrets: true,
     });
 
-    const clearChannelAccessToken = req.body?.clearChannelAccessToken === true;
-    const nextChannelAccessTokenInput = String(req.body?.channelAccessToken || '').trim();
-    const nextChannelAccessToken = clearChannelAccessToken
-      ? ''
-      : nextChannelAccessTokenInput || String(existingConfig.channelAccessToken || '').trim();
     const nextEnabled = req.body?.enabled === true;
     const nextGroupId = String(req.body?.groupId || '').trim();
     const nextTimezone = normalizeLineReminderTimezone(req.body?.timezone);
     const nextReminderHour = normalizeLineReminderHour(req.body?.reminderHour);
 
-    if (nextEnabled && !nextChannelAccessToken) {
-      return res.status(400).json({
-        message: 'LINE channel access token is required before enabling reminders.',
+    if (nextEnabled && !LINE_REMINDER_CHANNEL_ACCESS_TOKEN) {
+      return res.status(503).json({
+        message: 'LINE reminder channel access token is not configured on server.',
       });
     }
     if (nextEnabled && !nextGroupId) {
@@ -3340,7 +3339,7 @@ app.put('/line/reminder/config', requireAuth, async (req, res) => {
       groupId: nextGroupId,
       timezone: nextTimezone,
       reminderHour: nextReminderHour,
-      channelAccessToken: nextChannelAccessToken,
+      channelAccessToken: '',
       createdAt: String(existingConfig.createdAt || '').trim() || nowIso,
       updatedAt: nowIso,
       lastTestedAt: String(existingConfig.lastTestedAt || '').trim() || null,

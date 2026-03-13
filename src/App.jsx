@@ -2127,8 +2127,6 @@ const DEFAULT_LINE_REMINDER_PROJECT_CONFIG = {
   groupId: '',
   timezone: 'Asia/Bangkok',
   reminderHour: 9,
-  tokenConfigured: false,
-  tokenPreview: '',
   updatedAt: null,
   lastTestedAt: null,
   lastOpenTaskDigestAt: null,
@@ -2149,8 +2147,6 @@ const normalizeLineReminderProjectConfig = (configInput) => {
     groupId: String(config.groupId || '').trim(),
     timezone: timezoneRaw || DEFAULT_LINE_REMINDER_PROJECT_CONFIG.timezone,
     reminderHour,
-    tokenConfigured: Boolean(config.tokenConfigured),
-    tokenPreview: String(config.tokenPreview || '').trim(),
     updatedAt: config.updatedAt ? String(config.updatedAt) : null,
     lastTestedAt: config.lastTestedAt ? String(config.lastTestedAt) : null,
     lastOpenTaskDigestAt: config.lastOpenTaskDigestAt ? String(config.lastOpenTaskDigestAt) : null,
@@ -11037,7 +11033,6 @@ function ProjectDashboard({
   const [lineReminderHourInput, setLineReminderHourInput] = useState(
     String(DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour)
   );
-  const [lineReminderTokenInput, setLineReminderTokenInput] = useState('');
   const [lineReminderEnabledInput, setLineReminderEnabledInput] = useState(false);
   const [lineReminderConfigError, setLineReminderConfigError] = useState('');
   const [isLineReminderConfigLoading, setIsLineReminderConfigLoading] = useState(false);
@@ -11156,7 +11151,6 @@ function ProjectDashboard({
           : DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour
       )
     );
-    setLineReminderTokenInput('');
   }, [
     lineReminderConfig.enabled,
     lineReminderConfig.groupId,
@@ -11767,7 +11761,6 @@ function ProjectDashboard({
       : DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour;
     const timezone = String(lineReminderTimezoneInput || '').trim() || DEFAULT_LINE_REMINDER_PROJECT_CONFIG.timezone;
     const groupId = String(lineReminderGroupIdInput || '').trim();
-    const channelAccessToken = String(lineReminderTokenInput || '').trim();
     const enabled = Boolean(lineReminderEnabledInput);
 
     if (enabled && !groupId) {
@@ -11777,14 +11770,6 @@ function ProjectDashboard({
       });
       return;
     }
-    if (enabled && !channelAccessToken && !lineReminderConfig.tokenConfigured) {
-      void popup.alert({
-        title: 'Missing token',
-        message: 'Please enter LINE Channel Access Token before enabling reminder.',
-      });
-      return;
-    }
-
     setIsLineReminderConfigSaving(true);
     setLineReminderConfigError('');
     try {
@@ -11797,12 +11782,10 @@ function ProjectDashboard({
           groupId,
           timezone,
           reminderHour,
-          channelAccessToken,
         },
       });
       const normalized = normalizeLineReminderProjectConfig(result?.config);
       setLineReminderConfig(normalized);
-      setLineReminderTokenInput('');
       void popup.alert({
         title: 'Saved',
         message: 'LINE reminder settings saved successfully.',
@@ -13768,39 +13751,21 @@ function ProjectDashboard({
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide block">
-                              Timezone
-                            </label>
-                            <select
-                              value={lineReminderTimezoneInput}
-                              onChange={(event) => setLineReminderTimezoneInput(event.target.value)}
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                            >
-                              {LINE_REMINDER_TIMEZONE_OPTIONS.map((timezoneOption) => (
-                                <option key={`line-timezone-${timezoneOption}`} value={timezoneOption}>
-                                  {timezoneOption}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide block">
-                              Channel Access Token
-                            </label>
-                            <input
-                              type="password"
-                              value={lineReminderTokenInput}
-                              onChange={(event) => setLineReminderTokenInput(event.target.value)}
-                              placeholder={
-                                lineReminderConfig.tokenConfigured
-                                  ? `Configured (${lineReminderConfig.tokenPreview || 'hidden'}) - ใส่ใหม่เฉพาะตอนเปลี่ยน`
-                                  : 'ใส่ token จาก LINE Developers'
-                              }
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                            />
-                          </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide block">
+                            Timezone
+                          </label>
+                          <select
+                            value={lineReminderTimezoneInput}
+                            onChange={(event) => setLineReminderTimezoneInput(event.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                          >
+                            {LINE_REMINDER_TIMEZONE_OPTIONS.map((timezoneOption) => (
+                              <option key={`line-timezone-${timezoneOption}`} value={timezoneOption}>
+                                {timezoneOption}
+                              </option>
+                            ))}
+                          </select>
                         </div>
 
                         {lineReminderConfigError && (
@@ -14362,9 +14327,9 @@ function ProjectDashboard({
               </p>
               <ol className="list-decimal pl-5 space-y-1.5">
                 <li>เข้า LINE Developers แล้วเปิด Messaging API channel ของบอท</li>
-                <li>กด Issue / Reissue เพื่อคัดลอก Channel Access Token</li>
                 <li>เชิญ LINE OA (บอท) เข้า LINE กลุ่มงาน</li>
-                <li>ใส่ Group ID + Token ในฟอร์มนี้ และกด Save settings</li>
+                <li>ใส่ Group ID ในฟอร์มนี้ และกด Save settings</li>
+                <li>ระบบจะใช้ Channel Access Token กลางที่ตั้งไว้บนเซิร์ฟเวอร์อัตโนมัติ</li>
                 <li>กด ปุ่มประกาศข้อความ เพื่อทดสอบส่งข้อความเข้ากลุ่ม</li>
                 <li>กด ปุ่มแจ้งเตือน Task ทั้งหมด เพื่อส่งสรุปงานค้างทั้งหมดในโปรเจกต์</li>
                 <li>ตั้ง Cloud Scheduler ให้เรียก endpoint งานเตือนทุกชั่วโมง</li>
