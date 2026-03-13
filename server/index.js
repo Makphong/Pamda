@@ -441,8 +441,6 @@ const clampLineMultilineText = (value, maxLength = 400) =>
     .trim()
     .slice(0, maxLength);
 
-const isSafeHttpUrl = (value) => /^https?:\/\//i.test(String(value || '').trim());
-
 const buildAssigneeAvatarUrl = (nameInput) => {
   const safeName = clampLineText(nameInput || 'User', 48) || 'User';
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(
@@ -456,15 +454,14 @@ const resolveLineMemberProfile = (teamMembersById, assigneeIdInput) => {
   const rawMember = teamMembersById instanceof Map ? teamMembersById.get(assigneeId) : null;
   if (rawMember && typeof rawMember === 'object') {
     const name = clampLineText(rawMember.name || rawMember.username || assigneeId, 32) || assigneeId;
-    const avatarUrl = isSafeHttpUrl(rawMember.avatarUrl)
-      ? String(rawMember.avatarUrl).trim()
-      : buildAssigneeAvatarUrl(name);
-    return { id: assigneeId, name, avatarUrl };
+    const department = clampLineText(rawMember.department || '', 30);
+    return { id: assigneeId, name, department, avatarUrl: buildAssigneeAvatarUrl(name) };
   }
   const fallbackName = clampLineText(rawMember || assigneeId, 32) || assigneeId;
   return {
     id: assigneeId,
     name: fallbackName,
+    department: '',
     avatarUrl: buildAssigneeAvatarUrl(fallbackName),
   };
 };
@@ -551,6 +548,39 @@ const resolveDepartmentTone = (departmentNameInput, departmentColorMapInput) => 
   };
 };
 
+const splitDepartmentTokens = (rawDepartmentInput) =>
+  String(rawDepartmentInput || '')
+    .split(/[|,/]/)
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+
+const resolveTaskDepartmentLabels = (taskInput, assigneeProfilesInput) => {
+  const task = taskInput && typeof taskInput === 'object' ? taskInput : {};
+  const normalizedMap = new Map();
+  const addDepartment = (nameInput) => {
+    const safeDepartment = String(nameInput || '').trim();
+    if (!safeDepartment) return;
+    const key = safeDepartment.toLowerCase();
+    if (!normalizedMap.has(key)) {
+      normalizedMap.set(key, safeDepartment);
+    }
+  };
+
+  (Array.isArray(assigneeProfilesInput) ? assigneeProfilesInput : []).forEach((profile) => {
+    splitDepartmentTokens(profile?.department).forEach(addDepartment);
+  });
+
+  if (normalizedMap.size === 0) {
+    splitDepartmentTokens(task.department).forEach(addDepartment);
+  }
+
+  if (normalizedMap.size === 0) {
+    addDepartment('Unassigned');
+  }
+
+  return Array.from(normalizedMap.values());
+};
+
 const formatIsoDateDmy = (value) => {
   const iso = String(value || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return clampLineText(value, 18) || '-';
@@ -594,16 +624,50 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
     const title = clampLineText(task?.title || 'Untitled task', 90);
     const dueDate = String(task?.endDate || task?.startDate || '').trim();
     const statusTone = resolveTaskStatusTone(task?.status || 'To Do');
-    const departmentTone = resolveDepartmentTone(task?.department || 'Unassigned', departmentColorMap);
     const deadlineSummary = buildDeadlineSummaryLabel(dueDate, timezone);
     const dueDateLabel = formatIsoDateDmy(dueDate);
     const assignees = normalizeTaskAssigneeIds(task)
       .map((assigneeId) => resolveLineMemberProfile(memberMap, assigneeId))
       .filter(Boolean);
+    const taskDepartments = resolveTaskDepartmentLabels(task, assignees);
+    const departmentBadgeContents = taskDepartments.slice(0, 3).map((departmentName) => {
+      const departmentTone = resolveDepartmentTone(departmentName, departmentColorMap);
+      return {
+        type: 'box',
+        layout: 'vertical',
+        backgroundColor: departmentTone.backgroundColor,
+        borderColor: departmentTone.borderColor,
+        borderWidth: '1px',
+        cornerRadius: '999px',
+        paddingTop: '2px',
+        paddingBottom: '2px',
+        paddingStart: '8px',
+        paddingEnd: '8px',
+        contents: [
+          {
+            type: 'text',
+            text: departmentTone.label,
+            size: 'xxs',
+            weight: 'bold',
+            color: departmentTone.textColor,
+            wrap: true,
+          },
+        ],
+      };
+    });
+    const extraDepartmentCount = Math.max(0, taskDepartments.length - departmentBadgeContents.length);
+    if (extraDepartmentCount > 0) {
+      departmentBadgeContents.push({
+        type: 'text',
+        text: `+${extraDepartmentCount}`,
+        size: 'xxs',
+        color: '#64748b',
+      });
+    }
     const assigneeAvatarContents = assignees.slice(0, 5).map((assignee) => ({
       type: 'image',
       url: assignee.avatarUrl,
-      size: 'xs',
+      size: 'xxs',
       aspectMode: 'cover',
       aspectRatio: '1:1',
     }));
@@ -682,29 +746,13 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
         {
           type: 'box',
           layout: 'vertical',
-          backgroundColor: departmentTone.backgroundColor,
-          borderColor: departmentTone.borderColor,
-          borderWidth: '1px',
-          cornerRadius: '999px',
-          paddingTop: '2px',
-          paddingBottom: '2px',
-          paddingStart: '8px',
-          paddingEnd: '8px',
-          contents: [
-            {
-              type: 'text',
-              text: departmentTone.label,
-              size: 'xxs',
-              weight: 'bold',
-              color: departmentTone.textColor,
-              wrap: true,
-            },
-          ],
+          spacing: '4px',
+          contents: departmentBadgeContents,
         },
         {
           type: 'box',
           layout: 'horizontal',
-          spacing: '6px',
+          spacing: '4px',
           alignItems: 'center',
           contents: assigneeAvatarContents,
         },
@@ -3430,10 +3478,12 @@ app.post('/line/reminder/notify-open-tasks', requireAuth, async (req, res) => {
       if (!memberId) return;
       const memberName = String(member?.name || member?.username || '').trim() || memberId;
       const memberAvatarUrl = String(member?.avatarUrl || '').trim();
+      const memberDepartment = String(member?.department || '').trim();
       teamMembersById.set(memberId, {
         id: memberId,
         name: memberName,
         avatarUrl: memberAvatarUrl,
+        department: memberDepartment,
       });
     });
 
@@ -3595,10 +3645,12 @@ app.post('/internal/jobs/line/remind-due-tomorrow', async (req, res) => {
           if (!memberId) return;
           const memberName = String(member?.name || member?.username || '').trim() || memberId;
           const memberAvatarUrl = String(member?.avatarUrl || '').trim();
+          const memberDepartment = String(member?.department || '').trim();
           teamMembersById.set(memberId, {
             id: memberId,
             name: memberName,
             avatarUrl: memberAvatarUrl,
+            department: memberDepartment,
           });
         });
         const message = buildLineReminderMessage({
