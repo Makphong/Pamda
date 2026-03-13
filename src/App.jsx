@@ -14964,7 +14964,7 @@ function NoteEditor({
   const [isMobileNoteViewport, setIsMobileNoteViewport] = useState(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
     const isMobileByWidth = window.matchMedia('(max-width: 767px)').matches;
-    return isMobileByWidth || getIpadRootClassState().isIpadPortrait;
+    return isMobileByWidth;
   });
   const [mobileToolbarSection, setMobileToolbarSection] = useState('');
   const isDesktopSheetViewport = !isCompactSheetViewport;
@@ -17982,7 +17982,7 @@ function NoteEditor({
     const mediaQuery = window.matchMedia('(max-width: 767px)');
     const resolveMobileViewport = () => {
       const isMobileByWidth = window.matchMedia('(max-width: 767px)').matches;
-      return isMobileByWidth || getIpadRootClassState().isIpadPortrait;
+      return isMobileByWidth;
     };
     const handleViewportChange = () => {
       setIsMobileNoteViewport(resolveMobileViewport());
@@ -26570,12 +26570,14 @@ function MonthGrid({
                               ? 'bg-white border-dashed'
                               : `${segment.color.lightBg} ${segment.color.text} ${segment.color.border}`
                           }`}
-	                        style={{
-	                          left: `calc(${leftPercent}% + 2px)`,
-	                          width: `calc(${widthPercent}% - 4px)`,
-	                          top: `${segment.lane * laneHeight}px`,
-                          ...(segment.isTaskEvent
-                            ? {
+		                        style={{
+		                          left: `calc(${leftPercent}% + 2px)`,
+		                          width: `calc(${widthPercent}% - 4px)`,
+		                          minHeight: '20px',
+		                          height: '20px',
+		                          top: `${segment.lane * laneHeight}px`,
+	                          ...(segment.isTaskEvent
+	                            ? {
                                 borderColor: segment.departmentColorHex,
                                 color: segment.departmentColorHex,
                                 backgroundColor: toRgba(segment.departmentColorHex, 0.08),
