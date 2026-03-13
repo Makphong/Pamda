@@ -258,7 +258,7 @@ const normalizePersonalHabitList = (habitsInput, removedHabitIdsInput = []) => {
     const createdAt =
       createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime())
         ? createdAtRaw
-        : new Date().toISOString();
+        : STABLE_FALLBACK_ISO;
     habitMap.set(habitId, {
       id: habitId,
       name,
@@ -915,6 +915,7 @@ const PROJECT_UPDATE_TOAST_AUTO_CLOSE_MS = 5000;
 const PROJECT_UPDATE_TOAST_EXIT_MS = 280;
 const COLLABORATIVE_REFRESH_INTERVAL_MS = 5000;
 const PROJECT_OWNER_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
+const STABLE_FALLBACK_ISO = new Date(0).toISOString();
 const VALID_PROJECT_UPDATE_POPUP_MODES = new Set(Object.values(PROJECT_UPDATE_POPUP_MODES));
 const DEFAULT_PROJECT_UPDATE_POPUP_MODE = PROJECT_UPDATE_POPUP_MODES.NEW_ONLY;
 const normalizeProjectActivityEntry = (entry, fallbackProject = null) => {
@@ -924,7 +925,7 @@ const normalizeProjectActivityEntry = (entry, fallbackProject = null) => {
   const createdAtValue = String(entry?.createdAt || '').trim();
   const createdAt = createdAtValue && !Number.isNaN(new Date(createdAtValue).getTime())
     ? createdAtValue
-    : new Date().toISOString();
+    : STABLE_FALLBACK_ISO;
   const projectId =
     String(entry?.projectId || '').trim() ||
     String(fallbackProject?.id || '').trim();
@@ -952,7 +953,13 @@ const normalizeProjectActivityFeed = (feed, fallbackProject = null) =>
   (Array.isArray(feed) ? feed : [])
     .map((entry) => normalizeProjectActivityEntry(entry, fallbackProject))
     .filter((entry) => entry.id && entry.projectId)
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+    .sort((left, right) => {
+      const timeDiff = new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return String(left.id || '').localeCompare(String(right.id || ''), undefined, {
+        sensitivity: 'base',
+      });
+    });
 const appendProjectActivityEntryToProject = (project, entryInput) => {
   if (!project) return project;
   const normalizedEntry = normalizeProjectActivityEntry(
@@ -1756,11 +1763,15 @@ const toNormalizedUnitInterval = (value) => {
 const normalizeNoteContentMap = (value) => {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const result = {};
-  Object.entries(raw).forEach(([noteId, content]) => {
+  Object.entries(raw)
+    .sort(([leftId], [rightId]) =>
+      String(leftId || '').localeCompare(String(rightId || ''), undefined, { sensitivity: 'base' })
+    )
+    .forEach(([noteId, content]) => {
     const normalizedNoteId = String(noteId || '').trim();
     if (!normalizedNoteId) return;
     result[normalizedNoteId] = String(content || '');
-  });
+    });
   return result;
 };
 const normalizeNoteRevisionEntry = (value) => {
@@ -1779,17 +1790,21 @@ const normalizeNoteRevisionEntry = (value) => {
 const normalizeNoteRevisionMap = (value) => {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const result = {};
-  Object.entries(raw).forEach(([noteId, revision]) => {
+  Object.entries(raw)
+    .sort(([leftId], [rightId]) =>
+      String(leftId || '').localeCompare(String(rightId || ''), undefined, { sensitivity: 'base' })
+    )
+    .forEach(([noteId, revision]) => {
     const normalizedNoteId = String(noteId || '').trim();
     if (!normalizedNoteId) return;
     result[normalizedNoteId] = normalizeNoteRevisionEntry(revision);
-  });
+    });
   return result;
 };
 const normalizeNotePresenceEntry = (value) => {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const updatedAtRaw = String(raw.updatedAt || '').trim();
-  const updatedAt = toTimestampMs(updatedAtRaw) > 0 ? updatedAtRaw : new Date().toISOString();
+  const updatedAt = toTimestampMs(updatedAtRaw) > 0 ? updatedAtRaw : STABLE_FALLBACK_ISO;
   return {
     userId: String(raw.userId || '').trim(),
     username: String(raw.username || '').trim().toLowerCase(),
@@ -1807,7 +1822,11 @@ const normalizeNotePresenceEntry = (value) => {
 const normalizeProjectNotesPresence = (value, nowMs = Date.now()) => {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const result = {};
-  Object.entries(raw).forEach(([noteId, notePresence]) => {
+  Object.entries(raw)
+    .sort(([leftId], [rightId]) =>
+      String(leftId || '').localeCompare(String(rightId || ''), undefined, { sensitivity: 'base' })
+    )
+    .forEach(([noteId, notePresence]) => {
     const normalizedNoteId = String(noteId || '').trim();
     if (!normalizedNoteId) return;
     const perNoteRaw =
@@ -1815,7 +1834,11 @@ const normalizeProjectNotesPresence = (value, nowMs = Date.now()) => {
         ? notePresence
         : {};
     const perNoteNormalized = {};
-    Object.entries(perNoteRaw).forEach(([userId, presence]) => {
+    Object.entries(perNoteRaw)
+      .sort(([leftId], [rightId]) =>
+        String(leftId || '').localeCompare(String(rightId || ''), undefined, { sensitivity: 'base' })
+      )
+      .forEach(([userId, presence]) => {
       const normalizedUserId = String(userId || '').trim();
       if (!normalizedUserId) return;
       const normalizedPresence = normalizeNotePresenceEntry({
@@ -1825,11 +1848,11 @@ const normalizeProjectNotesPresence = (value, nowMs = Date.now()) => {
       const ageMs = nowMs - toTimestampMs(normalizedPresence.updatedAt);
       if (ageMs > NOTE_PRESENCE_TTL_MS) return;
       perNoteNormalized[normalizedUserId] = normalizedPresence;
-    });
+      });
     if (Object.keys(perNoteNormalized).length > 0) {
       result[normalizedNoteId] = perNoteNormalized;
     }
-  });
+    });
   return result;
 };
 const mergeProjectNotesContentByRevision = (
@@ -2346,7 +2369,13 @@ const mergeProjectChangeFeedForConflict = (baseProject, incomingProject) => {
     mergedById.set(entryId, entry);
   });
   return Array.from(mergedById.values())
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .sort((left, right) => {
+      const timeDiff = new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return String(left.id || '').localeCompare(String(right.id || ''), undefined, {
+        sensitivity: 'base',
+      });
+    })
     .slice(0, MAX_PROJECT_ACTIVITY_FEED);
 };
 const mergeAccountProjectsForConflict = (baseProjectsInput, incomingProjectsInput) => {
@@ -2665,7 +2694,7 @@ const normalizeProjectInvite = (invite) => {
     invitedUsername: String(invite?.invitedUsername || '').trim().toLowerCase(),
     invitedEmail: String(invite?.invitedEmail || '').trim().toLowerCase(),
     status,
-    createdAt: String(invite?.createdAt || new Date().toISOString()),
+    createdAt: String(invite?.createdAt || STABLE_FALLBACK_ISO),
     respondedAt: invite?.respondedAt ? String(invite.respondedAt) : null,
   };
 };
@@ -2947,7 +2976,7 @@ const normalizeProjectTodoItem = (todo) => {
   const createdAt =
     createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime())
       ? createdAtRaw
-      : new Date().toISOString();
+      : STABLE_FALLBACK_ISO;
   const updatedAtRaw = String(todo?.updatedAt || '').trim();
   const updatedAt =
     updatedAtRaw && !Number.isNaN(new Date(updatedAtRaw).getTime()) ? updatedAtRaw : createdAt;
@@ -2976,7 +3005,11 @@ const normalizeProjectTodosByProjectId = (projectTodosInput) => {
 
   const normalized = {};
 
-  Object.entries(projectTodosInput).forEach(([projectIdInput, todosInput]) => {
+  Object.entries(projectTodosInput)
+    .sort(([leftId], [rightId]) =>
+      String(leftId || '').localeCompare(String(rightId || ''), undefined, { sensitivity: 'base' })
+    )
+    .forEach(([projectIdInput, todosInput]) => {
     const projectId = String(projectIdInput || '').trim();
     if (!projectId) return;
 
@@ -2994,7 +3027,7 @@ const normalizeProjectTodosByProjectId = (projectTodosInput) => {
     if (todos.length > 0) {
       normalized[projectId] = todos;
     }
-  });
+    });
 
   return normalized;
 };
@@ -6545,17 +6578,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         });
 
         const nextProjects = Array.from(nextProjectsById.values());
-
-        const ownedProjectIds = new Set(
+        const accessibleProjectIds = new Set(
           nextProjects
-            .filter((project) => project.ownerId === currentUser.id)
-            .map((project) => project.id)
+            .map((project) => String(project?.id || '').trim())
+            .filter(Boolean)
         );
 
-        const mergedEvents = [
-          ...baseEvents.filter((event) => ownedProjectIds.has(event.projectId)),
-          ...localEventsSnapshot.filter((event) => ownedProjectIds.has(event.projectId)),
-        ];
+        let mergedEvents = mergeAccountEventsForConflict(
+          baseEvents.filter((event) => accessibleProjectIds.has(String(event?.projectId || '').trim())),
+          localEventsSnapshot.filter((event) =>
+            accessibleProjectIds.has(String(event?.projectId || '').trim())
+          )
+        );
 
         nextProjects.forEach((project) => {
           if (project.ownerId === currentUser.id) return;
@@ -6564,24 +6598,27 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
           const sharedEvents = ownerEventsByProjectId.get(projectId);
           if (Array.isArray(sharedEvents) && sharedEvents.length > 0) {
-            mergedEvents.push(...sharedEvents);
+            mergedEvents = mergeAccountEventsForConflict(mergedEvents, sharedEvents);
             return;
           }
 
           const cachedSharedEvents = baseEventsByProjectId.get(projectId);
           if (Array.isArray(cachedSharedEvents) && cachedSharedEvents.length > 0) {
-            mergedEvents.push(...cachedSharedEvents);
+            mergedEvents = mergeAccountEventsForConflict(mergedEvents, cachedSharedEvents);
           }
         });
-
-        const dedupedEventsMap = new Map();
-        mergedEvents.forEach((event) => {
-          const dedupeKey = event?.id
-            ? `id:${event.id}`
-            : `f:${event?.projectId || ''}|${event?.title || ''}|${event?.startDate || ''}|${event?.endDate || ''}|${event?.startTime || ''}|${event?.endTime || ''}`;
-          dedupedEventsMap.set(dedupeKey, event);
+        const nextEvents = [...mergedEvents].sort((left, right) => {
+          const timeDiff = getEventConflictTimestampMs(right) - getEventConflictTimestampMs(left);
+          if (timeDiff !== 0) return timeDiff;
+          const leftId = String(left?.id || '').trim();
+          const rightId = String(right?.id || '').trim();
+          if (leftId && rightId) {
+            return leftId.localeCompare(rightId, undefined, { sensitivity: 'base' });
+          }
+          return String(left?.title || '').localeCompare(String(right?.title || ''), undefined, {
+            sensitivity: 'base',
+          });
         });
-        const nextEvents = Array.from(dedupedEventsMap.values());
         const nextProjectTodos = mergeProjectTodosByProjectId(
           baseProjectTodosSnapshot,
           localProjectTodosSnapshot
@@ -6615,7 +6652,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     const collaborativeRefreshIntervalMs = activeDashboardProjectId
       ? activeDashboardTab === 'notes'
-        ? 500
+        ? 1200
         : 2000
       : COLLABORATIVE_REFRESH_INTERVAL_MS;
     const refreshInterval = window.setInterval(() => {
@@ -7401,12 +7438,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const saveTaskForProject = (projectId, taskData) => {
     const normalizedProjectId = String(projectId || '').trim();
     if (!normalizedProjectId) return;
+    const nowIso = new Date().toISOString();
     const normalizedAssigneeIds = normalizeTaskAssigneeIds(taskData);
     const normalizedTaskData = {
       ...(taskData && typeof taskData === 'object' ? taskData : {}),
       assigneeIds: normalizedAssigneeIds,
       assigneeId: normalizedAssigneeIds[0] || '',
       recordType: 'task',
+      createdAt: String(taskData?.createdAt || '').trim() || nowIso,
+      updatedAt: nowIso,
     };
     const isUpdate = Boolean(taskData?.id);
     const localTaskId = isUpdate ? String(taskData.id || '').trim() : generateId();
@@ -7417,12 +7457,24 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (isUpdate) {
       nextEvents = events.map((event) =>
         String(event.id || '').trim() === localTaskId
-          ? { ...event, ...normalizedTaskData, projectId: localTaskProjectId, recordType: 'task' }
+          ? {
+              ...event,
+              ...normalizedTaskData,
+              projectId: localTaskProjectId,
+              recordType: 'task',
+              updatedAt: nowIso,
+            }
           : event
       );
       persistedTask =
         nextEvents.find((event) => String(event.id || '').trim() === localTaskId) ||
-        { ...normalizedTaskData, id: localTaskId, projectId: localTaskProjectId, recordType: 'task' };
+        {
+          ...normalizedTaskData,
+          id: localTaskId,
+          projectId: localTaskProjectId,
+          recordType: 'task',
+          updatedAt: nowIso,
+        };
       setEvents(nextEvents);
       syncSharedEventsForProjects([localTaskProjectId], nextEvents);
     } else {
@@ -7431,6 +7483,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         id: localTaskId,
         projectId: localTaskProjectId,
         recordType: 'task',
+        createdAt: nowIso,
+        updatedAt: nowIso,
       };
       persistedTask = createdTask;
       nextEvents = [...events, createdTask];
@@ -7751,6 +7805,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   };
 
   const saveEvent = async (eventData) => {
+    const nowIso = new Date().toISOString();
     const payload =
       eventData && typeof eventData === 'object' && !Array.isArray(eventData) ? eventData : {};
     const googleCalendarOptions =
@@ -7764,6 +7819,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (String(eventPayload.recordType || '').trim().toLowerCase() !== 'task') {
       eventPayload.recordType = 'event';
     }
+    eventPayload.updatedAt = nowIso;
     let nextEvents = events;
     let localEventId = '';
     let localEventProjectId = String(eventPayload.projectId || '').trim();
@@ -7775,7 +7831,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         localEventProjectId = String(editingEvent.projectId || '').trim();
       }
       nextEvents = events.map((event) =>
-        event.id === editingEvent.id ? { ...event, ...eventPayload } : event
+        event.id === editingEvent.id
+          ? { ...event, ...eventPayload, updatedAt: nowIso }
+          : event
       );
       baseSyncProjectIds.push(editingEvent.projectId, localEventProjectId);
     } else {
@@ -7786,6 +7844,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         department: 'Unassigned',
         assigneeId: 'u' + (Math.floor(Math.random() * 5) + 1),
         recordType: 'event',
+        createdAt: String(eventPayload.createdAt || '').trim() || nowIso,
+        updatedAt: nowIso,
       };
       localEventId = String(createdEvent.id || '').trim();
       localEventProjectId = String(createdEvent.projectId || '').trim();
@@ -7846,8 +7906,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   };
 
   const updateEvent = (eventId, updates) => {
+    const nowIso = new Date().toISOString();
     const existingEvent = events.find((event) => event.id === eventId) || null;
-    const nextEvents = events.map((event) => (event.id === eventId ? { ...event, ...updates } : event));
+    const nextEvents = events.map((event) =>
+      event.id === eventId ? { ...event, ...updates, updatedAt: nowIso } : event
+    );
     setEvents(nextEvents);
     const updatedEvent = nextEvents.find((event) => event.id === eventId) || null;
     syncSharedEventsForProjects([existingEvent?.projectId, updatedEvent?.projectId], nextEvents);
