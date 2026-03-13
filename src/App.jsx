@@ -9175,7 +9175,7 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
   };
 
   return (
-    <div className="bg-white p-4 md:p-6 rounded-xl">
+    <div className="group bg-white p-4 md:p-6 rounded-xl">
       <div className="flex justify-between items-start mb-3 md:mb-4">
         <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
           <Icon className="w-5 h-5 text-gray-500" />
@@ -9184,7 +9184,7 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
         {!isEditing && (
           <button 
             onClick={() => setIsEditing(true)}
-            className="text-gray-400 hover:text-blue-600 p-1.5 rounded-md hover:bg-blue-50 transition-colors"
+            className="opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto group-active:opacity-100 group-active:pointer-events-auto text-gray-400 hover:text-blue-600 p-1.5 rounded-md hover:bg-blue-50 transition-all"
           >
             <Edit2 className="w-4 h-4" />
           </button>
@@ -10936,9 +10936,9 @@ function ProjectDashboard({
   }, [project.id, project.notesPreferences, project.ownerId, currentUser.id]);
   
   const statusConfig = {
-    on_track: { label: 'On Track (ตามแผน)', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
-    at_risk: { label: 'At Risk (มีความเสี่ยง)', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', dot: 'bg-yellow-500' },
-    off_track: { label: 'Off Track (ล่าช้า)', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', dot: 'bg-red-500' },
+    on_track: { label: 'On Track', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
+    at_risk: { label: 'At Risk', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', dot: 'bg-yellow-500' },
+    off_track: { label: 'Off Track', bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', dot: 'bg-red-500' },
   };
 
   const TABS = [
@@ -12193,7 +12193,7 @@ function ProjectDashboard({
                   
                   {/* Vision Section */}
                   <EditableSection 
-                    title="วิสัยทัศน์ (Vision)" 
+                    title="วิสัยทัศน์" 
                     icon={Target} 
                     value={project.vision} 
                     placeholder="กรอกวิสัยทัศน์ของโครงการที่นี่..."
@@ -12202,7 +12202,7 @@ function ProjectDashboard({
 
                   {/* Mission Section */}
                   <EditableSection 
-                    title="พันธกิจ (Mission)" 
+                    title="พันธกิจ" 
                     icon={Flag} 
                     value={project.mission} 
                     placeholder="กรอกพันธกิจของโครงการที่นี่..."
@@ -12210,11 +12210,11 @@ function ProjectDashboard({
                   />
 
                   {/* Description Section */}
-                  <div className="bg-white p-4 md:p-6 rounded-xl">
+                  <div className="group bg-white p-4 md:p-6 rounded-xl">
                     <div className="flex justify-between items-start mb-3 md:mb-4 gap-2">
                       <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <AlignLeft className="w-5 h-5 text-gray-500" />
-                        รายละเอียดโปรเจกต์ (Project Description)
+                        รายละเอียดโปรเจกต์
                       </h3>
                       {!isEditingDesc && (
                         <button 
@@ -12222,7 +12222,7 @@ function ProjectDashboard({
                             setEditDescText(project.description || '');
                             setIsEditingDesc(true);
                           }}
-                          className="text-gray-400 hover:text-blue-600 p-1.5 rounded-md hover:bg-blue-50 transition-colors"
+                          className="opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto group-active:opacity-100 group-active:pointer-events-auto text-gray-400 hover:text-blue-600 p-1.5 rounded-md hover:bg-blue-50 transition-all"
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
@@ -12263,7 +12263,7 @@ function ProjectDashboard({
                     <div className="flex justify-between items-start md:items-center gap-3 mb-3 md:mb-4">
                       <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <Target className="w-5 h-5 text-gray-500" />
-                        เป้าหมายหลัก & จุดวิกฤต (Milestones)
+                        เป้าหมายหลัก
                       </h3>
                       {!isAddingMilestone && (
                         <button 
@@ -12404,9 +12404,6 @@ function ProjectDashboard({
                         ))}
                       </div>
                     )}
-                    <p className="text-[11px] text-gray-400 mt-3 flex items-center justify-between">
-                      <span>คลิกเพื่อเปลี่ยนสถานะ</span>
-                    </p>
                   </div>
 
                 </div>
@@ -13064,16 +13061,43 @@ function ProjectDashboard({
                       .pm-org-children {
                         display: block;
                         width: 100%;
+                        position: relative;
                         margin: 0.6rem 0 0;
-                        padding: 0 0 0 0.9rem;
+                        padding: 0 0 0 1.1rem;
                       }
-                      .pm-org-children::before,
-                      .pm-org-children > .pm-org-item::before,
-                      .pm-org-children > .pm-org-item > .pm-org-node-wrap::before {
-                        display: none;
+                      .pm-org-children::before {
+                        content: '';
+                        position: absolute;
+                        top: 0.4rem;
+                        bottom: 0.6rem;
+                        left: 0.45rem;
+                        width: 2px;
+                        background: #64748b;
+                      }
+                      .pm-org-children > .pm-org-item {
+                        position: relative;
+                        padding: 0 0 0.2rem;
+                      }
+                      .pm-org-children > .pm-org-item:last-child {
+                        padding-bottom: 0;
+                      }
+                      .pm-org-children > .pm-org-item::before {
+                        content: '';
+                        position: absolute;
+                        top: 1rem;
+                        left: 0.45rem;
+                        width: 0.65rem;
+                        height: 0;
+                        border-top: 2px solid #64748b;
+                      }
+                      .pm-org-children > .pm-org-item:only-child::before {
+                        display: block;
                       }
                       .pm-org-children > .pm-org-item > .pm-org-node-wrap {
                         padding-top: 0.5rem;
+                      }
+                      .pm-org-children > .pm-org-item > .pm-org-node-wrap::before {
+                        display: none;
                       }
                     }
                   `}</style>
