@@ -9175,7 +9175,7 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
   };
 
   return (
-    <div className="bg-white p-4 md:p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+    <div className="bg-white p-4 md:p-6 rounded-xl">
       <div className="flex justify-between items-start mb-3 md:mb-4">
         <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
           <Icon className="w-5 h-5 text-gray-500" />
@@ -9197,7 +9197,7 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
             value={tempValue}
             onChange={e => setTempValue(e.target.value)}
             placeholder={placeholder}
-            className="w-full border border-gray-300 rounded-lg p-3 text-sm text-gray-700 min-h-[120px] outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+            className="w-full rounded-lg border-0 p-3 text-sm text-gray-700 min-h-[120px] outline-none focus:ring-0 resize-y bg-gray-50"
             autoFocus
           />
           <div className="flex gap-2 justify-end">
@@ -9212,11 +9212,7 @@ const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
         </div>
       ) : (
         <div className="prose prose-sm text-gray-600 leading-relaxed max-w-none whitespace-pre-wrap">
-          {value ? (
-            <p>{value}</p>
-          ) : (
-            <p className="text-gray-400 italic">ยังไม่มีข้อมูล คลิกปุ่มแก้ไขเพื่อเพิ่ม...</p>
-          )}
+          {value ? <p>{value}</p> : null}
         </div>
       )}
     </div>
@@ -12145,7 +12141,11 @@ function ProjectDashboard({
         <main className="flex-1 overflow-y-auto bg-white px-3 sm:px-4 md:px-8 py-3 md:py-8">
           <div className="max-w-6xl mx-auto">
             
-            <div className="mb-4 md:mb-6 pb-2 md:pb-4 border-b flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4">
+            <div
+              className={`mb-4 md:mb-6 pb-2 md:pb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4 ${
+                activeTab === 'organization' ? '' : 'border-b'
+              }`}
+            >
               <h2 className="text-xl md:text-2xl font-bold text-gray-800">
                 {TABS.find(t => t.id === activeTab)?.label}
               </h2>
@@ -12210,7 +12210,7 @@ function ProjectDashboard({
                   />
 
                   {/* Description Section */}
-                  <div className="bg-white p-4 md:p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="bg-white p-4 md:p-6 rounded-xl">
                     <div className="flex justify-between items-start mb-3 md:mb-4 gap-2">
                       <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <AlignLeft className="w-5 h-5 text-gray-500" />
@@ -12235,7 +12235,7 @@ function ProjectDashboard({
                           value={editDescText}
                           onChange={e => setEditDescText(e.target.value)}
                           placeholder="เพิ่มรายละเอียดและเป้าหมายของโปรเจกต์ที่นี่..."
-                          className="w-full border border-gray-300 rounded-lg p-3 text-sm text-gray-700 min-h-[120px] outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                          className="w-full rounded-lg border-0 p-3 text-sm text-gray-700 min-h-[120px] outline-none focus:ring-0 resize-y bg-gray-50"
                           autoFocus
                         ></textarea>
                         <div className="flex gap-2 justify-end">
@@ -12253,17 +12253,13 @@ function ProjectDashboard({
                       </div>
                     ) : (
                       <div className="prose prose-sm text-gray-600 leading-relaxed max-w-none whitespace-pre-wrap">
-                        {project.description ? (
-                          <p>{project.description}</p>
-                        ) : (
-                          <p className="text-gray-400 italic">ยังไม่มีรายละเอียดโปรเจกต์ คลิกปุ่มแก้ไขเพื่อเพิ่มข้อมูล</p>
-                        )}
+                        {project.description ? <p>{project.description}</p> : null}
                       </div>
                     )}
                   </div>
 
                   {/* Milestones / Goals Section */}
-                  <div className="bg-white p-4 md:p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="bg-white p-4 md:p-6 rounded-xl">
                     <div className="flex justify-between items-start md:items-center gap-3 mb-3 md:mb-4">
                       <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
                         <Target className="w-5 h-5 text-gray-500" />
@@ -12281,12 +12277,12 @@ function ProjectDashboard({
                     
                     <div className="space-y-3">
                       {(project.milestones || []).map((m, i) => (
-                        <div key={m.id || i} className="flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-transparent transition-colors group">
+                        <div key={m.id || i} className="flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors group">
                           <div className="flex items-center gap-3 flex-1 cursor-pointer" onClick={() => {
                             const updatedMilestones = (project.milestones || []).map(ms => ms.id === m.id ? { ...ms, status: ms.status === 'completed' ? 'pending' : 'completed' } : ms);
                             onUpdateProject(project.id, { milestones: updatedMilestones });
                           }}>
-                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${m.status === 'completed' ? 'bg-green-500 border-green-500' : 'border-gray-300 bg-white group-hover:border-blue-400'}`}>
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center transition-colors ${m.status === 'completed' ? 'bg-green-500' : 'bg-gray-300 group-hover:bg-blue-300'}`}>
                               {m.status === 'completed' && <Check className="w-3 h-3 text-white" />}
                             </div>
                             <span className={`font-medium ${m.status === 'completed' ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{m.name}</span>
@@ -12316,20 +12312,20 @@ function ProjectDashboard({
                       ))}
                       
                       {(project.milestones || []).length === 0 && !isAddingMilestone && (
-                        <div className="text-center py-6 text-gray-400 text-sm italic bg-gray-50 rounded-lg border border-dashed border-gray-200">
+                        <div className="text-center py-6 text-gray-400 text-sm italic bg-gray-50 rounded-lg">
                           ยังไม่มีเป้าหมายของโปรเจกต์
                         </div>
                       )}
 
                       {/* Add Milestone Form */}
                       {isAddingMilestone && (
-                        <div className="p-3 md:p-4 bg-blue-50/50 rounded-lg border border-blue-100 flex flex-col gap-3 mt-4">
+                        <div className="p-3 md:p-4 bg-blue-50/50 rounded-lg flex flex-col gap-3 mt-4">
                           <input 
                             type="text" 
                             placeholder="ชื่อเป้าหมาย / Milestone..." 
                             value={newMilestoneName}
                             onChange={e => setNewMilestoneName(e.target.value)}
-                            className="border border-gray-300 rounded-md px-3 py-2 text-sm w-full outline-none focus:ring-2 focus:ring-blue-500"
+                            className="rounded-md border-0 px-3 py-2 text-sm w-full outline-none focus:ring-0 bg-white"
                             autoFocus
                           />
                           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
@@ -12337,7 +12333,7 @@ function ProjectDashboard({
                               type="date" 
                               value={newMilestoneDate}
                               onChange={e => setNewMilestoneDate(e.target.value)}
-                              className="border border-gray-300 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 flex-1"
+                              className="rounded-md border-0 px-3 py-2 text-sm outline-none focus:ring-0 flex-1 bg-white"
                             />
                             <button 
                               onClick={() => {
@@ -12360,7 +12356,7 @@ function ProjectDashboard({
                             </button>
                             <button 
                               onClick={() => setIsAddingMilestone(false)}
-                              className="text-gray-600 hover:bg-gray-100 border border-gray-300 px-4 py-2 rounded-md text-sm font-medium transition-colors"
+                              className="text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-md text-sm font-medium transition-colors"
                             >
                               ยกเลิก
                             </button>
@@ -12376,22 +12372,22 @@ function ProjectDashboard({
                 <div className="order-1 lg:order-2 w-full lg:w-[340px] flex flex-col gap-3 md:gap-6 shrink-0">
                   
                   {/* Status Dropdown */}
-                  <div className="bg-white p-4 md:p-5 rounded-xl border border-gray-200 shadow-sm relative">
+                  <div className="bg-white p-4 md:p-5 rounded-xl relative">
                     <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
                       <Activity className="w-4 h-4" /> สถานะโปรเจกต์
                     </h3>
                     <div 
                       onClick={() => setIsStatusDropdownOpen(!isStatusDropdownOpen)}
-                      className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-colors ${statusConfig[project.status || 'on_track'].bg} ${statusConfig[project.status || 'on_track'].text} ${statusConfig[project.status || 'on_track'].border}`}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-colors ${statusConfig[project.status || 'on_track'].bg} ${statusConfig[project.status || 'on_track'].text}`}
                     >
-                      <div className={`w-3 h-3 rounded-full ${statusConfig[project.status || 'on_track'].dot} shadow-sm`}></div>
+                      <div className={`w-3 h-3 rounded-full ${statusConfig[project.status || 'on_track'].dot}`}></div>
                       <span className="font-semibold flex-1">{statusConfig[project.status || 'on_track'].label}</span>
                       <ChevronDown className="w-4 h-4 opacity-70" />
                     </div>
                     
                     {/* Status Dropdown Menu */}
                     {isStatusDropdownOpen && (
-                      <div className="absolute top-[85px] left-5 right-5 bg-white border border-gray-200 rounded-lg shadow-xl z-20 overflow-hidden">
+                      <div className="absolute top-[85px] left-5 right-5 bg-white rounded-lg z-20 overflow-hidden">
                         {Object.entries(statusConfig).map(([key, config]) => (
                           <div 
                             key={key}
@@ -12399,7 +12395,7 @@ function ProjectDashboard({
                               onUpdateProject(project.id, { status: key });
                               setIsStatusDropdownOpen(false); 
                             }}
-                            className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 border-b last:border-0 ${(project.status || 'on_track') === key ? 'bg-gray-50' : ''}`}
+                            className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 ${(project.status || 'on_track') === key ? 'bg-gray-50' : ''}`}
                           >
                             <div className={`w-3 h-3 rounded-full ${config.dot}`}></div>
                             <span className={`font-medium ${config.text}`}>{config.label}</span>
