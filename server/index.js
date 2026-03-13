@@ -2130,8 +2130,8 @@ app.put('/users/:userId/password', requireAuth, async (req, res) => {
 app.get('/data/account/:userId', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.params?.userId);
-    if (!ensureAuthUserMatches(req, res, userId)) {
-      return;
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
     }
 
     const userDoc = await usersRef.doc(userId).get();
@@ -2154,8 +2154,8 @@ app.get('/data/account/:userId', requireAuth, async (req, res) => {
 app.put('/data/account/:userId', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.params?.userId);
-    if (!ensureAuthUserMatches(req, res, userId)) {
-      return;
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
     }
 
     const userDoc = await usersRef.doc(userId).get();
