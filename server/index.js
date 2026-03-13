@@ -441,49 +441,266 @@ const clampLineMultilineText = (value, maxLength = 400) =>
     .trim()
     .slice(0, maxLength);
 
+const isSafeHttpUrl = (value) => /^https?:\/\//i.test(String(value || '').trim());
+
+const buildAssigneeAvatarUrl = (nameInput) => {
+  const safeName = clampLineText(nameInput || 'User', 48) || 'User';
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(
+    safeName
+  )}&background=E2E8F0&color=334155&size=64&rounded=true`;
+};
+
+const resolveLineMemberProfile = (teamMembersById, assigneeIdInput) => {
+  const assigneeId = String(assigneeIdInput || '').trim();
+  if (!assigneeId) return null;
+  const rawMember = teamMembersById instanceof Map ? teamMembersById.get(assigneeId) : null;
+  if (rawMember && typeof rawMember === 'object') {
+    const name = clampLineText(rawMember.name || rawMember.username || assigneeId, 32) || assigneeId;
+    const avatarUrl = isSafeHttpUrl(rawMember.avatarUrl)
+      ? String(rawMember.avatarUrl).trim()
+      : buildAssigneeAvatarUrl(name);
+    return { id: assigneeId, name, avatarUrl };
+  }
+  const fallbackName = clampLineText(rawMember || assigneeId, 32) || assigneeId;
+  return {
+    id: assigneeId,
+    name: fallbackName,
+    avatarUrl: buildAssigneeAvatarUrl(fallbackName),
+  };
+};
+
+const normalizeHexColor = (value, fallback = '#64748b') => {
+  const hex = String(value || '').trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(hex)) return hex.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(hex)) {
+    const r = hex[1];
+    const g = hex[2];
+    const b = hex[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return fallback;
+};
+
+const hexToRgba = (hexInput, alpha = 1) => {
+  const hex = normalizeHexColor(hexInput, '#64748b').slice(1);
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  const safeAlpha = Math.min(1, Math.max(0, Number(alpha)));
+  return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+};
+
+const resolveTaskStatusTone = (statusInput) => {
+  const status = String(statusInput || '').trim();
+  const normalized = status.toLowerCase();
+  if (normalized === 'done' || normalized === 'completed') {
+    return {
+      label: status || 'Done',
+      textColor: '#15803d',
+      borderColor: '#bbf7d0',
+      backgroundColor: '#dcfce7',
+    };
+  }
+  if (normalized === 'in progress') {
+    return {
+      label: status || 'In Progress',
+      textColor: '#1d4ed8',
+      borderColor: '#bfdbfe',
+      backgroundColor: '#dbeafe',
+    };
+  }
+  if (normalized === 'review') {
+    return {
+      label: status || 'Review',
+      textColor: '#b45309',
+      borderColor: '#fde68a',
+      backgroundColor: '#fef3c7',
+    };
+  }
+  return {
+    label: status || 'To Do',
+    textColor: '#374151',
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f3f4f6',
+  };
+};
+
+const resolveDepartmentTone = (departmentNameInput, departmentColorMapInput) => {
+  const departmentName = String(departmentNameInput || '').trim() || 'Unassigned';
+  const departmentColorMap =
+    departmentColorMapInput && typeof departmentColorMapInput === 'object' ? departmentColorMapInput : {};
+  const lowerDepartmentName = departmentName.toLowerCase();
+  const mapKeys = Object.keys(departmentColorMap);
+  const matchedKey =
+    mapKeys.find((key) => String(key || '').trim() === departmentName) ||
+    mapKeys.find((key) => String(key || '').trim().toLowerCase() === lowerDepartmentName) ||
+    '';
+  const baseColor =
+    lowerDepartmentName === 'unassigned'
+      ? '#64748b'
+      : normalizeHexColor(matchedKey ? departmentColorMap[matchedKey] : '', '#64748b');
+  return {
+    label: clampLineText(departmentName, 30) || 'Unassigned',
+    textColor: baseColor,
+    borderColor: hexToRgba(baseColor, 0.45),
+    backgroundColor: hexToRgba(baseColor, 0.14),
+  };
+};
+
+const formatIsoDateDmy = (value) => {
+  const iso = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return clampLineText(value, 18) || '-';
+  const [year, month, day] = iso.split('-');
+  return `${day}/${month}/${year}`;
+};
+
+const dayDiffFromTodayByTimezone = (targetDateInput, timezoneInput) => {
+  const targetDate = String(targetDateInput || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) return null;
+  const todayDate = getIsoDateInTimeZone(new Date(), timezoneInput) || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(todayDate)) return null;
+  const targetUtc = new Date(`${targetDate}T00:00:00.000Z`);
+  const todayUtc = new Date(`${todayDate}T00:00:00.000Z`);
+  if (Number.isNaN(targetUtc.getTime()) || Number.isNaN(todayUtc.getTime())) return null;
+  return Math.round((targetUtc.getTime() - todayUtc.getTime()) / 86400000);
+};
+
+const buildDeadlineSummaryLabel = (dateInput, timezoneInput) => {
+  const dueDate = String(dateInput || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return 'Deadline not set';
+  const dayDiff = dayDiffFromTodayByTimezone(dueDate, timezoneInput);
+  if (dayDiff === null) return 'Deadline not set';
+  if (dayDiff > 0) return `Due in ${dayDiff} day${dayDiff > 1 ? 's' : ''}`;
+  if (dayDiff === 0) return 'Due today';
+  const overdueDays = Math.abs(dayDiff);
+  return `Overdue ${overdueDays} day${overdueDays > 1 ? 's' : ''}`;
+};
+
 const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
   const tasks = Array.isArray(tasksInput) ? tasksInput : [];
   const maxItems = Math.max(1, Math.min(10, Number(options.maxItems || 6)));
   const memberMap = options.teamMembersById instanceof Map ? options.teamMembersById : null;
-  const includeAssignees = options.includeAssignees === true;
+  const departmentColorMap =
+    options.departmentColorMap && typeof options.departmentColorMap === 'object'
+      ? options.departmentColorMap
+      : {};
+  const timezone = normalizeLineReminderTimezone(options.timezone);
   const displayedTasks = tasks.slice(0, maxItems);
   const rows = displayedTasks.map((task, index) => {
     const title = clampLineText(task?.title || 'Untitled task', 90);
-    const dueDate = clampLineText(task?.endDate || task?.startDate || '-', 24);
-    const status = clampLineText(task?.status || 'To Do', 28);
-    const department = clampLineText(task?.department || '', 32);
-    const assigneeNames = includeAssignees
-      ? normalizeTaskAssigneeIds(task)
-          .map((assigneeId) => clampLineText(memberMap?.get(assigneeId) || assigneeId, 28))
-          .filter(Boolean)
-      : [];
-    const metaParts = [`Due ${dueDate}`, `Status ${status}`];
-    if (department) metaParts.push(`Dept ${department}`);
-    if (assigneeNames.length > 0) metaParts.push(`Assignee ${assigneeNames.join(', ')}`);
+    const dueDate = String(task?.endDate || task?.startDate || '').trim();
+    const statusTone = resolveTaskStatusTone(task?.status || 'To Do');
+    const departmentTone = resolveDepartmentTone(task?.department || 'Unassigned', departmentColorMap);
+    const deadlineSummary = buildDeadlineSummaryLabel(dueDate, timezone);
+    const dueDateLabel = formatIsoDateDmy(dueDate);
+    const assignees = normalizeTaskAssigneeIds(task)
+      .map((assigneeId) => resolveLineMemberProfile(memberMap, assigneeId))
+      .filter(Boolean);
+    const assigneeAvatarContents = assignees.slice(0, 5).map((assignee) => ({
+      type: 'icon',
+      url: assignee.avatarUrl,
+      size: 'sm',
+    }));
+    const overflowAssigneeCount = Math.max(0, assignees.length - assigneeAvatarContents.length);
+    if (overflowAssigneeCount > 0) {
+      assigneeAvatarContents.push({
+        type: 'text',
+        text: `+${overflowAssigneeCount}`,
+        size: 'xs',
+        color: '#64748b',
+      });
+    }
+    if (assigneeAvatarContents.length === 0) {
+      assigneeAvatarContents.push({
+        type: 'text',
+        text: '-',
+        size: 'xs',
+        color: '#94a3b8',
+      });
+    }
     return {
       type: 'box',
       layout: 'vertical',
-      spacing: '4px',
-      paddingAll: '10px',
+      spacing: '8px',
+      paddingAll: '12px',
       backgroundColor: '#f8fafc',
       borderColor: '#e2e8f0',
       borderWidth: '1px',
       cornerRadius: '10px',
       contents: [
         {
-          type: 'text',
-          text: `${index + 1}. ${title}`,
-          size: 'sm',
-          weight: 'bold',
-          color: '#0f172a',
-          wrap: true,
+          type: 'box',
+          layout: 'horizontal',
+          alignItems: 'flex-start',
+          contents: [
+            {
+              type: 'text',
+              text: `${index + 1}. ${title}`,
+              size: 'sm',
+              weight: 'bold',
+              color: '#0f172a',
+              wrap: true,
+              flex: 1,
+            },
+            {
+              type: 'box',
+              layout: 'vertical',
+              backgroundColor: statusTone.backgroundColor,
+              borderColor: statusTone.borderColor,
+              borderWidth: '1px',
+              cornerRadius: '999px',
+              paddingTop: '2px',
+              paddingBottom: '2px',
+              paddingStart: '8px',
+              paddingEnd: '8px',
+              margin: 'sm',
+              contents: [
+                {
+                  type: 'text',
+                  text: clampLineText(statusTone.label, 16),
+                  size: 'xxs',
+                  weight: 'bold',
+                  color: statusTone.textColor,
+                },
+              ],
+            },
+          ],
         },
         {
           type: 'text',
-          text: clampLineText(metaParts.join(' | '), 220),
+          text: clampLineText(`${deadlineSummary} | Due ${dueDateLabel}`, 180),
           size: 'xs',
-          color: '#475569',
+          color: '#334155',
           wrap: true,
+        },
+        {
+          type: 'box',
+          layout: 'vertical',
+          backgroundColor: departmentTone.backgroundColor,
+          borderColor: departmentTone.borderColor,
+          borderWidth: '1px',
+          cornerRadius: '999px',
+          paddingTop: '2px',
+          paddingBottom: '2px',
+          paddingStart: '8px',
+          paddingEnd: '8px',
+          contents: [
+            {
+              type: 'text',
+              text: departmentTone.label,
+              size: 'xxs',
+              weight: 'bold',
+              color: departmentTone.textColor,
+              wrap: true,
+            },
+          ],
+        },
+        {
+          type: 'box',
+          layout: 'horizontal',
+          spacing: '6px',
+          alignItems: 'center',
+          contents: assigneeAvatarContents,
         },
       ],
     };
@@ -497,6 +714,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
 };
 
 const buildLineCardFlexMessage = ({
+  headerLabel = 'PM Calendar',
   altText,
   title,
   subtitle,
@@ -506,6 +724,7 @@ const buildLineCardFlexMessage = ({
   rows = [],
   footerNote = '',
 }) => {
+  const safeHeaderLabel = clampLineText(headerLabel, 50) || 'PM Calendar';
   const safeAltText = clampLineText(altText, 380) || 'PM Calendar update';
   const safeTitle = clampLineText(title, 64) || 'PM Calendar';
   const safeSubtitle = clampLineText(subtitle, 120);
@@ -534,7 +753,7 @@ const buildLineCardFlexMessage = ({
             contents: [
               {
                 type: 'text',
-                text: 'PM Calendar',
+                text: safeHeaderLabel,
                 size: 'xs',
                 color: '#ffffffcc',
               },
@@ -651,6 +870,7 @@ const buildLineAnnouncementMessage = ({ projectName, sentAt, message }) => {
     ],
   };
   return buildLineCardFlexMessage({
+    headerLabel: safeProjectName,
     altText: `[PM Calendar] Announcement ${safeProjectName}`,
     title: 'Project Announcement',
     subtitle: safeSentAt ? `${safeProjectName} | ${safeSentAt}` : safeProjectName,
@@ -662,24 +882,29 @@ const buildLineAnnouncementMessage = ({ projectName, sentAt, message }) => {
   });
 };
 
-const buildLineOpenTasksDigestMessage = ({ projectName, sentAt, tasks, teamMembersById }) => {
+const buildLineOpenTasksDigestMessage = ({
+  projectName,
+  tasks,
+  teamMembersById,
+  departmentColorMap,
+  timezone,
+}) => {
   const safeProjectName = String(projectName || '').trim() || 'Project';
-  const safeSentAt = String(sentAt || '').trim();
   const taskList = Array.isArray(tasks) ? tasks : [];
   const taskRows = buildLineTaskRowsForFlex(taskList, {
     maxItems: 6,
-    includeAssignees: true,
     teamMembersById,
+    departmentColorMap,
+    timezone,
   });
-  const subtitle = safeSentAt ? `${safeProjectName} | ${safeSentAt}` : safeProjectName;
   const footerNote =
     taskRows.remainingCount > 0
       ? `Showing ${taskRows.displayedCount} of ${taskRows.totalCount} tasks`
       : `Total ${taskRows.totalCount} tasks`;
   return buildLineCardFlexMessage({
+    headerLabel: safeProjectName,
     altText: `[PM Calendar] Open tasks ${safeProjectName} (${taskRows.totalCount})`,
     title: 'Open Task Summary',
-    subtitle,
     accentColor: '#2563eb',
     statLabel: 'Open Tasks',
     statValue: `${taskRows.totalCount} tasks`,
@@ -688,14 +913,22 @@ const buildLineOpenTasksDigestMessage = ({ projectName, sentAt, tasks, teamMembe
   });
 };
 
-const buildLineReminderMessage = ({ projectName, targetDate, tasks, teamMembersById }) => {
+const buildLineReminderMessage = ({
+  projectName,
+  targetDate,
+  tasks,
+  teamMembersById,
+  departmentColorMap,
+  timezone,
+}) => {
   const safeProjectName = String(projectName || '').trim() || 'Project';
   const safeDate = String(targetDate || '').trim();
   const taskList = Array.isArray(tasks) ? tasks : [];
   const taskRows = buildLineTaskRowsForFlex(taskList, {
     maxItems: 6,
-    includeAssignees: true,
     teamMembersById,
+    departmentColorMap,
+    timezone,
   });
   const subtitle = safeDate ? `${safeProjectName} | Due ${safeDate}` : safeProjectName;
   const footerNote =
@@ -703,6 +936,7 @@ const buildLineReminderMessage = ({ projectName, targetDate, tasks, teamMembersB
       ? `Showing ${taskRows.displayedCount} of ${taskRows.totalCount} tasks`
       : `Total ${taskRows.totalCount} tasks`;
   return buildLineCardFlexMessage({
+    headerLabel: safeProjectName,
     altText: `[PM Calendar] Due tomorrow ${safeProjectName} (${taskRows.totalCount})`,
     title: 'Tasks Due Tomorrow',
     subtitle,
@@ -3189,15 +3423,21 @@ app.post('/line/reminder/notify-open-tasks', requireAuth, async (req, res) => {
       const memberId = String(member?.id || '').trim();
       if (!memberId) return;
       const memberName = String(member?.name || member?.username || '').trim() || memberId;
-      teamMembersById.set(memberId, memberName);
+      const memberAvatarUrl = String(member?.avatarUrl || '').trim();
+      teamMembersById.set(memberId, {
+        id: memberId,
+        name: memberName,
+        avatarUrl: memberAvatarUrl,
+      });
     });
 
     const nowIso = new Date().toISOString();
     const digestMessage = buildLineOpenTasksDigestMessage({
       projectName: ownership.project?.name || projectId,
-      sentAt: nowIso,
       tasks: openTasks,
       teamMembersById,
+      departmentColorMap: ownership.project?.departmentColors,
+      timezone: config.timezone,
     });
 
     await sendLinePushMessage({
@@ -3348,13 +3588,20 @@ app.post('/internal/jobs/line/remind-due-tomorrow', async (req, res) => {
           const memberId = String(member?.id || '').trim();
           if (!memberId) return;
           const memberName = String(member?.name || member?.username || '').trim() || memberId;
-          teamMembersById.set(memberId, memberName);
+          const memberAvatarUrl = String(member?.avatarUrl || '').trim();
+          teamMembersById.set(memberId, {
+            id: memberId,
+            name: memberName,
+            avatarUrl: memberAvatarUrl,
+          });
         });
         const message = buildLineReminderMessage({
           projectName: ownership.project?.name || projectId,
           targetDate,
           tasks: dueTasks,
           teamMembersById,
+          departmentColorMap: ownership.project?.departmentColors,
+          timezone: timezone,
         });
         await sendLinePushMessage({
           channelAccessToken: config.channelAccessToken,
