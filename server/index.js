@@ -606,9 +606,6 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
       size: 'xs',
       aspectMode: 'cover',
       aspectRatio: '1:1',
-      gravity: 'center',
-      cornerRadius: '999px',
-      flex: 0,
     }));
     const overflowAssigneeCount = Math.max(0, assignees.length - assigneeAvatarContents.length);
     if (overflowAssigneeCount > 0) {
