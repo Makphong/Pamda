@@ -2131,6 +2131,7 @@ const DEFAULT_LINE_REMINDER_PROJECT_CONFIG = {
   tokenPreview: '',
   updatedAt: null,
   lastTestedAt: null,
+  lastOpenTaskDigestAt: null,
 };
 const normalizeLineReminderProjectConfig = (configInput) => {
   const config = configInput && typeof configInput === 'object' && !Array.isArray(configInput)
@@ -2152,6 +2153,7 @@ const normalizeLineReminderProjectConfig = (configInput) => {
     tokenPreview: String(config.tokenPreview || '').trim(),
     updatedAt: config.updatedAt ? String(config.updatedAt) : null,
     lastTestedAt: config.lastTestedAt ? String(config.lastTestedAt) : null,
+    lastOpenTaskDigestAt: config.lastOpenTaskDigestAt ? String(config.lastOpenTaskDigestAt) : null,
   };
 };
 const LINE_REMINDER_HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => ({
@@ -11041,6 +11043,7 @@ function ProjectDashboard({
   const [isLineReminderConfigLoading, setIsLineReminderConfigLoading] = useState(false);
   const [isLineReminderConfigSaving, setIsLineReminderConfigSaving] = useState(false);
   const [isLineReminderTestSending, setIsLineReminderTestSending] = useState(false);
+  const [isLineReminderOpenTasksSending, setIsLineReminderOpenTasksSending] = useState(false);
   const [isLineReminderGuidePopupOpen, setIsLineReminderGuidePopupOpen] = useState(false);
 
   const normalizeAnnouncementRecord = (value) => {
@@ -11820,17 +11823,25 @@ function ProjectDashboard({
     if (!AUTH_API_BASE_URL) {
       void popup.alert({
         title: 'API not configured',
-        message: 'Set AUTH_API_BASE_URL before testing LINE reminder.',
+        message: 'Set AUTH_API_BASE_URL before sending LINE announcement.',
       });
       return;
     }
     const messageInput = await popup.prompt({
-      title: 'LINE test message',
-      message: 'Enter optional test text (leave blank to use default).',
-      placeholder: '[PM Calendar] Test message',
-      confirmText: 'Send',
+      title: 'ประกาศข้อความ',
+      message: 'กรอกข้อความที่ต้องการประกาศเข้า LINE กลุ่มของโปรเจกต์นี้',
+      placeholder: 'เช่น วันนี้ทีมประชุมเวลา 16:00',
+      confirmText: 'ประกาศ',
     });
     if (messageInput === null) return;
+    const trimmedMessage = String(messageInput || '').trim();
+    if (!trimmedMessage) {
+      void popup.alert({
+        title: 'ข้อความว่าง',
+        message: 'กรุณากรอกข้อความก่อนประกาศ',
+      });
+      return;
+    }
 
     setIsLineReminderTestSending(true);
     setLineReminderConfigError('');
@@ -11840,7 +11851,7 @@ function ProjectDashboard({
         body: {
           userId: currentUser.id,
           projectId: project.id,
-          message: String(messageInput || '').trim(),
+          message: trimmedMessage,
         },
       });
       const sentAt = String(result?.sentAt || '').trim();
@@ -11851,18 +11862,71 @@ function ProjectDashboard({
         })
       );
       void popup.alert({
-        title: 'Sent',
-        message: 'Test message was sent to LINE group.',
+        title: 'ประกาศสำเร็จ',
+        message: 'ส่งข้อความประกาศไปยัง LINE กลุ่มเรียบร้อยแล้ว',
       });
     } catch (error) {
-      const message = error?.message || 'Failed to send LINE test message.';
+      const message = error?.message || 'Failed to send LINE announcement.';
       setLineReminderConfigError(message);
       void popup.alert({
-        title: 'Send failed',
+        title: 'ประกาศไม่สำเร็จ',
         message,
       });
     } finally {
       setIsLineReminderTestSending(false);
+    }
+  };
+  const handleNotifyAllOpenTasksToLine = async () => {
+    if (!isProjectHost) return;
+    if (!AUTH_API_BASE_URL) {
+      void popup.alert({
+        title: 'API not configured',
+        message: 'Set AUTH_API_BASE_URL before sending open task summary.',
+      });
+      return;
+    }
+
+    const confirmed = await popup.confirm({
+      title: 'แจ้งเตือน Task ทั้งหมด',
+      message: 'ส่งสรุปงานที่ยังไม่เสร็จทั้งหมดในโปรเจกต์นี้ไปที่ LINE กลุ่ม?',
+      confirmText: 'ส่งแจ้งเตือน',
+    });
+    if (!confirmed) return;
+
+    setIsLineReminderOpenTasksSending(true);
+    setLineReminderConfigError('');
+    try {
+      const result = await requestCloudDataApi('/line/reminder/notify-open-tasks', {
+        method: 'POST',
+        body: {
+          userId: currentUser.id,
+          projectId: project.id,
+        },
+      });
+      const sentAt = String(result?.sentAt || '').trim();
+      setLineReminderConfig((prev) =>
+        normalizeLineReminderProjectConfig({
+          ...prev,
+          lastOpenTaskDigestAt: sentAt || prev.lastOpenTaskDigestAt || new Date().toISOString(),
+        })
+      );
+      const openTaskCount = Number(result?.openTaskCount || 0);
+      void popup.alert({
+        title: 'ส่งสำเร็จ',
+        message:
+          openTaskCount > 0
+            ? `ส่งสรุปงานค้าง ${openTaskCount} งานไปยัง LINE กลุ่มแล้ว`
+            : 'โปรเจกต์นี้ไม่มีงานค้างที่ต้องแจ้งเตือน',
+      });
+    } catch (error) {
+      const message = error?.message || 'Failed to notify open tasks.';
+      setLineReminderConfigError(message);
+      void popup.alert({
+        title: 'ส่งไม่สำเร็จ',
+        message,
+      });
+    } finally {
+      setIsLineReminderOpenTasksSending(false);
     }
   };
 
@@ -13751,9 +13815,15 @@ function ProjectDashboard({
                               : '-'}
                           </p>
                           <p>
-                            Last test:{' '}
+                            Last announcement:{' '}
                             {lineReminderConfig.lastTestedAt
                               ? new Date(lineReminderConfig.lastTestedAt).toLocaleString()
+                              : '-'}
+                          </p>
+                          <p>
+                            Last open-task summary:{' '}
+                            {lineReminderConfig.lastOpenTaskDigestAt
+                              ? new Date(lineReminderConfig.lastOpenTaskDigestAt).toLocaleString()
                               : '-'}
                           </p>
                         </div>
@@ -13761,11 +13831,23 @@ function ProjectDashboard({
                         <div className="flex flex-wrap items-center justify-end gap-2">
                           <button
                             type="button"
-                            onClick={() => void handleSendLineReminderTestMessage()}
-                            disabled={isLineReminderTestSending || isLineReminderConfigSaving}
+                            onClick={() => void handleNotifyAllOpenTasksToLine()}
+                            disabled={
+                              isLineReminderOpenTasksSending ||
+                              isLineReminderTestSending ||
+                              isLineReminderConfigSaving
+                            }
                             className="px-3 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
                           >
-                            {isLineReminderTestSending ? 'Sending...' : 'Send test'}
+                            {isLineReminderOpenTasksSending ? 'กำลังส่ง...' : 'แจ้งเตือน Task ทั้งหมด'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleSendLineReminderTestMessage()}
+                            disabled={isLineReminderTestSending || isLineReminderConfigSaving}
+                            className="px-3 py-2 rounded-lg border border-blue-200 text-blue-700 bg-blue-50 text-sm font-semibold hover:bg-blue-100 disabled:opacity-60"
+                          >
+                            {isLineReminderTestSending ? 'กำลังประกาศ...' : 'ประกาศข้อความ'}
                           </button>
                           <button
                             type="button"
@@ -14283,7 +14365,8 @@ function ProjectDashboard({
                 <li>กด Issue / Reissue เพื่อคัดลอก Channel Access Token</li>
                 <li>เชิญ LINE OA (บอท) เข้า LINE กลุ่มงาน</li>
                 <li>ใส่ Group ID + Token ในฟอร์มนี้ และกด Save settings</li>
-                <li>กด Send test เพื่อตรวจว่าบอทส่งเข้ากลุ่มได้จริง</li>
+                <li>กด ปุ่มประกาศข้อความ เพื่อทดสอบส่งข้อความเข้ากลุ่ม</li>
+                <li>กด ปุ่มแจ้งเตือน Task ทั้งหมด เพื่อส่งสรุปงานค้างทั้งหมดในโปรเจกต์</li>
                 <li>ตั้ง Cloud Scheduler ให้เรียก endpoint งานเตือนทุกชั่วโมง</li>
               </ol>
               <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">

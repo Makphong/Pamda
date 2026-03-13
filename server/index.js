@@ -335,6 +335,7 @@ const normalizeLineReminderConfigRecord = (recordInput, options = {}) => {
     updatedAt: String(record.updatedAt || '').trim() || null,
     createdAt: String(record.createdAt || '').trim() || null,
     lastTestedAt: String(record.lastTestedAt || '').trim() || null,
+    lastOpenTaskDigestAt: String(record.lastOpenTaskDigestAt || '').trim() || null,
     tokenConfigured: Boolean(channelAccessToken),
     tokenPreview: buildLineTokenPreview(channelAccessToken),
   };
@@ -355,6 +356,7 @@ const toLineReminderPublicResponse = (recordInput) => {
     tokenPreview: normalized.tokenPreview,
     updatedAt: normalized.updatedAt,
     lastTestedAt: normalized.lastTestedAt,
+    lastOpenTaskDigestAt: normalized.lastOpenTaskDigestAt,
   };
 };
 
@@ -398,6 +400,72 @@ const isTaskRecord = (eventInput) => {
   if (recordType === 'task') return true;
   if (recordType === 'event') return false;
   return Boolean(Array.isArray(event.assigneeIds));
+};
+
+const isCompletedTaskRecord = (taskInput) => {
+  const task = taskInput && typeof taskInput === 'object' ? taskInput : {};
+  const status = String(task.status || '').trim().toLowerCase();
+  return status === 'done' || status === 'completed' || task.completed === true;
+};
+
+const normalizeTaskAssigneeIds = (taskInput) => {
+  const task = taskInput && typeof taskInput === 'object' ? taskInput : {};
+  const assigneeSet = new Set();
+  (Array.isArray(task.assigneeIds) ? task.assigneeIds : []).forEach((id) => {
+    const safeId = String(id || '').trim();
+    if (safeId) assigneeSet.add(safeId);
+  });
+  const fallbackAssigneeId = String(task.assigneeId || '').trim();
+  if (fallbackAssigneeId) assigneeSet.add(fallbackAssigneeId);
+  return Array.from(assigneeSet);
+};
+
+const buildLineOpenTasksDigestMessage = ({ projectName, sentAt, tasks, teamMembersById }) => {
+  const safeProjectName = String(projectName || '').trim() || 'Project';
+  const safeSentAt = String(sentAt || '').trim();
+  const taskList = Array.isArray(tasks) ? tasks : [];
+  const memberMap = teamMembersById instanceof Map ? teamMembersById : new Map();
+  const maxLength = 4900;
+  const lines = [
+    '[PM Calendar] Open Task Summary',
+    `Project: ${safeProjectName}`,
+    safeSentAt ? `Updated: ${safeSentAt}` : null,
+    `Open tasks: ${taskList.length}`,
+    '',
+  ].filter(Boolean);
+
+  let appendedCount = 0;
+  for (let index = 0; index < taskList.length; index += 1) {
+    const task = taskList[index] || {};
+    const title = String(task.title || '').trim() || 'Untitled task';
+    const status = String(task.status || '').trim() || 'To Do';
+    const dueDate = String(task.endDate || '').trim() || '-';
+    const department = String(task.department || '').trim();
+    const assigneeNames = normalizeTaskAssigneeIds(task)
+      .map((assigneeId) => String(memberMap.get(assigneeId) || '').trim())
+      .filter(Boolean);
+    const block = [
+      `${index + 1}. ${title}`,
+      `Status: ${status}`,
+      `Due: ${dueDate}`,
+      department ? `Dept: ${department}` : null,
+      assigneeNames.length > 0 ? `Assignee: ${assigneeNames.join(', ')}` : null,
+      '',
+    ].filter(Boolean);
+    const candidateText = [...lines, ...block].join('\n');
+    if (candidateText.length > maxLength) {
+      break;
+    }
+    lines.push(...block);
+    appendedCount += 1;
+  }
+
+  const remaining = taskList.length - appendedCount;
+  if (remaining > 0) {
+    lines.push(`... and ${remaining} more open task(s).`);
+  }
+
+  return lines.join('\n').slice(0, maxLength);
 };
 
 const buildLineReminderMessage = ({ projectName, targetDate, tasks }) => {
@@ -2781,7 +2849,7 @@ app.post('/line/reminder/test-push', requireAuth, async (req, res) => {
     if (!ownership.isOwner) {
       return res
         .status(403)
-        .json({ message: 'Only project host can send LINE test messages for this project.' });
+        .json({ message: 'Only project host can send LINE announcement messages for this project.' });
     }
 
     const docRef = lineReminderConfigRef.doc(lineReminderDocIdFor(userId, projectId));
@@ -2797,13 +2865,20 @@ app.post('/line/reminder/test-push', requireAuth, async (req, res) => {
       return res.status(400).json({ message: 'LINE group ID is not configured.' });
     }
 
-    const nowIso = new Date().toISOString();
     const userMessage = String(req.body?.message || '').trim();
-    const message =
-      userMessage ||
-      `[PM Calendar] Test message\nProject: ${
-        String(ownership.project?.name || '').trim() || projectId
-      }\nTime: ${nowIso}`;
+    if (!userMessage) {
+      return res.status(400).json({ message: 'message is required.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const message = [
+      '[PM Calendar] Announcement',
+      `Project: ${String(ownership.project?.name || '').trim() || projectId}`,
+      '',
+      userMessage,
+      '',
+      `Sent at: ${nowIso}`,
+    ].join('\n');
 
     await sendLinePushMessage({
       channelAccessToken: config.channelAccessToken,
@@ -2821,11 +2896,115 @@ app.post('/line/reminder/test-push', requireAuth, async (req, res) => {
 
     return res.json({
       ok: true,
-      message: 'LINE test message sent.',
+      message: 'LINE announcement message sent.',
       sentAt: nowIso,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to send LINE test message.' });
+    return res.status(500).json({ message: error.message || 'Failed to send LINE announcement message.' });
+  }
+});
+
+app.post('/line/reminder/notify-open-tasks', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.body?.userId);
+    const projectId = String(req.body?.projectId || '').trim();
+    if (!userId || !projectId) {
+      return res.status(400).json({ message: 'userId and projectId are required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
+    }
+
+    const ownership = await loadOwnedProjectById({
+      userId,
+      projectId,
+      authUsername: req.authUser?.username,
+    });
+    if (!ownership.foundProject) {
+      return res.status(404).json({ message: 'Project not found.' });
+    }
+    if (!ownership.isOwner) {
+      return res
+        .status(403)
+        .json({ message: 'Only project host can notify open tasks for this project.' });
+    }
+
+    const docRef = lineReminderConfigRef.doc(lineReminderDocIdFor(userId, projectId));
+    const snapshot = await docRef.get();
+    if (!snapshot.exists) {
+      return res.status(404).json({ message: 'LINE reminder settings not found for this project.' });
+    }
+    const config = normalizeLineReminderConfigRecord(snapshot.data() || {}, { includeSecrets: true });
+    if (!config.channelAccessToken) {
+      return res.status(400).json({ message: 'LINE channel access token is not configured.' });
+    }
+    if (!config.groupId) {
+      return res.status(400).json({ message: 'LINE group ID is not configured.' });
+    }
+
+    const ownerEvents = Array.isArray(ownership.payload?.events) ? ownership.payload.events : [];
+    const openTasks = ownerEvents
+      .filter((event) => {
+        if (!isTaskRecord(event)) return false;
+        if (String(event?.projectId || '').trim() !== projectId) return false;
+        return !isCompletedTaskRecord(event);
+      })
+      .sort((left, right) => {
+        const leftDate = String(left?.endDate || left?.startDate || '').trim();
+        const rightDate = String(right?.endDate || right?.startDate || '').trim();
+        if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+        const leftTitle = String(left?.title || '').trim();
+        const rightTitle = String(right?.title || '').trim();
+        return leftTitle.localeCompare(rightTitle, undefined, { sensitivity: 'base' });
+      });
+
+    if (openTasks.length === 0) {
+      return res.json({
+        ok: true,
+        message: 'No open tasks found for this project.',
+        openTaskCount: 0,
+      });
+    }
+
+    const teamMembers = Array.isArray(ownership.project?.teamMembers) ? ownership.project.teamMembers : [];
+    const teamMembersById = new Map();
+    teamMembers.forEach((member) => {
+      const memberId = String(member?.id || '').trim();
+      if (!memberId) return;
+      const memberName = String(member?.name || member?.username || '').trim() || memberId;
+      teamMembersById.set(memberId, memberName);
+    });
+
+    const nowIso = new Date().toISOString();
+    const digestMessage = buildLineOpenTasksDigestMessage({
+      projectName: ownership.project?.name || projectId,
+      sentAt: nowIso,
+      tasks: openTasks,
+      teamMembersById,
+    });
+
+    await sendLinePushMessage({
+      channelAccessToken: config.channelAccessToken,
+      to: config.groupId,
+      message: digestMessage,
+    });
+
+    await docRef.set(
+      {
+        lastOpenTaskDigestAt: nowIso,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+
+    return res.json({
+      ok: true,
+      message: 'Open task summary sent.',
+      openTaskCount: openTasks.length,
+      sentAt: nowIso,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to notify open tasks.' });
   }
 });
 
