@@ -12942,8 +12942,8 @@ function ProjectDashboard({
                     {orgTree.roots.length === 0 ? (
                       <div className="text-sm text-gray-500 italic">No member in structure yet.</div>
                     ) : (
-                      <div className="overflow-x-auto pb-2">
-                        <div className="pm-org-forest min-w-max">
+                      <div className="overflow-x-hidden md:overflow-x-auto pb-2">
+                        <div className="pm-org-forest min-w-0 md:min-w-max">
                           {orgTree.roots.map((rootMember) => (
                             <div key={`root-${rootMember.id}`} className="pm-org-island">
                               <ul className="pm-org-root">
@@ -13038,10 +13038,42 @@ function ProjectDashboard({
                       height: 1.45rem;
                       background: #64748b;
                     }
-                    @media (max-width: 768px) {
+                    @media (max-width: 767px) {
+                      .pm-org-forest {
+                        display: block;
+                        width: 100%;
+                        gap: 0;
+                        padding: 0.25rem 0 0.5rem;
+                      }
+                      .pm-org-island {
+                        display: block;
+                        width: 100%;
+                      }
+                      .pm-org-root {
+                        display: block;
+                        width: 100%;
+                        margin: 0;
+                      }
                       .pm-org-item {
-                        padding-left: 0.5rem;
-                        padding-right: 0.5rem;
+                        width: 100%;
+                        padding: 0;
+                      }
+                      .pm-org-node-wrap {
+                        justify-content: flex-start;
+                      }
+                      .pm-org-children {
+                        display: block;
+                        width: 100%;
+                        margin: 0.6rem 0 0;
+                        padding: 0 0 0 0.9rem;
+                      }
+                      .pm-org-children::before,
+                      .pm-org-children > .pm-org-item::before,
+                      .pm-org-children > .pm-org-item > .pm-org-node-wrap::before {
+                        display: none;
+                      }
+                      .pm-org-children > .pm-org-item > .pm-org-node-wrap {
+                        padding-top: 0.5rem;
                       }
                     }
                   `}</style>
@@ -14489,17 +14521,17 @@ function TaskDetailPane({
 // Helper component for Org Chart Nodes
 function OrgNode({ member }) {
   return (
-    <div className="mx-auto w-[220px] rounded-2xl border border-slate-200 bg-white px-4 pt-5 pb-4 shadow-[0_10px_28px_-18px_rgba(15,23,42,0.55)] flex flex-col items-center text-center transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-20px_rgba(15,23,42,0.55)]">
+    <div className="w-full max-w-[180px] md:w-[220px] md:max-w-none mx-0 md:mx-auto rounded-2xl border border-slate-200 bg-white px-3 md:px-4 pt-4 md:pt-5 pb-3 md:pb-4 shadow-[0_10px_28px_-18px_rgba(15,23,42,0.55)] flex flex-col items-center text-center transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-20px_rgba(15,23,42,0.55)]">
       <div className="mb-3">
         <UserAvatar
           user={member}
-          sizeClass="w-14 h-14"
-          textClass="text-sm"
+          sizeClass="w-12 h-12 md:w-14 md:h-14"
+          textClass="text-xs md:text-sm"
           ringClass="ring-[3px] ring-white shadow-md"
         />
       </div>
-      <p className="font-semibold text-slate-800 text-[15px] leading-tight truncate w-full">{member.name}</p>
-      <p className="mt-2 inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600 max-w-full truncate">
+      <p className="font-semibold text-slate-800 text-sm md:text-[15px] leading-tight truncate w-full">{member.name}</p>
+      <p className="mt-2 inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 md:px-3 py-1 text-[10px] md:text-[11px] font-medium text-slate-600 max-w-full truncate">
         {member.position || member.role || 'Team Member'}
       </p>
     </div>
