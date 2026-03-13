@@ -24729,7 +24729,7 @@ function NoteEditor({
               isMobileFullSheetToolbarMode ? 'pb-28' : ''
             }`}
           >
-            <table className="min-w-full border-collapse text-xs">
+            <table className="w-max min-w-full border-collapse table-fixed text-xs">
               <thead
                 className="sticky top-0 z-10"
                 data-note-sheet-column-header={isFullScreen ? 'true' : undefined}
@@ -24737,7 +24737,10 @@ function NoteEditor({
                 <tr>
                   <th className="w-12 bg-slate-100 border border-slate-200 text-slate-500 font-semibold">#</th>
                   {Array.from({ length: sheetCols }, (_, colIndex) => (
-                    <th key={`sheet-header-${colIndex}`} className="min-w-[120px] bg-slate-100 border border-slate-200 text-slate-600 font-semibold h-8">
+                    <th
+                      key={`sheet-header-${colIndex}`}
+                      className="w-[120px] min-w-[120px] bg-slate-100 border border-slate-200 text-slate-600 font-semibold h-8"
+                    >
                       {toSheetColumnLabel(colIndex)}
                     </th>
                   ))}
@@ -24891,7 +24894,7 @@ function NoteEditor({
                                 event.stopPropagation();
                               }}
                               onChange={(event) => updateSheetCell(rowIndex, colIndex, event.target.value)}
-                              className="w-full h-9 px-2 bg-transparent outline-none text-slate-700"
+                              className="block w-full min-w-0 max-w-full h-9 px-2 bg-transparent outline-none text-slate-700"
                               style={{
                                 fontWeight: cell.style.bold ? 700 : 400,
                                 fontStyle: cell.style.italic ? 'italic' : 'normal',
@@ -24905,7 +24908,7 @@ function NoteEditor({
                             />
                           ) : (
                             <div
-                              className={`w-full px-2 text-slate-700 select-none cursor-cell ${
+                              className={`w-full min-w-0 max-w-full px-2 text-slate-700 select-none cursor-cell ${
                                 isCellWrapEnabled
                                   ? 'min-h-9 py-1 whitespace-pre-wrap break-words'
                                   : 'h-9 flex items-center overflow-hidden whitespace-nowrap text-ellipsis'
