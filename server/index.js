@@ -360,18 +360,33 @@ const toLineReminderPublicResponse = (recordInput) => {
   };
 };
 
+const clampLineText = (value, maxLength = 160) =>
+  String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+
+const normalizeLinePushMessages = (options = {}) => {
+  const explicitMessages = Array.isArray(options.messages) ? options.messages.filter(Boolean) : [];
+  if (explicitMessages.length > 0) return explicitMessages;
+  const text = String(options.message || '').trim();
+  if (!text) return [];
+  return [{ type: 'text', text: text.slice(0, 4900) }];
+};
+
 const sendLinePushMessage = async ({
   channelAccessToken,
   to,
   message,
+  messages,
   notificationDisabled = false,
 }) => {
   const token = String(channelAccessToken || '').trim();
   const target = String(to || '').trim();
-  const text = String(message || '').trim();
+  const preparedMessages = normalizeLinePushMessages({ message, messages });
   if (!token) throw new Error('LINE channel access token is not configured.');
   if (!target) throw new Error('LINE group ID is required.');
-  if (!text) throw new Error('LINE message is empty.');
+  if (preparedMessages.length === 0) throw new Error('LINE message is empty.');
 
   const response = await fetch('https://api.line.me/v2/bot/message/push', {
     method: 'POST',
@@ -382,7 +397,7 @@ const sendLinePushMessage = async ({
     },
     body: JSON.stringify({
       to: target,
-      messages: [{ type: 'text', text }],
+      messages: preparedMessages,
       notificationDisabled: notificationDisabled === true,
     }),
   });
@@ -420,78 +435,283 @@ const normalizeTaskAssigneeIds = (taskInput) => {
   return Array.from(assigneeSet);
 };
 
+const clampLineMultilineText = (value, maxLength = 400) =>
+  String(value || '')
+    .replace(/\r/g, '')
+    .trim()
+    .slice(0, maxLength);
+
+const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
+  const tasks = Array.isArray(tasksInput) ? tasksInput : [];
+  const maxItems = Math.max(1, Math.min(10, Number(options.maxItems || 6)));
+  const memberMap = options.teamMembersById instanceof Map ? options.teamMembersById : null;
+  const includeAssignees = options.includeAssignees === true;
+  const displayedTasks = tasks.slice(0, maxItems);
+  const rows = displayedTasks.map((task, index) => {
+    const title = clampLineText(task?.title || 'Untitled task', 90);
+    const dueDate = clampLineText(task?.endDate || task?.startDate || '-', 24);
+    const status = clampLineText(task?.status || 'To Do', 28);
+    const department = clampLineText(task?.department || '', 32);
+    const assigneeNames = includeAssignees
+      ? normalizeTaskAssigneeIds(task)
+          .map((assigneeId) => clampLineText(memberMap?.get(assigneeId) || assigneeId, 28))
+          .filter(Boolean)
+      : [];
+    const metaParts = [`Due ${dueDate}`, `Status ${status}`];
+    if (department) metaParts.push(`Dept ${department}`);
+    if (assigneeNames.length > 0) metaParts.push(`Assignee ${assigneeNames.join(', ')}`);
+    return {
+      type: 'box',
+      layout: 'vertical',
+      spacing: '4px',
+      paddingAll: '10px',
+      backgroundColor: '#f8fafc',
+      borderColor: '#e2e8f0',
+      borderWidth: '1px',
+      cornerRadius: '10px',
+      contents: [
+        {
+          type: 'text',
+          text: `${index + 1}. ${title}`,
+          size: 'sm',
+          weight: 'bold',
+          color: '#0f172a',
+          wrap: true,
+        },
+        {
+          type: 'text',
+          text: clampLineText(metaParts.join(' | '), 220),
+          size: 'xs',
+          color: '#475569',
+          wrap: true,
+        },
+      ],
+    };
+  });
+  return {
+    rows,
+    remainingCount: Math.max(0, tasks.length - displayedTasks.length),
+    displayedCount: displayedTasks.length,
+    totalCount: tasks.length,
+  };
+};
+
+const buildLineCardFlexMessage = ({
+  altText,
+  title,
+  subtitle,
+  accentColor = '#2563eb',
+  statLabel = '',
+  statValue = '',
+  rows = [],
+  footerNote = '',
+}) => {
+  const safeAltText = clampLineText(altText, 380) || 'PM Calendar update';
+  const safeTitle = clampLineText(title, 64) || 'PM Calendar';
+  const safeSubtitle = clampLineText(subtitle, 120);
+  const safeStatLabel = clampLineText(statLabel, 32);
+  const safeStatValue = clampLineText(statValue, 42);
+  const safeFooterNote = clampLineText(footerNote, 180);
+  return {
+    type: 'flex',
+    altText: safeAltText,
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '12px',
+        paddingAll: '16px',
+        contents: [
+          {
+            type: 'box',
+            layout: 'vertical',
+            spacing: '4px',
+            paddingAll: '12px',
+            cornerRadius: '12px',
+            backgroundColor: accentColor,
+            contents: [
+              {
+                type: 'text',
+                text: 'PM Calendar',
+                size: 'xs',
+                color: '#ffffffcc',
+              },
+              {
+                type: 'text',
+                text: safeTitle,
+                size: 'lg',
+                weight: 'bold',
+                color: '#ffffff',
+                wrap: true,
+              },
+              ...(safeSubtitle
+                ? [
+                    {
+                      type: 'text',
+                      text: safeSubtitle,
+                      size: 'xs',
+                      color: '#ffffffcc',
+                      wrap: true,
+                    },
+                  ]
+                : []),
+            ],
+          },
+          ...(safeStatLabel || safeStatValue
+            ? [
+                {
+                  type: 'box',
+                  layout: 'horizontal',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingAll: '10px',
+                  cornerRadius: '10px',
+                  backgroundColor: '#eef2ff',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: safeStatLabel || 'Summary',
+                      size: 'xs',
+                      color: '#475569',
+                    },
+                    {
+                      type: 'text',
+                      text: safeStatValue || '-',
+                      size: 'sm',
+                      weight: 'bold',
+                      color: '#1e293b',
+                    },
+                  ],
+                },
+              ]
+            : []),
+          {
+            type: 'box',
+            layout: 'vertical',
+            spacing: '8px',
+            contents:
+              Array.isArray(rows) && rows.length > 0
+                ? rows
+                : [
+                    {
+                      type: 'text',
+                      text: 'No data',
+                      size: 'sm',
+                      color: '#64748b',
+                    },
+                  ],
+          },
+          ...(safeFooterNote
+            ? [
+                {
+                  type: 'text',
+                  text: safeFooterNote,
+                  size: 'xs',
+                  color: '#64748b',
+                  wrap: true,
+                },
+              ]
+            : []),
+        ],
+      },
+    },
+  };
+};
+
+const buildLineAnnouncementMessage = ({ projectName, sentAt, message }) => {
+  const safeProjectName = String(projectName || '').trim() || 'Project';
+  const safeSentAt = String(sentAt || '').trim();
+  const content = clampLineMultilineText(message, 700) || '-';
+  const announcementRow = {
+    type: 'box',
+    layout: 'vertical',
+    spacing: '6px',
+    paddingAll: '12px',
+    cornerRadius: '10px',
+    backgroundColor: '#f8fafc',
+    borderColor: '#e2e8f0',
+    borderWidth: '1px',
+    contents: [
+      {
+        type: 'text',
+        text: 'Announcement',
+        size: 'xs',
+        color: '#334155',
+        weight: 'bold',
+      },
+      {
+        type: 'text',
+        text: content,
+        size: 'sm',
+        color: '#0f172a',
+        wrap: true,
+      },
+    ],
+  };
+  return buildLineCardFlexMessage({
+    altText: `[PM Calendar] Announcement ${safeProjectName}`,
+    title: 'Project Announcement',
+    subtitle: safeSentAt ? `${safeProjectName} | ${safeSentAt}` : safeProjectName,
+    accentColor: '#0ea5e9',
+    statLabel: 'Project',
+    statValue: safeProjectName,
+    rows: [announcementRow],
+    footerNote: 'Sent from PM Calendar',
+  });
+};
+
 const buildLineOpenTasksDigestMessage = ({ projectName, sentAt, tasks, teamMembersById }) => {
   const safeProjectName = String(projectName || '').trim() || 'Project';
   const safeSentAt = String(sentAt || '').trim();
   const taskList = Array.isArray(tasks) ? tasks : [];
-  const memberMap = teamMembersById instanceof Map ? teamMembersById : new Map();
-  const maxLength = 4900;
-  const lines = [
-    '[PM Calendar] Open Task Summary',
-    `Project: ${safeProjectName}`,
-    safeSentAt ? `Updated: ${safeSentAt}` : null,
-    `Open tasks: ${taskList.length}`,
-    '',
-  ].filter(Boolean);
-
-  let appendedCount = 0;
-  for (let index = 0; index < taskList.length; index += 1) {
-    const task = taskList[index] || {};
-    const title = String(task.title || '').trim() || 'Untitled task';
-    const status = String(task.status || '').trim() || 'To Do';
-    const dueDate = String(task.endDate || '').trim() || '-';
-    const department = String(task.department || '').trim();
-    const assigneeNames = normalizeTaskAssigneeIds(task)
-      .map((assigneeId) => String(memberMap.get(assigneeId) || '').trim())
-      .filter(Boolean);
-    const block = [
-      `${index + 1}. ${title}`,
-      `Status: ${status}`,
-      `Due: ${dueDate}`,
-      department ? `Dept: ${department}` : null,
-      assigneeNames.length > 0 ? `Assignee: ${assigneeNames.join(', ')}` : null,
-      '',
-    ].filter(Boolean);
-    const candidateText = [...lines, ...block].join('\n');
-    if (candidateText.length > maxLength) {
-      break;
-    }
-    lines.push(...block);
-    appendedCount += 1;
-  }
-
-  const remaining = taskList.length - appendedCount;
-  if (remaining > 0) {
-    lines.push(`... and ${remaining} more open task(s).`);
-  }
-
-  return lines.join('\n').slice(0, maxLength);
+  const taskRows = buildLineTaskRowsForFlex(taskList, {
+    maxItems: 6,
+    includeAssignees: true,
+    teamMembersById,
+  });
+  const subtitle = safeSentAt ? `${safeProjectName} | ${safeSentAt}` : safeProjectName;
+  const footerNote =
+    taskRows.remainingCount > 0
+      ? `Showing ${taskRows.displayedCount} of ${taskRows.totalCount} tasks`
+      : `Total ${taskRows.totalCount} tasks`;
+  return buildLineCardFlexMessage({
+    altText: `[PM Calendar] Open tasks ${safeProjectName} (${taskRows.totalCount})`,
+    title: 'Open Task Summary',
+    subtitle,
+    accentColor: '#2563eb',
+    statLabel: 'Open Tasks',
+    statValue: `${taskRows.totalCount} tasks`,
+    rows: taskRows.rows,
+    footerNote,
+  });
 };
 
-const buildLineReminderMessage = ({ projectName, targetDate, tasks }) => {
+const buildLineReminderMessage = ({ projectName, targetDate, tasks, teamMembersById }) => {
   const safeProjectName = String(projectName || '').trim() || 'Project';
   const safeDate = String(targetDate || '').trim();
   const taskList = Array.isArray(tasks) ? tasks : [];
-
-  const titleLines = [
-    '[PM Calendar] แจ้งเตือนงานล่วงหน้า 1 วัน',
-    `โปรเจกต์: ${safeProjectName}`,
-    `กำหนดส่ง: ${safeDate}`,
-    '',
-  ];
-
-  const taskLines = taskList.slice(0, 20).map((task, index) => {
-    const taskTitle = String(task?.title || '').trim() || 'Untitled task';
-    const department = String(task?.department || '').trim();
-    return `${index + 1}. ${taskTitle}${department ? ` (${department})` : ''}`;
+  const taskRows = buildLineTaskRowsForFlex(taskList, {
+    maxItems: 6,
+    includeAssignees: true,
+    teamMembersById,
   });
-
-  const remaining = taskList.length - taskLines.length;
-  if (remaining > 0) {
-    taskLines.push(`... และอีก ${remaining} งาน`);
-  }
-
-  return [...titleLines, ...taskLines].join('\n').slice(0, 4900);
+  const subtitle = safeDate ? `${safeProjectName} | Due ${safeDate}` : safeProjectName;
+  const footerNote =
+    taskRows.remainingCount > 0
+      ? `Showing ${taskRows.displayedCount} of ${taskRows.totalCount} tasks`
+      : `Total ${taskRows.totalCount} tasks`;
+  return buildLineCardFlexMessage({
+    altText: `[PM Calendar] Due tomorrow ${safeProjectName} (${taskRows.totalCount})`,
+    title: 'Tasks Due Tomorrow',
+    subtitle,
+    accentColor: '#f59e0b',
+    statLabel: 'Due Date',
+    statValue: safeDate || '-',
+    rows: taskRows.rows,
+    footerNote,
+  });
 };
 
 const isValidLineWebhookSignature = (req) => {
@@ -2871,19 +3091,16 @@ app.post('/line/reminder/test-push', requireAuth, async (req, res) => {
     }
 
     const nowIso = new Date().toISOString();
-    const message = [
-      '[PM Calendar] Announcement',
-      `Project: ${String(ownership.project?.name || '').trim() || projectId}`,
-      '',
-      userMessage,
-      '',
-      `Sent at: ${nowIso}`,
-    ].join('\n');
+    const announcementMessage = buildLineAnnouncementMessage({
+      projectName: ownership.project?.name || projectId,
+      sentAt: nowIso,
+      message: userMessage,
+    });
 
     await sendLinePushMessage({
       channelAccessToken: config.channelAccessToken,
       to: config.groupId,
-      message,
+      messages: [announcementMessage],
     });
 
     await docRef.set(
@@ -2986,7 +3203,7 @@ app.post('/line/reminder/notify-open-tasks', requireAuth, async (req, res) => {
     await sendLinePushMessage({
       channelAccessToken: config.channelAccessToken,
       to: config.groupId,
-      message: digestMessage,
+      messages: [digestMessage],
     });
 
     await docRef.set(
@@ -3125,15 +3342,24 @@ app.post('/internal/jobs/line/remind-due-tomorrow', async (req, res) => {
       }
 
       try {
+        const teamMembers = Array.isArray(ownership.project?.teamMembers) ? ownership.project.teamMembers : [];
+        const teamMembersById = new Map();
+        teamMembers.forEach((member) => {
+          const memberId = String(member?.id || '').trim();
+          if (!memberId) return;
+          const memberName = String(member?.name || member?.username || '').trim() || memberId;
+          teamMembersById.set(memberId, memberName);
+        });
         const message = buildLineReminderMessage({
           projectName: ownership.project?.name || projectId,
           targetDate,
           tasks: dueTasks,
+          teamMembersById,
         });
         await sendLinePushMessage({
           channelAccessToken: config.channelAccessToken,
           to: config.groupId,
-          message,
+          messages: [message],
         });
 
         await logDocRef.set(
