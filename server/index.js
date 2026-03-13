@@ -450,6 +450,16 @@ const buildAssigneeAvatarUrl = (nameInput) => {
   )}&background=E2E8F0&color=334155&size=64&rounded=true`;
 };
 
+const buildCircularRemoteAvatarUrl = (avatarUrlInput, fallbackNameInput) => {
+  const rawAvatarUrl = String(avatarUrlInput || '').trim();
+  if (isSafeHttpUrl(rawAvatarUrl)) {
+    return `https://images.weserv.nl/?url=${encodeURIComponent(
+      rawAvatarUrl
+    )}&w=64&h=64&fit=cover&mask=circle&maxage=7d`;
+  }
+  return buildAssigneeAvatarUrl(fallbackNameInput);
+};
+
 const resolveLineMemberProfile = (teamMembersById, assigneeIdInput) => {
   const assigneeId = String(assigneeIdInput || '').trim();
   if (!assigneeId) return null;
@@ -458,7 +468,7 @@ const resolveLineMemberProfile = (teamMembersById, assigneeIdInput) => {
     const name = clampLineText(rawMember.name || rawMember.username || assigneeId, 32) || assigneeId;
     const department = clampLineText(rawMember.department || '', 30);
     const linkedAvatarUrl = String(rawMember.avatarUrl || '').trim();
-    const avatarUrl = isSafeHttpUrl(linkedAvatarUrl) ? linkedAvatarUrl : buildAssigneeAvatarUrl(name);
+    const avatarUrl = buildCircularRemoteAvatarUrl(linkedAvatarUrl, name);
     return { id: assigneeId, name, department, avatarUrl };
   }
   const fallbackName = clampLineText(rawMember || assigneeId, 32) || assigneeId;
@@ -672,7 +682,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
     const assigneeAvatarContents = assignees.slice(0, 5).map((assignee) => ({
       type: 'image',
       url: assignee.avatarUrl,
-      size: 'xxs',
+      size: '16px',
       align: 'start',
       aspectMode: 'cover',
       aspectRatio: '1:1',
