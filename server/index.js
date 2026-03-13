@@ -912,47 +912,50 @@ const buildLineCardFlexMessage = ({
   };
 };
 
-const buildLineAnnouncementMessage = ({ projectName, sentAt, message }) => {
+const buildLineAnnouncementMessage = ({ projectName, message }) => {
   const safeProjectName = String(projectName || '').trim() || 'Project';
-  const safeSentAt = String(sentAt || '').trim();
   const content = clampLineMultilineText(message, 700) || '-';
-  const announcementRow = {
-    type: 'box',
-    layout: 'vertical',
-    spacing: '6px',
-    paddingAll: '12px',
-    cornerRadius: '10px',
-    backgroundColor: '#f8fafc',
-    borderColor: '#e2e8f0',
-    borderWidth: '1px',
-    contents: [
-      {
-        type: 'text',
-        text: 'Announcement',
-        size: 'xs',
-        color: '#334155',
-        weight: 'bold',
+  return {
+    type: 'flex',
+    altText: clampLineText(`[PM Calendar] ${safeProjectName}: ${content}`, 360),
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '12px',
+        paddingAll: '16px',
+        contents: [
+          {
+            type: 'box',
+            layout: 'vertical',
+            spacing: '8px',
+            paddingAll: '14px',
+            cornerRadius: '12px',
+            backgroundColor: '#0ea5e9',
+            contents: [
+              {
+                type: 'text',
+                text: safeProjectName,
+                size: 'sm',
+                color: '#ffffffcc',
+                wrap: true,
+              },
+              {
+                type: 'text',
+                text: content,
+                size: 'xl',
+                weight: 'bold',
+                color: '#ffffff',
+                wrap: true,
+              },
+            ],
+          },
+        ],
       },
-      {
-        type: 'text',
-        text: content,
-        size: 'sm',
-        color: '#0f172a',
-        wrap: true,
-      },
-    ],
+    },
   };
-  return buildLineCardFlexMessage({
-    headerLabel: safeProjectName,
-    altText: `[PM Calendar] Announcement ${safeProjectName}`,
-    title: 'Project Announcement',
-    subtitle: safeSentAt ? `${safeProjectName} | ${safeSentAt}` : safeProjectName,
-    accentColor: '#0ea5e9',
-    statLabel: 'Project',
-    statValue: safeProjectName,
-    rows: [announcementRow],
-    footerNote: 'Sent from PM Calendar',
-  });
 };
 
 const buildLineOpenTasksDigestMessage = ({
@@ -3400,7 +3403,6 @@ app.post('/line/reminder/test-push', requireAuth, async (req, res) => {
     const nowIso = new Date().toISOString();
     const announcementMessage = buildLineAnnouncementMessage({
       projectName: ownership.project?.name || projectId,
-      sentAt: nowIso,
       message: userMessage,
     });
 
