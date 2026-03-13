@@ -441,6 +441,8 @@ const clampLineMultilineText = (value, maxLength = 400) =>
     .trim()
     .slice(0, maxLength);
 
+const isSafeHttpUrl = (value) => /^https?:\/\//i.test(String(value || '').trim());
+
 const buildAssigneeAvatarUrl = (nameInput) => {
   const safeName = clampLineText(nameInput || 'User', 48) || 'User';
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(
@@ -455,7 +457,9 @@ const resolveLineMemberProfile = (teamMembersById, assigneeIdInput) => {
   if (rawMember && typeof rawMember === 'object') {
     const name = clampLineText(rawMember.name || rawMember.username || assigneeId, 32) || assigneeId;
     const department = clampLineText(rawMember.department || '', 30);
-    return { id: assigneeId, name, department, avatarUrl: buildAssigneeAvatarUrl(name) };
+    const linkedAvatarUrl = String(rawMember.avatarUrl || '').trim();
+    const avatarUrl = isSafeHttpUrl(linkedAvatarUrl) ? linkedAvatarUrl : buildAssigneeAvatarUrl(name);
+    return { id: assigneeId, name, department, avatarUrl };
   }
   const fallbackName = clampLineText(rawMember || assigneeId, 32) || assigneeId;
   return {
@@ -635,6 +639,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
       return {
         type: 'box',
         layout: 'vertical',
+        flex: 0,
         backgroundColor: departmentTone.backgroundColor,
         borderColor: departmentTone.borderColor,
         borderWidth: '1px',
@@ -668,8 +673,10 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
       type: 'image',
       url: assignee.avatarUrl,
       size: 'xxs',
+      align: 'start',
       aspectMode: 'cover',
       aspectRatio: '1:1',
+      flex: 0,
     }));
     const overflowAssigneeCount = Math.max(0, assignees.length - assigneeAvatarContents.length);
     if (overflowAssigneeCount > 0) {
@@ -715,6 +722,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
             {
               type: 'box',
               layout: 'vertical',
+              flex: 0,
               backgroundColor: statusTone.backgroundColor,
               borderColor: statusTone.borderColor,
               borderWidth: '1px',
@@ -745,8 +753,9 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
         },
         {
           type: 'box',
-          layout: 'vertical',
-          spacing: '4px',
+          layout: 'horizontal',
+          spacing: '6px',
+          alignItems: 'center',
           contents: departmentBadgeContents,
         },
         {
