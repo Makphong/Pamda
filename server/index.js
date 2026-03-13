@@ -73,10 +73,34 @@ const FIRESTORE_LINE_REMINDER_LOG_COLLECTION = String(
 const FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION = String(
   process.env.FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION || 'line_webhook_logs'
 ).trim();
+const FIRESTORE_ADMIN_COMPLAINT_COLLECTION = String(
+  process.env.FIRESTORE_ADMIN_COMPLAINT_COLLECTION || 'support_complaints'
+).trim();
+const FIRESTORE_SUPPORT_TICKET_COLLECTION = String(
+  process.env.FIRESTORE_SUPPORT_TICKET_COLLECTION || 'support_tickets'
+).trim();
 const LINE_REMINDER_CRON_SECRET = String(process.env.LINE_REMINDER_CRON_SECRET || '').trim();
 const DEFAULT_LINE_REMINDER_TIMEZONE = String(
   process.env.LINE_REMINDER_DEFAULT_TIMEZONE || 'Asia/Bangkok'
 ).trim();
+const ADMIN_STATS_TIMEZONE_RAW = String(
+  process.env.ADMIN_STATS_TIMEZONE || DEFAULT_LINE_REMINDER_TIMEZONE || 'Asia/Bangkok'
+).trim();
+const ROOT_ADMIN_EMAIL_RAW = String(
+  process.env.ROOT_ADMIN_EMAIL || 'main.thatphong@gmail.com'
+).trim();
+const SUPPORT_TICKET_MAX_ATTACHMENTS = Math.min(
+  3,
+  Math.max(0, Number(process.env.SUPPORT_TICKET_MAX_ATTACHMENTS || 3))
+);
+const SUPPORT_TICKET_MAX_ATTACHMENT_BYTES = Math.max(
+  50_000,
+  Number(process.env.SUPPORT_TICKET_MAX_ATTACHMENT_BYTES || 220_000)
+);
+const SUPPORT_TICKET_MAX_MESSAGE_LENGTH = Math.max(
+  200,
+  Number(process.env.SUPPORT_TICKET_MAX_MESSAGE_LENGTH || 4000)
+);
 const DEFAULT_LINE_REMINDER_HOUR = Math.min(
   23,
   Math.max(0, Number(process.env.LINE_REMINDER_DEFAULT_HOUR || 9))
@@ -130,6 +154,7 @@ const sanitizeEmail = (value) => String(value || '').trim().toLowerCase();
 const sanitizeUsername = (value) => String(value || '').trim().toLowerCase();
 const sanitizeUserId = (value) => String(value || '').trim();
 const sanitizeAuthToken = (value) => String(value || '').trim();
+const ROOT_ADMIN_EMAIL = sanitizeEmail(ROOT_ADMIN_EMAIL_RAW);
 
 const requiredEnv = ['GMAIL_USER', 'GMAIL_APP_PASSWORD', 'OTP_FROM_EMAIL'];
 const missingEnv = requiredEnv.filter((key) => !String(process.env[key] || '').trim());
@@ -158,6 +183,8 @@ const invitesDocRef = firestore.collection(PROJECT_INVITES_COLLECTION).doc(PROJE
 const lineReminderConfigRef = firestore.collection(FIRESTORE_LINE_REMINDER_COLLECTION);
 const lineReminderLogRef = firestore.collection(FIRESTORE_LINE_REMINDER_LOG_COLLECTION);
 const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION);
+const adminComplaintRef = firestore.collection(FIRESTORE_ADMIN_COMPLAINT_COLLECTION);
+const supportTicketRef = firestore.collection(FIRESTORE_SUPPORT_TICKET_COLLECTION);
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 const resolveGoogleCalendarRedirectUri = (req) => {
@@ -325,6 +352,192 @@ const getHourInTimeZone = (dateInput, timeZoneInput) => {
   if (!Number.isInteger(parsed)) return -1;
   return Math.min(23, Math.max(0, parsed));
 };
+const ADMIN_STATS_TIMEZONE = normalizeLineReminderTimezone(ADMIN_STATS_TIMEZONE_RAW);
+const ADMIN_ACTIVE_ACCOUNT_RANGES = new Set(['today', 'month', 'year']);
+const ADMIN_COMPLAINT_STATUSES = new Set(['open', 'in_review', 'resolved']);
+const normalizeAdminActiveRange = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ADMIN_ACTIVE_ACCOUNT_RANGES.has(normalized) ? normalized : 'today';
+};
+const normalizeAdminComplaintStatus = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ADMIN_COMPLAINT_STATUSES.has(normalized) ? normalized : 'open';
+};
+const toEpochMs = (value) => {
+  const parsed = new Date(String(value || '').trim()).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const resolveUserLastActivityIso = (userInput) => {
+  const user = userInput && typeof userInput === 'object' ? userInput : {};
+  const candidates = [user.lastLoginAt, user.lastActiveAt, user.updatedAt, user.createdAt];
+  for (const candidate of candidates) {
+    if (toEpochMs(candidate) > 0) {
+      return String(candidate).trim();
+    }
+  }
+  return '';
+};
+const isUserActiveInRange = (userInput, rangeInput, nowInput = new Date()) => {
+  const range = normalizeAdminActiveRange(rangeInput);
+  const nowIsoDate = getIsoDateInTimeZone(nowInput, ADMIN_STATS_TIMEZONE);
+  if (!nowIsoDate) return false;
+  const lastActivityIso = resolveUserLastActivityIso(userInput);
+  if (!lastActivityIso) return false;
+  const activityIsoDate = getIsoDateInTimeZone(lastActivityIso, ADMIN_STATS_TIMEZONE);
+  if (!activityIsoDate) return false;
+  if (range === 'today') {
+    return activityIsoDate === nowIsoDate;
+  }
+  if (range === 'month') {
+    return activityIsoDate.slice(0, 7) === nowIsoDate.slice(0, 7);
+  }
+  return activityIsoDate.slice(0, 4) === nowIsoDate.slice(0, 4);
+};
+const toAdminComplaintResponse = (docId, dataInput) => {
+  const data = dataInput && typeof dataInput === 'object' ? dataInput : {};
+  const createdAtRaw = String(data.createdAt || '').trim();
+  const createdAt = toEpochMs(createdAtRaw) > 0 ? createdAtRaw : null;
+  const updatedAtRaw = String(data.updatedAt || '').trim();
+  const updatedAt = toEpochMs(updatedAtRaw) > 0 ? updatedAtRaw : createdAt;
+  return {
+    id: String(docId || '').trim(),
+    subject: String(data.subject || '').trim(),
+    message: String(data.message || '').trim(),
+    status: normalizeAdminComplaintStatus(data.status),
+    createdAt,
+    updatedAt,
+    reporterId: sanitizeUserId(data.reporterId),
+    reporterUsername: sanitizeUsername(data.reporterUsername),
+    reporterEmail: sanitizeEmail(data.reporterEmail),
+    adminNote: String(data.adminNote || '').trim(),
+    resolvedAt: toEpochMs(data.resolvedAt) > 0 ? String(data.resolvedAt).trim() : null,
+    resolvedById: sanitizeUserId(data.resolvedById),
+  };
+};
+const SUPPORT_TICKET_STATUS = {
+  OPEN: 'open',
+  IN_PROGRESS: 'in_progress',
+  CLOSED: 'closed',
+};
+const SUPPORT_TICKET_STATUS_SET = new Set(Object.values(SUPPORT_TICKET_STATUS));
+const normalizeSupportTicketStatus = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return SUPPORT_TICKET_STATUS_SET.has(normalized) ? normalized : SUPPORT_TICKET_STATUS.OPEN;
+};
+const normalizeTicketAttachment = (attachmentInput) => {
+  const attachment =
+    attachmentInput && typeof attachmentInput === 'object' && !Array.isArray(attachmentInput)
+      ? attachmentInput
+      : {};
+  const id = String(attachment.id || crypto.randomUUID()).trim();
+  const name = String(attachment.name || 'attachment').trim().slice(0, 180);
+  const mimeType = String(attachment.mimeType || attachment.type || '').trim().toLowerCase();
+  const dataUrl = String(attachment.dataUrl || attachment.base64 || '').trim();
+  const size = Number(attachment.size || 0);
+  if (!id || !mimeType || !dataUrl) return null;
+  if (!/^data:(image|video)\//i.test(dataUrl)) return null;
+  if (!mimeType.startsWith('image/') && !mimeType.startsWith('video/')) return null;
+  if (size <= 0 || size > SUPPORT_TICKET_MAX_ATTACHMENT_BYTES) return null;
+  return {
+    id,
+    name,
+    mimeType,
+    size,
+    dataUrl,
+  };
+};
+const normalizeTicketAttachmentList = (attachmentsInput) =>
+  (Array.isArray(attachmentsInput) ? attachmentsInput : [])
+    .map((attachment) => normalizeTicketAttachment(attachment))
+    .filter(Boolean)
+    .slice(0, SUPPORT_TICKET_MAX_ATTACHMENTS);
+const normalizeSupportTicketMessage = (docId, dataInput) => {
+  const data = dataInput && typeof dataInput === 'object' && !Array.isArray(dataInput) ? dataInput : {};
+  const createdAtRaw = String(data.createdAt || '').trim();
+  const createdAt = toEpochMs(createdAtRaw) > 0 ? createdAtRaw : null;
+  return {
+    id: String(docId || '').trim(),
+    ticketId: String(data.ticketId || '').trim(),
+    senderUserId: sanitizeUserId(data.senderUserId),
+    senderUsername: sanitizeUsername(data.senderUsername),
+    senderRole: String(data.senderRole || 'user').trim().toLowerCase(),
+    text: String(data.text || '').trim(),
+    attachments: normalizeTicketAttachmentList(data.attachments),
+    createdAt,
+  };
+};
+const normalizeSupportTicket = (docId, dataInput) => {
+  const data = dataInput && typeof dataInput === 'object' && !Array.isArray(dataInput) ? dataInput : {};
+  const createdAtRaw = String(data.createdAt || '').trim();
+  const createdAt = toEpochMs(createdAtRaw) > 0 ? createdAtRaw : null;
+  const updatedAtRaw = String(data.updatedAt || '').trim();
+  const updatedAt = toEpochMs(updatedAtRaw) > 0 ? updatedAtRaw : createdAt;
+  return {
+    id: String(docId || '').trim(),
+    ownerUserId: sanitizeUserId(data.ownerUserId),
+    ownerUsername: sanitizeUsername(data.ownerUsername),
+    ownerEmail: sanitizeEmail(data.ownerEmail),
+    subject: String(data.subject || '').trim(),
+    status: normalizeSupportTicketStatus(data.status),
+    createdAt,
+    updatedAt,
+    closedAt: toEpochMs(data.closedAt) > 0 ? String(data.closedAt).trim() : null,
+    closedById: sanitizeUserId(data.closedById),
+    closedByUsername: sanitizeUsername(data.closedByUsername),
+    lastMessageAt: toEpochMs(data.lastMessageAt) > 0 ? String(data.lastMessageAt).trim() : createdAt,
+    lastMessagePreview: String(data.lastMessagePreview || '').trim(),
+  };
+};
+const toSupportRoleResponse = (userInput) => {
+  const user = userInput && typeof userInput === 'object' ? userInput : {};
+  const email = sanitizeEmail(user.email);
+  const isRootAdmin = Boolean(email && email === ROOT_ADMIN_EMAIL);
+  const isSupportAdmin = isRootAdmin || user.supportAdmin === true;
+  return {
+    isRootAdmin,
+    isSupportAdmin,
+  };
+};
+const getAuthUserRecord = async (authUserIdInput) => {
+  const authUserId = sanitizeUserId(authUserIdInput);
+  if (!authUserId) return null;
+  const doc = await usersRef.doc(authUserId).get();
+  if (!doc.exists) return null;
+  return {
+    id: doc.id,
+    ...(doc.data() || {}),
+  };
+};
+const buildSupportTicketMessagePreview = (textInput, attachmentsInput) => {
+  const text = String(textInput || '').trim();
+  if (text) {
+    return text.slice(0, 120);
+  }
+  const attachmentCount = Array.isArray(attachmentsInput) ? attachmentsInput.length : 0;
+  if (attachmentCount > 0) {
+    return `${attachmentCount} attachment${attachmentCount > 1 ? 's' : ''}`;
+  }
+  return '';
+};
+const loadSupportTicketById = async (ticketIdInput) => {
+  const ticketId = String(ticketIdInput || '').trim();
+  if (!ticketId) return null;
+  const doc = await supportTicketRef.doc(ticketId).get();
+  if (!doc.exists) return null;
+  return {
+    ref: supportTicketRef.doc(ticketId),
+    ticket: normalizeSupportTicket(doc.id, doc.data() || {}),
+  };
+};
+const ensureSupportTicketAccess = (ticketInput, authUserInput, roleInput) => {
+  const ticket = ticketInput && typeof ticketInput === 'object' ? ticketInput : {};
+  const authUserId = sanitizeUserId(authUserInput?.id);
+  const isSupportAdmin = roleInput?.isSupportAdmin === true;
+  if (isSupportAdmin) return true;
+  return Boolean(authUserId && ticket.ownerUserId === authUserId);
+};
+const supportTicketMessagesRef = (ticketIdInput) =>
+  supportTicketRef.doc(String(ticketIdInput || '').trim()).collection('messages');
 
 const normalizeLineReminderConfigRecord = (recordInput, options = {}) => {
   const includeSecrets = options?.includeSecrets === true;
@@ -1681,6 +1894,62 @@ const ensureAuthUserMatches = (req, res, targetUserIdInput) => {
   }
   return true;
 };
+const requireRootAdmin = async (req, res, next) => {
+  try {
+    if (!ROOT_ADMIN_EMAIL) {
+      return res.status(503).json({ message: 'Root admin is not configured on server.' });
+    }
+    const authUserId = sanitizeUserId(req.authUser?.sub);
+    if (!authUserId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const userDoc = await usersRef.doc(authUserId).get();
+    if (!userDoc.exists) {
+      return res.status(401).json({ message: 'User not found.' });
+    }
+    const userData = userDoc.data() || {};
+    const userEmail = sanitizeEmail(userData.email || req.authUser?.email);
+    if (!userEmail || userEmail !== ROOT_ADMIN_EMAIL) {
+      return res.status(403).json({ message: 'Admin access denied.' });
+    }
+    req.rootAdmin = {
+      id: authUserId,
+      email: userEmail,
+      username: sanitizeUsername(userData.username || req.authUser?.username),
+      isRootAdmin: true,
+      isSupportAdmin: true,
+    };
+    return next();
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to verify admin access.' });
+  }
+};
+const requireSupportAdmin = async (req, res, next) => {
+  try {
+    const authUserId = sanitizeUserId(req.authUser?.sub);
+    if (!authUserId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const userRecord = await getAuthUserRecord(authUserId);
+    if (!userRecord) {
+      return res.status(401).json({ message: 'User not found.' });
+    }
+    const role = toSupportRoleResponse(userRecord);
+    if (!role.isSupportAdmin) {
+      return res.status(403).json({ message: 'Admin access denied.' });
+    }
+    req.supportAdmin = {
+      id: authUserId,
+      username: sanitizeUsername(userRecord.username || req.authUser?.username),
+      email: sanitizeEmail(userRecord.email || req.authUser?.email),
+      isRootAdmin: role.isRootAdmin,
+      isSupportAdmin: role.isSupportAdmin,
+    };
+    return next();
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to verify support admin access.' });
+  }
+};
 
 const otpDocId = (email) => crypto.createHash('sha256').update(email).digest('hex');
 const generateOtpCode = () => String(Math.floor(100000 + Math.random() * 900000));
@@ -1765,6 +2034,8 @@ app.get('/health', (_req, res) => {
     firestoreLineReminderCollection: FIRESTORE_LINE_REMINDER_COLLECTION,
     firestoreLineReminderLogCollection: FIRESTORE_LINE_REMINDER_LOG_COLLECTION,
     firestoreLineWebhookLogCollection: FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION,
+    firestoreAdminComplaintCollection: FIRESTORE_ADMIN_COMPLAINT_COLLECTION,
+    firestoreSupportTicketCollection: FIRESTORE_SUPPORT_TICKET_COLLECTION,
     googleClientConfigured: Boolean(GOOGLE_CLIENT_ID),
     googleCalendarOAuthConfigured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     googleCalendarRedirectUriPreview: redirectUriPreview,
@@ -1774,6 +2045,10 @@ app.get('/health', (_req, res) => {
     lineReminderDefaultHour: DEFAULT_LINE_REMINDER_HOUR,
     lineWebhookConfigured: Boolean(LINE_CHANNEL_SECRET),
     lineWebhookReplyConfigured: Boolean(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN),
+    rootAdminConfigured: Boolean(ROOT_ADMIN_EMAIL),
+    adminStatsTimezone: ADMIN_STATS_TIMEZONE,
+    supportTicketAttachmentLimit: SUPPORT_TICKET_MAX_ATTACHMENTS,
+    supportTicketAttachmentMaxBytes: SUPPORT_TICKET_MAX_ATTACHMENT_BYTES,
   });
 });
 
@@ -1833,14 +2108,16 @@ app.post('/auth/register', async (req, res) => {
     }
 
     const userId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
     const user = {
       username,
       email,
       avatarUrl: '',
       provider: 'local',
       passwordHash: await bcrypt.hash(password, 10),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastLoginAt: nowIso,
     };
 
     await usersRef.doc(userId).set(user);
@@ -1888,16 +2165,16 @@ app.post('/auth/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid username/email or password.' });
     }
 
+    const nowIso = new Date().toISOString();
+    const loginPatch = {
+      lastLoginAt: nowIso,
+      updatedAt: nowIso,
+    };
     if (!passwordHash && legacyPassword) {
-      await usersRef.doc(user.id).set(
-        {
-          passwordHash: await bcrypt.hash(password, 10),
-          password: '',
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      loginPatch.passwordHash = await bcrypt.hash(password, 10);
+      loginPatch.password = '';
     }
+    await usersRef.doc(user.id).set(loginPatch, { merge: true });
 
     const publicUser = toPublicUser(user);
     return res.json({
@@ -1961,6 +2238,7 @@ app.post('/auth/google', async (req, res) => {
       return res.status(401).json({ message: 'Google account email is not verified.' });
     }
 
+    const loginAtIso = new Date().toISOString();
     let user = await getUserByEmail(email);
 
     if (!user) {
@@ -1973,21 +2251,22 @@ app.post('/auth/google', async (req, res) => {
         avatarUrl: picture,
         provider: 'google',
         passwordHash: '',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: loginAtIso,
+        updatedAt: loginAtIso,
+        lastLoginAt: loginAtIso,
       };
       await usersRef.doc(userId).set(newUser);
       user = { id: userId, ...newUser };
-    } else if (picture && user.avatarUrl !== picture) {
-      user.avatarUrl = picture;
-      user.updatedAt = new Date().toISOString();
-      await usersRef.doc(user.id).set(
-        {
-          avatarUrl: user.avatarUrl,
-          updatedAt: user.updatedAt,
-        },
-        { merge: true }
-      );
+    } else {
+      const profilePatch = {
+        lastLoginAt: loginAtIso,
+        updatedAt: loginAtIso,
+      };
+      if (picture && user.avatarUrl !== picture) {
+        profilePatch.avatarUrl = picture;
+        user.avatarUrl = picture;
+      }
+      await usersRef.doc(user.id).set(profilePatch, { merge: true });
     }
 
     const publicUser = toPublicUser(user);
@@ -3042,6 +3321,546 @@ app.put('/users/:userId/password', requireAuth, async (req, res) => {
     return res.json({ message: 'Password changed successfully.' });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to change password.' });
+  }
+});
+
+app.get('/admin/me', requireAuth, requireRootAdmin, async (req, res) => {
+  return res.json({
+    isRootAdmin: true,
+    user: {
+      id: sanitizeUserId(req.rootAdmin?.id),
+      email: sanitizeEmail(req.rootAdmin?.email),
+      username: sanitizeUsername(req.rootAdmin?.username),
+    },
+  });
+});
+
+app.get('/admin/stats/accounts', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const range = normalizeAdminActiveRange(req.query?.range);
+    const usersSnapshot = await usersRef.get();
+    const users = usersSnapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+    const totalAccounts = users.length;
+    const activeAccounts = users.filter((user) => isUserActiveInRange(user, range)).length;
+    return res.json({
+      range,
+      totalAccounts,
+      activeAccounts,
+      timezone: ADMIN_STATS_TIMEZONE,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load admin account stats.' });
+  }
+});
+
+app.get('/admin/complaints', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const statusRaw = String(req.query?.status || 'all')
+      .trim()
+      .toLowerCase();
+    const status = statusRaw === 'all' ? 'all' : normalizeAdminComplaintStatus(statusRaw);
+    const limitRaw = Number.parseInt(String(req.query?.limit || '200'), 10);
+    const limit = Number.isInteger(limitRaw) ? Math.min(500, Math.max(1, limitRaw)) : 200;
+    const snapshot = await adminComplaintRef.orderBy('createdAt', 'desc').limit(limit).get();
+    let complaints = snapshot.docs.map((doc) => toAdminComplaintResponse(doc.id, doc.data() || {}));
+    if (status !== 'all') {
+      complaints = complaints.filter((complaint) => complaint.status === status);
+    }
+    return res.json({
+      complaints,
+      status,
+      total: complaints.length,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load complaints.' });
+  }
+});
+
+app.patch('/admin/complaints/:complaintId', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const complaintId = String(req.params?.complaintId || '').trim();
+    if (!complaintId) {
+      return res.status(400).json({ message: 'complaintId is required.' });
+    }
+    const complaintDocRef = adminComplaintRef.doc(complaintId);
+    const complaintDoc = await complaintDocRef.get();
+    if (!complaintDoc.exists) {
+      return res.status(404).json({ message: 'Complaint not found.' });
+    }
+    const nextStatus = normalizeAdminComplaintStatus(req.body?.status);
+    const adminNote = String(req.body?.adminNote || '')
+      .trim()
+      .slice(0, 2000);
+    const nowIso = new Date().toISOString();
+    await complaintDocRef.set(
+      {
+        status: nextStatus,
+        adminNote,
+        updatedAt: nowIso,
+        resolvedAt: nextStatus === 'resolved' ? nowIso : null,
+        resolvedById: sanitizeUserId(req.rootAdmin?.id),
+      },
+      { merge: true }
+    );
+    const updatedDoc = await complaintDocRef.get();
+    return res.json({
+      message: 'Complaint updated.',
+      complaint: toAdminComplaintResponse(updatedDoc.id, updatedDoc.data() || {}),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to update complaint.' });
+  }
+});
+
+app.post('/support/complaints', requireAuth, async (req, res) => {
+  try {
+    const reporterId = sanitizeUserId(req.authUser?.sub);
+    if (!reporterId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const userDoc = await usersRef.doc(reporterId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const userData = userDoc.data() || {};
+    const subject = String(req.body?.subject || '')
+      .trim()
+      .slice(0, 140);
+    const message = String(req.body?.message || '')
+      .trim()
+      .slice(0, 4000);
+    if (message.length < 5) {
+      return res.status(400).json({ message: 'Complaint message must be at least 5 characters.' });
+    }
+    const nowIso = new Date().toISOString();
+    const complaintId = crypto.randomUUID();
+    await adminComplaintRef.doc(complaintId).set(
+      {
+        subject,
+        message,
+        status: 'open',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        reporterId,
+        reporterUsername: sanitizeUsername(userData.username || req.authUser?.username),
+        reporterEmail: sanitizeEmail(userData.email || req.authUser?.email),
+        adminNote: '',
+        resolvedAt: null,
+        resolvedById: '',
+      },
+      { merge: true }
+    );
+    return res.status(201).json({
+      message: 'Complaint submitted successfully.',
+      complaint: toAdminComplaintResponse(complaintId, {
+        subject,
+        message,
+        status: 'open',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        reporterId,
+        reporterUsername: sanitizeUsername(userData.username || req.authUser?.username),
+        reporterEmail: sanitizeEmail(userData.email || req.authUser?.email),
+        adminNote: '',
+        resolvedAt: null,
+        resolvedById: '',
+      }),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to submit complaint.' });
+  }
+});
+
+app.get('/support/role', requireAuth, async (req, res) => {
+  try {
+    const authUserId = sanitizeUserId(req.authUser?.sub);
+    if (!authUserId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const userRecord = await getAuthUserRecord(authUserId);
+    if (!userRecord) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const role = toSupportRoleResponse(userRecord);
+    return res.json({
+      ...role,
+      user: toPublicUser(userRecord),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load support role.' });
+  }
+});
+
+app.get('/admin/support-admins', requireAuth, requireRootAdmin, async (_req, res) => {
+  try {
+    const snapshot = await usersRef.where('supportAdmin', '==', true).get();
+    const adminUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+    const rootUser = await getUserByEmail(ROOT_ADMIN_EMAIL);
+    const mergedAdmins = new Map();
+    adminUsers.forEach((user) => {
+      mergedAdmins.set(user.id, {
+        id: user.id,
+        username: sanitizeUsername(user.username),
+        email: sanitizeEmail(user.email),
+        isRootAdmin: false,
+      });
+    });
+    if (rootUser?.id) {
+      mergedAdmins.set(rootUser.id, {
+        id: rootUser.id,
+        username: sanitizeUsername(rootUser.username),
+        email: sanitizeEmail(rootUser.email),
+        isRootAdmin: true,
+      });
+    }
+    const admins = Array.from(mergedAdmins.values()).sort((left, right) => {
+      if (left.isRootAdmin && !right.isRootAdmin) return -1;
+      if (!left.isRootAdmin && right.isRootAdmin) return 1;
+      return String(left.username || '').localeCompare(String(right.username || ''), undefined, {
+        sensitivity: 'base',
+      });
+    });
+    return res.json({ admins });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load support admin list.' });
+  }
+});
+
+app.post('/admin/support-admins', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const identifierRaw = String(req.body?.identifier || '').trim();
+    if (!identifierRaw) {
+      return res.status(400).json({ message: 'identifier is required.' });
+    }
+    const identifier = identifierRaw.toLowerCase();
+    const targetUser = identifier.includes('@')
+      ? await getUserByEmail(identifier)
+      : await getUserByUsername(identifier);
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const targetEmail = sanitizeEmail(targetUser.email);
+    if (targetEmail === ROOT_ADMIN_EMAIL) {
+      return res.status(400).json({ message: 'Root account is already an admin.' });
+    }
+    await usersRef.doc(targetUser.id).set(
+      {
+        supportAdmin: true,
+        supportAdminUpdatedAt: new Date().toISOString(),
+        supportAdminUpdatedBy: sanitizeUserId(req.rootAdmin?.id),
+      },
+      { merge: true }
+    );
+    return res.json({
+      message: 'Support admin added.',
+      user: toPublicUser(targetUser),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to add support admin.' });
+  }
+});
+
+app.delete('/admin/support-admins/:userId', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const targetUserId = sanitizeUserId(req.params?.userId);
+    if (!targetUserId) {
+      return res.status(400).json({ message: 'userId is required.' });
+    }
+    const targetUserRecord = await getAuthUserRecord(targetUserId);
+    if (!targetUserRecord) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    if (sanitizeEmail(targetUserRecord.email) === ROOT_ADMIN_EMAIL) {
+      return res.status(400).json({ message: 'Root account cannot be removed from admin.' });
+    }
+    await usersRef.doc(targetUserId).set(
+      {
+        supportAdmin: false,
+        supportAdminUpdatedAt: new Date().toISOString(),
+        supportAdminUpdatedBy: sanitizeUserId(req.rootAdmin?.id),
+      },
+      { merge: true }
+    );
+    return res.json({ message: 'Support admin removed.' });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to remove support admin.' });
+  }
+});
+
+app.post('/support/tickets', requireAuth, async (req, res) => {
+  try {
+    const authUserId = sanitizeUserId(req.authUser?.sub);
+    if (!authUserId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const userRecord = await getAuthUserRecord(authUserId);
+    if (!userRecord) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const role = toSupportRoleResponse(userRecord);
+    if (role.isSupportAdmin) {
+      return res.status(403).json({ message: 'Support admins cannot open user tickets.' });
+    }
+
+    const subject = String(req.body?.subject || '')
+      .trim()
+      .slice(0, 160);
+    const text = String(req.body?.message || req.body?.text || '')
+      .trim()
+      .slice(0, SUPPORT_TICKET_MAX_MESSAGE_LENGTH);
+    const rawAttachments = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
+    if (rawAttachments.length > SUPPORT_TICKET_MAX_ATTACHMENTS) {
+      return res.status(400).json({ message: `Attachments limit is ${SUPPORT_TICKET_MAX_ATTACHMENTS}.` });
+    }
+    const attachments = normalizeTicketAttachmentList(rawAttachments);
+    if (rawAttachments.length !== attachments.length) {
+      return res.status(400).json({
+        message: `Only image/video attachments are allowed. Max ${SUPPORT_TICKET_MAX_ATTACHMENT_BYTES} bytes each.`,
+      });
+    }
+    if (!text && attachments.length === 0) {
+      return res.status(400).json({ message: 'Ticket message is required.' });
+    }
+
+    const ticketId = crypto.randomUUID();
+    const messageId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
+    const preview = buildSupportTicketMessagePreview(text, attachments);
+    await supportTicketRef.doc(ticketId).set({
+      ownerUserId: authUserId,
+      ownerUsername: sanitizeUsername(userRecord.username),
+      ownerEmail: sanitizeEmail(userRecord.email),
+      subject,
+      status: SUPPORT_TICKET_STATUS.OPEN,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      closedAt: null,
+      closedById: '',
+      closedByUsername: '',
+      lastMessageAt: nowIso,
+      lastMessagePreview: preview,
+    });
+    await supportTicketMessagesRef(ticketId).doc(messageId).set({
+      ticketId,
+      senderUserId: authUserId,
+      senderUsername: sanitizeUsername(userRecord.username),
+      senderRole: 'user',
+      text,
+      attachments,
+      createdAt: nowIso,
+    });
+
+    const ticket = normalizeSupportTicket(ticketId, {
+      ownerUserId: authUserId,
+      ownerUsername: sanitizeUsername(userRecord.username),
+      ownerEmail: sanitizeEmail(userRecord.email),
+      subject,
+      status: SUPPORT_TICKET_STATUS.OPEN,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastMessageAt: nowIso,
+      lastMessagePreview: preview,
+    });
+    const firstMessage = normalizeSupportTicketMessage(messageId, {
+      ticketId,
+      senderUserId: authUserId,
+      senderUsername: sanitizeUsername(userRecord.username),
+      senderRole: 'user',
+      text,
+      attachments,
+      createdAt: nowIso,
+    });
+    return res.status(201).json({
+      message: 'Ticket opened successfully.',
+      ticket,
+      firstMessage,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to open ticket.' });
+  }
+});
+
+app.get('/support/tickets/my', requireAuth, async (req, res) => {
+  try {
+    const authUserId = sanitizeUserId(req.authUser?.sub);
+    if (!authUserId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const snapshot = await supportTicketRef.where('ownerUserId', '==', authUserId).limit(200).get();
+    const tickets = snapshot.docs
+      .map((doc) => normalizeSupportTicket(doc.id, doc.data() || {}))
+      .sort((left, right) => toEpochMs(right.updatedAt) - toEpochMs(left.updatedAt));
+    return res.json({ tickets });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load user tickets.' });
+  }
+});
+
+app.get('/support/tickets', requireAuth, requireSupportAdmin, async (_req, res) => {
+  try {
+    const snapshot = await supportTicketRef.limit(400).get();
+    const tickets = snapshot.docs
+      .map((doc) => normalizeSupportTicket(doc.id, doc.data() || {}))
+      .sort((left, right) => toEpochMs(right.updatedAt) - toEpochMs(left.updatedAt));
+    return res.json({ tickets });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load tickets.' });
+  }
+});
+
+app.get('/support/tickets/:ticketId', requireAuth, async (req, res) => {
+  try {
+    const authUserId = sanitizeUserId(req.authUser?.sub);
+    if (!authUserId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const userRecord = await getAuthUserRecord(authUserId);
+    if (!userRecord) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const role = toSupportRoleResponse(userRecord);
+    const ticketWithRef = await loadSupportTicketById(req.params?.ticketId);
+    if (!ticketWithRef) {
+      return res.status(404).json({ message: 'Ticket not found.' });
+    }
+    if (!ensureSupportTicketAccess(ticketWithRef.ticket, { id: authUserId }, role)) {
+      return res.status(403).json({ message: 'Forbidden ticket access.' });
+    }
+    const messagesSnapshot = await supportTicketMessagesRef(ticketWithRef.ticket.id)
+      .orderBy('createdAt', 'asc')
+      .limit(300)
+      .get();
+    const messages = messagesSnapshot.docs.map((doc) =>
+      normalizeSupportTicketMessage(doc.id, doc.data() || {})
+    );
+    return res.json({
+      ticket: ticketWithRef.ticket,
+      messages,
+      role,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load ticket detail.' });
+  }
+});
+
+app.post('/support/tickets/:ticketId/messages', requireAuth, async (req, res) => {
+  try {
+    const authUserId = sanitizeUserId(req.authUser?.sub);
+    if (!authUserId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const userRecord = await getAuthUserRecord(authUserId);
+    if (!userRecord) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const role = toSupportRoleResponse(userRecord);
+    const ticketWithRef = await loadSupportTicketById(req.params?.ticketId);
+    if (!ticketWithRef) {
+      return res.status(404).json({ message: 'Ticket not found.' });
+    }
+    if (!ensureSupportTicketAccess(ticketWithRef.ticket, { id: authUserId }, role)) {
+      return res.status(403).json({ message: 'Forbidden ticket access.' });
+    }
+    if (!role.isSupportAdmin && ticketWithRef.ticket.status === SUPPORT_TICKET_STATUS.CLOSED) {
+      return res.status(400).json({ message: 'Ticket is already closed.' });
+    }
+
+    const text = String(req.body?.message || req.body?.text || '')
+      .trim()
+      .slice(0, SUPPORT_TICKET_MAX_MESSAGE_LENGTH);
+    const rawAttachments = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
+    if (rawAttachments.length > SUPPORT_TICKET_MAX_ATTACHMENTS) {
+      return res.status(400).json({ message: `Attachments limit is ${SUPPORT_TICKET_MAX_ATTACHMENTS}.` });
+    }
+    const attachments = normalizeTicketAttachmentList(rawAttachments);
+    if (rawAttachments.length !== attachments.length) {
+      return res.status(400).json({
+        message: `Only image/video attachments are allowed. Max ${SUPPORT_TICKET_MAX_ATTACHMENT_BYTES} bytes each.`,
+      });
+    }
+    if (!text && attachments.length === 0) {
+      return res.status(400).json({ message: 'Message content is required.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const messageId = crypto.randomUUID();
+    const senderRole = role.isSupportAdmin ? 'admin' : 'user';
+    const senderUsername = sanitizeUsername(userRecord.username);
+    await supportTicketMessagesRef(ticketWithRef.ticket.id).doc(messageId).set({
+      ticketId: ticketWithRef.ticket.id,
+      senderUserId: authUserId,
+      senderUsername,
+      senderRole,
+      text,
+      attachments,
+      createdAt: nowIso,
+    });
+
+    const nextStatus =
+      role.isSupportAdmin && ticketWithRef.ticket.status === SUPPORT_TICKET_STATUS.OPEN
+        ? SUPPORT_TICKET_STATUS.IN_PROGRESS
+        : ticketWithRef.ticket.status;
+    await ticketWithRef.ref.set(
+      {
+        updatedAt: nowIso,
+        status: nextStatus,
+        lastMessageAt: nowIso,
+        lastMessagePreview: buildSupportTicketMessagePreview(text, attachments),
+      },
+      { merge: true }
+    );
+
+    return res.status(201).json({
+      message: 'Message sent.',
+      messageItem: normalizeSupportTicketMessage(messageId, {
+        ticketId: ticketWithRef.ticket.id,
+        senderUserId: authUserId,
+        senderUsername,
+        senderRole,
+        text,
+        attachments,
+        createdAt: nowIso,
+      }),
+      ticketStatus: nextStatus,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to send message.' });
+  }
+});
+
+app.patch('/support/tickets/:ticketId/status', requireAuth, requireSupportAdmin, async (req, res) => {
+  try {
+    const ticketWithRef = await loadSupportTicketById(req.params?.ticketId);
+    if (!ticketWithRef) {
+      return res.status(404).json({ message: 'Ticket not found.' });
+    }
+    const nextStatus = normalizeSupportTicketStatus(req.body?.status);
+    const nowIso = new Date().toISOString();
+    const patch = {
+      status: nextStatus,
+      updatedAt: nowIso,
+    };
+    if (nextStatus === SUPPORT_TICKET_STATUS.CLOSED) {
+      patch.closedAt = nowIso;
+      patch.closedById = sanitizeUserId(req.supportAdmin?.id);
+      patch.closedByUsername = sanitizeUsername(req.supportAdmin?.username);
+    } else {
+      patch.closedAt = null;
+      patch.closedById = '';
+      patch.closedByUsername = '';
+    }
+    await ticketWithRef.ref.set(patch, { merge: true });
+    const updatedTicket = normalizeSupportTicket(ticketWithRef.ticket.id, {
+      ...ticketWithRef.ticket,
+      ...patch,
+    });
+    return res.json({
+      message: 'Ticket status updated.',
+      ticket: updatedTicket,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to update ticket status.' });
   }
 });
 

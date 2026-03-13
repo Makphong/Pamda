@@ -742,6 +742,100 @@ const PROJECT_INVITE_STATUSES = {
   DECLINED: 'declined',
 };
 const VALID_PROJECT_INVITE_STATUSES = new Set(Object.values(PROJECT_INVITE_STATUSES));
+const PROFILE_VIEW_MENUS = {
+  PROFILE: 'profile',
+  INVITATIONS: 'invitations',
+  SUPPORT: 'support',
+  ADMIN: 'admin',
+};
+const SUPPORT_TICKET_STATUS = {
+  OPEN: 'open',
+  IN_PROGRESS: 'in_progress',
+  CLOSED: 'closed',
+};
+const SUPPORT_TICKET_STATUS_LABELS = {
+  [SUPPORT_TICKET_STATUS.OPEN]: 'Open',
+  [SUPPORT_TICKET_STATUS.IN_PROGRESS]: 'In Progress',
+  [SUPPORT_TICKET_STATUS.CLOSED]: 'Closed',
+};
+const SUPPORT_TICKET_STATUS_OPTIONS = [
+  { id: 'all', label: 'ทั้งหมด' },
+  { id: SUPPORT_TICKET_STATUS.OPEN, label: 'Open' },
+  { id: SUPPORT_TICKET_STATUS.IN_PROGRESS, label: 'In Progress' },
+  { id: SUPPORT_TICKET_STATUS.CLOSED, label: 'Closed' },
+];
+const SUPPORT_TICKET_MAX_ATTACHMENTS = 3;
+const SUPPORT_TICKET_MAX_ATTACHMENT_BYTES = 220000;
+const SUPPORT_TICKET_MAX_MESSAGE_LENGTH = 4000;
+const PROFILE_ADMIN_ACTIVE_RANGE_OPTIONS = [
+  { id: 'today', label: 'วันนี้' },
+  { id: 'month', label: 'เดือนนี้' },
+  { id: 'year', label: 'ปีนี้' },
+];
+const PROFILE_ADMIN_ACTIVE_RANGE_SET = new Set(
+  PROFILE_ADMIN_ACTIVE_RANGE_OPTIONS.map((option) => option.id)
+);
+const normalizeProfileAdminActiveRange = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return PROFILE_ADMIN_ACTIVE_RANGE_SET.has(normalized) ? normalized : 'today';
+};
+const normalizeSupportTicketStatus = (statusInput) => {
+  const status = String(statusInput || '').trim().toLowerCase();
+  if (
+    status === SUPPORT_TICKET_STATUS.OPEN ||
+    status === SUPPORT_TICKET_STATUS.IN_PROGRESS ||
+    status === SUPPORT_TICKET_STATUS.CLOSED
+  ) {
+    return status;
+  }
+  return SUPPORT_TICKET_STATUS.OPEN;
+};
+const formatSupportTicketDateTime = (valueInput) => {
+  const value = String(valueInput || '').trim();
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('th-TH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+const clampSupportTicketText = (valueInput, maxLength = 140) =>
+  String(valueInput || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+const readFileAsDataUrl = (file) =>
+  new Promise((resolve, reject) => {
+    if (!file) {
+      reject(new Error('Missing file.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      if (!result) {
+        reject(new Error('Cannot read file.'));
+        return;
+      }
+      resolve(result);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Failed reading file.'));
+    reader.readAsDataURL(file);
+  });
+const PROFILE_COMPLAINT_STATUS = {
+  OPEN: 'open',
+  IN_REVIEW: 'in_review',
+  RESOLVED: 'resolved',
+};
+const PROFILE_COMPLAINT_STATUS_LABELS = {
+  [PROFILE_COMPLAINT_STATUS.OPEN]: 'Open',
+  [PROFILE_COMPLAINT_STATUS.IN_REVIEW]: 'In Review',
+  [PROFILE_COMPLAINT_STATUS.RESOLVED]: 'Resolved',
+};
 const STARTUP_VIEW_MODES = {
   CALENDAR: 'calendar',
   PROJECT: 'project',
@@ -4440,6 +4534,18 @@ function ProfileSettingsView({
   onVerifyPasswordWithGoogle,
   projectInvitations = [],
   onRespondToProjectInvite,
+  isRootAdmin = false,
+  onLoadAdminAccountStats,
+  onLoadSupportRole,
+  onLoadMySupportTickets,
+  onLoadSupportTickets,
+  onLoadSupportTicketDetail,
+  onCreateSupportTicket,
+  onSendSupportTicketMessage,
+  onUpdateSupportTicketStatus,
+  onLoadSupportAdmins,
+  onAddSupportAdmin,
+  onRemoveSupportAdmin,
 }) {
   const [username, setUsername] = useState(currentUser.username || '');
   const [email, setEmail] = useState(currentUser.email || '');
@@ -4447,6 +4553,35 @@ function ProfileSettingsView({
   const [isProfileEditorOpen, setIsProfileEditorOpen] = useState(false);
   const [profileResult, setProfileResult] = useState(null);
   const [inviteResult, setInviteResult] = useState(null);
+  const [activeMenu, setActiveMenu] = useState(PROFILE_VIEW_MENUS.PROFILE);
+  const [supportRole, setSupportRole] = useState({
+    isRootAdmin,
+    isSupportAdmin: isRootAdmin,
+  });
+  const [isSupportRoleLoading, setIsSupportRoleLoading] = useState(false);
+  const [supportTickets, setSupportTickets] = useState([]);
+  const [isSupportTicketsLoading, setIsSupportTicketsLoading] = useState(false);
+  const [supportTicketStatusFilter, setSupportTicketStatusFilter] = useState('all');
+  const [activeSupportTicketId, setActiveSupportTicketId] = useState('');
+  const [isSupportTicketDetailLoading, setIsSupportTicketDetailLoading] = useState(false);
+  const [supportTicketDetail, setSupportTicketDetail] = useState(null);
+  const [newTicketSubject, setNewTicketSubject] = useState('');
+  const [newTicketMessage, setNewTicketMessage] = useState('');
+  const [newTicketAttachments, setNewTicketAttachments] = useState([]);
+  const [supportReplyMessage, setSupportReplyMessage] = useState('');
+  const [supportReplyAttachments, setSupportReplyAttachments] = useState([]);
+  const [supportResult, setSupportResult] = useState(null);
+  const [isSupportSubmitting, setIsSupportSubmitting] = useState(false);
+  const [adminActiveRange, setAdminActiveRange] = useState(
+    normalizeProfileAdminActiveRange('today')
+  );
+  const [adminStats, setAdminStats] = useState(null);
+  const [isAdminStatsLoading, setIsAdminStatsLoading] = useState(false);
+  const [supportAdminIdentifier, setSupportAdminIdentifier] = useState('');
+  const [supportAdmins, setSupportAdmins] = useState([]);
+  const [isSupportAdminsLoading, setIsSupportAdminsLoading] = useState(false);
+  const [activeSupportAdminId, setActiveSupportAdminId] = useState('');
+  const [adminResult, setAdminResult] = useState(null);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -4467,6 +4602,26 @@ function ProfileSettingsView({
     setUsername(currentUser.username || '');
     setEmail(currentUser.email || '');
     setAvatarUrl(currentUser.avatarUrl || '');
+    setActiveMenu(PROFILE_VIEW_MENUS.PROFILE);
+    setSupportRole({
+      isRootAdmin,
+      isSupportAdmin: isRootAdmin,
+    });
+    setSupportTickets([]);
+    setSupportTicketStatusFilter('all');
+    setActiveSupportTicketId('');
+    setSupportTicketDetail(null);
+    setNewTicketSubject('');
+    setNewTicketMessage('');
+    setNewTicketAttachments([]);
+    setSupportReplyMessage('');
+    setSupportReplyAttachments([]);
+    setSupportResult(null);
+    setAdminActiveRange(normalizeProfileAdminActiveRange('today'));
+    setAdminStats(null);
+    setSupportAdminIdentifier('');
+    setSupportAdmins([]);
+    setAdminResult(null);
     setNewPassword('');
     setConfirmNewPassword('');
     setVerificationMethod('otp');
@@ -4478,7 +4633,13 @@ function ProfileSettingsView({
     });
     setPasswordResult(null);
     setInviteResult(null);
-  }, [currentUser.id, currentUser.username, currentUser.email, currentUser.avatarUrl]);
+  }, [currentUser.id, currentUser.username, currentUser.email, currentUser.avatarUrl, isRootAdmin]);
+
+  useEffect(() => {
+    if (!isRootAdmin && activeMenu === PROFILE_VIEW_MENUS.ADMIN) {
+      setActiveMenu(PROFILE_VIEW_MENUS.PROFILE);
+    }
+  }, [isRootAdmin, activeMenu]);
 
   useEffect(() => {
     setPasswordVerification({
@@ -4763,6 +4924,497 @@ function ProfileSettingsView({
     setInviteResult(result || null);
   };
 
+  const loadAdminData = useCallback(async () => {
+    if (!isRootAdmin) return;
+    setAdminResult(null);
+    if (onLoadAdminAccountStats) {
+      setIsAdminStatsLoading(true);
+      try {
+        const statsResult = await Promise.resolve(
+          onLoadAdminAccountStats(normalizeProfileAdminActiveRange(adminActiveRange))
+        );
+        if (statsResult?.ok) {
+          setAdminStats(statsResult.stats || null);
+        } else {
+          setAdminResult({
+            ok: false,
+            message: statsResult?.message || 'Failed to load admin account stats.',
+          });
+        }
+      } finally {
+        setIsAdminStatsLoading(false);
+      }
+    }
+  }, [adminActiveRange, isRootAdmin, onLoadAdminAccountStats]);
+
+  const loadSupportAdmins = useCallback(async () => {
+    if (!isRootAdmin || !onLoadSupportAdmins) return;
+    setIsSupportAdminsLoading(true);
+    setAdminResult(null);
+    try {
+      const result = await Promise.resolve(onLoadSupportAdmins());
+      if (!result?.ok) {
+        setAdminResult({
+          ok: false,
+          message: result?.message || 'Failed to load support admins.',
+        });
+        return;
+      }
+      setSupportAdmins(Array.isArray(result.admins) ? result.admins : []);
+    } finally {
+      setIsSupportAdminsLoading(false);
+    }
+  }, [isRootAdmin, onLoadSupportAdmins]);
+
+  useEffect(() => {
+    if (activeMenu !== PROFILE_VIEW_MENUS.ADMIN || !isRootAdmin) return;
+    void loadAdminData();
+    void loadSupportAdmins();
+  }, [activeMenu, isRootAdmin, loadAdminData, loadSupportAdmins]);
+
+  const resolveSupportRole = useCallback(async () => {
+    if (!onLoadSupportRole) {
+      const fallbackRole = {
+        isRootAdmin,
+        isSupportAdmin: isRootAdmin,
+      };
+      setSupportRole((prevRole) =>
+        prevRole.isRootAdmin === fallbackRole.isRootAdmin &&
+        prevRole.isSupportAdmin === fallbackRole.isSupportAdmin
+          ? prevRole
+          : fallbackRole
+      );
+      return {
+        ok: true,
+        role: fallbackRole,
+      };
+    }
+    setIsSupportRoleLoading(true);
+    try {
+      const result = await Promise.resolve(onLoadSupportRole());
+      if (!result?.ok) {
+        setSupportResult({
+          ok: false,
+          message: result?.message || 'Failed to load support role.',
+        });
+        return result;
+      }
+      const nextRole = {
+        isRootAdmin: Boolean(result?.role?.isRootAdmin),
+        isSupportAdmin: Boolean(result?.role?.isSupportAdmin),
+      };
+      setSupportRole((prevRole) =>
+        prevRole.isRootAdmin === nextRole.isRootAdmin &&
+        prevRole.isSupportAdmin === nextRole.isSupportAdmin
+          ? prevRole
+          : nextRole
+      );
+      return {
+        ok: true,
+        role: nextRole,
+      };
+    } finally {
+      setIsSupportRoleLoading(false);
+    }
+  }, [isRootAdmin, onLoadSupportRole]);
+
+  const loadSupportTickets = useCallback(
+    async (roleInput = supportRole) => {
+      const role = roleInput && typeof roleInput === 'object' ? roleInput : {};
+      const ticketLoader = role.isSupportAdmin ? onLoadSupportTickets : onLoadMySupportTickets;
+      if (!ticketLoader) {
+        setSupportTickets([]);
+        return { ok: true, tickets: [] };
+      }
+      setIsSupportTicketsLoading(true);
+      try {
+        const result = await Promise.resolve(ticketLoader());
+        if (!result?.ok) {
+          setSupportResult({
+            ok: false,
+            message: result?.message || 'Failed to load tickets.',
+          });
+          return result;
+        }
+        const nextTickets = Array.isArray(result?.tickets) ? result.tickets : [];
+        setSupportTickets(nextTickets);
+        setActiveSupportTicketId((prevTicketId) => {
+          if (prevTicketId && nextTickets.some((ticket) => String(ticket?.id || '').trim() === prevTicketId)) {
+            return prevTicketId;
+          }
+          const firstTicketId = String(nextTickets[0]?.id || '').trim();
+          return firstTicketId || '';
+        });
+        return {
+          ok: true,
+          tickets: nextTickets,
+        };
+      } finally {
+        setIsSupportTicketsLoading(false);
+      }
+    },
+    [onLoadMySupportTickets, onLoadSupportTickets, supportRole]
+  );
+
+  const loadSupportCenterData = useCallback(async () => {
+    setSupportResult(null);
+    const roleResult = await resolveSupportRole();
+    if (!roleResult?.ok) return;
+    await loadSupportTickets(roleResult.role);
+  }, [resolveSupportRole, loadSupportTickets]);
+
+  useEffect(() => {
+    void resolveSupportRole();
+  }, [resolveSupportRole]);
+
+  useEffect(() => {
+    if (activeMenu !== PROFILE_VIEW_MENUS.SUPPORT) return;
+    void loadSupportCenterData();
+  }, [activeMenu, loadSupportCenterData]);
+
+  const loadSupportTicketDetail = useCallback(
+    async (ticketIdInput) => {
+      const ticketId = String(ticketIdInput || '').trim();
+      if (!ticketId || !onLoadSupportTicketDetail) {
+        setSupportTicketDetail(null);
+        return;
+      }
+      setIsSupportTicketDetailLoading(true);
+      try {
+        const result = await Promise.resolve(onLoadSupportTicketDetail(ticketId));
+        if (!result?.ok) {
+          setSupportResult({
+            ok: false,
+            message: result?.message || 'Failed to load ticket detail.',
+          });
+          setSupportTicketDetail(null);
+          return;
+        }
+        setSupportTicketDetail({
+          ticket: result?.ticket && typeof result.ticket === 'object' ? result.ticket : null,
+          messages: Array.isArray(result?.messages) ? result.messages : [],
+        });
+      } finally {
+        setIsSupportTicketDetailLoading(false);
+      }
+    },
+    [onLoadSupportTicketDetail]
+  );
+
+  useEffect(() => {
+    if (activeMenu !== PROFILE_VIEW_MENUS.SUPPORT) return;
+    if (!activeSupportTicketId) {
+      setSupportTicketDetail(null);
+      return;
+    }
+    void loadSupportTicketDetail(activeSupportTicketId);
+  }, [activeMenu, activeSupportTicketId, loadSupportTicketDetail]);
+
+  const appendAttachmentsToTarget = async (event, target) => {
+    const files = Array.from(event?.target?.files || []);
+    if (event?.target) {
+      event.target.value = '';
+    }
+    if (files.length === 0) return;
+    const currentAttachments =
+      target === 'reply'
+        ? Array.isArray(supportReplyAttachments)
+          ? supportReplyAttachments
+          : []
+        : Array.isArray(newTicketAttachments)
+          ? newTicketAttachments
+          : [];
+    if (currentAttachments.length + files.length > SUPPORT_TICKET_MAX_ATTACHMENTS) {
+      setSupportResult({
+        ok: false,
+        message: `แนบได้สูงสุด ${SUPPORT_TICKET_MAX_ATTACHMENTS} ไฟล์`,
+      });
+      return;
+    }
+    setIsSupportSubmitting(true);
+    setSupportResult(null);
+    try {
+      const loadedAttachments = [];
+      for (const file of files) {
+        const mimeType = String(file?.type || '').trim().toLowerCase();
+        if (!mimeType.startsWith('image/') && !mimeType.startsWith('video/')) {
+          throw new Error('อนุญาตเฉพาะไฟล์รูปภาพหรือวิดีโอ');
+        }
+        const size = Number(file?.size || 0);
+        if (size <= 0 || size > SUPPORT_TICKET_MAX_ATTACHMENT_BYTES) {
+          throw new Error(
+            `ไฟล์ ${file.name} ต้องมีขนาดไม่เกิน ${Math.round(
+              SUPPORT_TICKET_MAX_ATTACHMENT_BYTES / 1024
+            )} KB`
+          );
+        }
+        const dataUrl = await readFileAsDataUrl(file);
+        loadedAttachments.push({
+          id: `att_${generateId()}`,
+          name: String(file?.name || 'attachment').slice(0, 180),
+          mimeType,
+          size,
+          dataUrl,
+        });
+      }
+      if (target === 'reply') {
+        setSupportReplyAttachments((prev) => [...(Array.isArray(prev) ? prev : []), ...loadedAttachments]);
+      } else {
+        setNewTicketAttachments((prev) => [...(Array.isArray(prev) ? prev : []), ...loadedAttachments]);
+      }
+    } catch (error) {
+      setSupportResult({
+        ok: false,
+        message: error.message || 'Cannot attach files.',
+      });
+    } finally {
+      setIsSupportSubmitting(false);
+    }
+  };
+
+  const removeAttachmentFromTarget = (target, attachmentIdInput) => {
+    const attachmentId = String(attachmentIdInput || '').trim();
+    if (!attachmentId) return;
+    if (target === 'reply') {
+      setSupportReplyAttachments((prev) =>
+        (Array.isArray(prev) ? prev : []).filter((attachment) => String(attachment?.id || '').trim() !== attachmentId)
+      );
+      return;
+    }
+    setNewTicketAttachments((prev) =>
+      (Array.isArray(prev) ? prev : []).filter((attachment) => String(attachment?.id || '').trim() !== attachmentId)
+    );
+  };
+
+  const syncTicketInList = useCallback((ticketInput) => {
+    if (!ticketInput || typeof ticketInput !== 'object') return;
+    const ticketId = String(ticketInput.id || '').trim();
+    if (!ticketId) return;
+    setSupportTickets((prevTickets) => {
+      const list = Array.isArray(prevTickets) ? prevTickets : [];
+      const existingIndex = list.findIndex((ticket) => String(ticket?.id || '').trim() === ticketId);
+      if (existingIndex === -1) {
+        return [ticketInput, ...list];
+      }
+      const nextList = [...list];
+      nextList[existingIndex] = {
+        ...nextList[existingIndex],
+        ...ticketInput,
+      };
+      return nextList;
+    });
+  }, []);
+
+  const handleCreateSupportTicket = async (e) => {
+    e.preventDefault();
+    const subject = String(newTicketSubject || '').trim();
+    const message = String(newTicketMessage || '').trim().slice(0, SUPPORT_TICKET_MAX_MESSAGE_LENGTH);
+    const attachments = Array.isArray(newTicketAttachments) ? newTicketAttachments : [];
+    if (!message && attachments.length === 0) {
+      setSupportResult({ ok: false, message: 'กรุณาใส่ข้อความหรือแนบไฟล์' });
+      return;
+    }
+    if (!onCreateSupportTicket) {
+      setSupportResult({ ok: false, message: 'Ticket feature is unavailable.' });
+      return;
+    }
+    setIsSupportSubmitting(true);
+    setSupportResult(null);
+    try {
+      const result = await Promise.resolve(
+        onCreateSupportTicket({
+          subject,
+          message,
+          attachments,
+        })
+      );
+      setSupportResult(result || { ok: false, message: 'Failed to open ticket.' });
+      if (result?.ok) {
+        setNewTicketSubject('');
+        setNewTicketMessage('');
+        setNewTicketAttachments([]);
+        if (result?.ticket && typeof result.ticket === 'object') {
+          syncTicketInList(result.ticket);
+          const openedTicketId = String(result.ticket.id || '').trim();
+          if (openedTicketId) {
+            setActiveSupportTicketId(openedTicketId);
+            setSupportTicketDetail({
+              ticket: result.ticket,
+              messages: result?.firstMessage ? [result.firstMessage] : [],
+            });
+          }
+        }
+      }
+    } finally {
+      setIsSupportSubmitting(false);
+    }
+  };
+
+  const handleSendSupportReply = async (e) => {
+    e.preventDefault();
+    const ticketId = String(activeSupportTicketId || '').trim();
+    const message = String(supportReplyMessage || '').trim().slice(0, SUPPORT_TICKET_MAX_MESSAGE_LENGTH);
+    const attachments = Array.isArray(supportReplyAttachments) ? supportReplyAttachments : [];
+    if (!ticketId) {
+      setSupportResult({ ok: false, message: 'กรุณาเลือก Ticket ก่อนส่งข้อความ' });
+      return;
+    }
+    if (!message && attachments.length === 0) {
+      setSupportResult({ ok: false, message: 'กรุณาใส่ข้อความหรือแนบไฟล์' });
+      return;
+    }
+    if (!onSendSupportTicketMessage) {
+      setSupportResult({ ok: false, message: 'Ticket chat is unavailable.' });
+      return;
+    }
+    setIsSupportSubmitting(true);
+    setSupportResult(null);
+    try {
+      const result = await Promise.resolve(onSendSupportTicketMessage(ticketId, { message, attachments }));
+      if (!result?.ok) {
+        setSupportResult({ ok: false, message: result?.message || 'Failed to send message.' });
+        return;
+      }
+      setSupportReplyMessage('');
+      setSupportReplyAttachments([]);
+      const messageItem = result?.messageItem && typeof result.messageItem === 'object' ? result.messageItem : null;
+      const ticketStatus = normalizeSupportTicketStatus(result?.ticketStatus);
+      setSupportTicketDetail((prevDetail) => {
+        const prevTicket = prevDetail?.ticket && typeof prevDetail.ticket === 'object' ? prevDetail.ticket : null;
+        const nextTicket = prevTicket
+          ? {
+              ...prevTicket,
+              status: ticketStatus,
+              updatedAt: messageItem?.createdAt || prevTicket.updatedAt,
+              lastMessageAt: messageItem?.createdAt || prevTicket.lastMessageAt,
+              lastMessagePreview: clampSupportTicketText(messageItem?.text || `${attachments.length} attachment`),
+            }
+          : prevTicket;
+        return {
+          ticket: nextTicket,
+          messages: [...(Array.isArray(prevDetail?.messages) ? prevDetail.messages : []), ...(messageItem ? [messageItem] : [])],
+        };
+      });
+      if (supportTicketDetail?.ticket) {
+        syncTicketInList({
+          ...supportTicketDetail.ticket,
+          status: ticketStatus,
+          updatedAt: messageItem?.createdAt || supportTicketDetail.ticket.updatedAt,
+          lastMessageAt: messageItem?.createdAt || supportTicketDetail.ticket.lastMessageAt,
+          lastMessagePreview: clampSupportTicketText(messageItem?.text || `${attachments.length} attachment`),
+        });
+      }
+      setSupportResult({
+        ok: true,
+        message: result?.message || 'ส่งข้อความเรียบร้อย',
+      });
+    } finally {
+      setIsSupportSubmitting(false);
+    }
+  };
+
+  const handleUpdateSupportTicket = async (ticketIdInput, nextStatusInput) => {
+    const ticketId = String(ticketIdInput || '').trim();
+    const nextStatus = normalizeSupportTicketStatus(nextStatusInput);
+    if (!ticketId || !onUpdateSupportTicketStatus) return;
+    setIsSupportSubmitting(true);
+    setSupportResult(null);
+    try {
+      const result = await Promise.resolve(onUpdateSupportTicketStatus(ticketId, nextStatus));
+      if (!result?.ok || !result?.ticket) {
+        setSupportResult({
+          ok: false,
+          message: result?.message || 'Failed to update ticket status.',
+        });
+        return;
+      }
+      syncTicketInList(result.ticket);
+      setSupportTicketDetail((prevDetail) => {
+        if (!prevDetail?.ticket || String(prevDetail.ticket.id || '').trim() !== ticketId) {
+          return prevDetail;
+        }
+        return {
+          ...prevDetail,
+          ticket: {
+            ...prevDetail.ticket,
+            ...result.ticket,
+          },
+        };
+      });
+      setSupportResult({
+        ok: true,
+        message: result?.message || 'Ticket status updated.',
+      });
+    } finally {
+      setIsSupportSubmitting(false);
+    }
+  };
+
+  const handleAddSupportAdminMember = async (e) => {
+    e.preventDefault();
+    const identifier = String(supportAdminIdentifier || '').trim();
+    if (!identifier) {
+      setAdminResult({ ok: false, message: 'กรุณากรอก username หรือ email' });
+      return;
+    }
+    if (!onAddSupportAdmin) {
+      setAdminResult({ ok: false, message: 'Support admin management is unavailable.' });
+      return;
+    }
+    setActiveSupportAdminId('add');
+    setAdminResult(null);
+    try {
+      const result = await Promise.resolve(onAddSupportAdmin(identifier));
+      if (!result?.ok) {
+        setAdminResult({
+          ok: false,
+          message: result?.message || 'Failed to add support admin.',
+        });
+        return;
+      }
+      setSupportAdminIdentifier('');
+      setAdminResult({ ok: true, message: result?.message || 'Support admin added.' });
+      await loadSupportAdmins();
+    } finally {
+      setActiveSupportAdminId('');
+    }
+  };
+
+  const handleRemoveSupportAdminMember = async (userIdInput) => {
+    const userId = String(userIdInput || '').trim();
+    if (!userId || !onRemoveSupportAdmin) return;
+    setActiveSupportAdminId(userId);
+    setAdminResult(null);
+    try {
+      const result = await Promise.resolve(onRemoveSupportAdmin(userId));
+      if (!result?.ok) {
+        setAdminResult({
+          ok: false,
+          message: result?.message || 'Failed to remove support admin.',
+        });
+        return;
+      }
+      setAdminResult({ ok: true, message: result?.message || 'Support admin removed.' });
+      await loadSupportAdmins();
+    } finally {
+      setActiveSupportAdminId('');
+    }
+  };
+
+  const filteredSupportTickets = useMemo(() => {
+    const normalizedFilter = String(supportTicketStatusFilter || 'all').trim().toLowerCase();
+    return (Array.isArray(supportTickets) ? supportTickets : [])
+      .filter((ticket) => {
+        if (normalizedFilter === 'all') return true;
+        return normalizeSupportTicketStatus(ticket?.status) === normalizedFilter;
+      })
+      .sort((left, right) => {
+        const leftTime = new Date(String(left?.updatedAt || left?.createdAt || '')).getTime();
+        const rightTime = new Date(String(right?.updatedAt || right?.createdAt || '')).getTime();
+        return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+      });
+  }, [supportTicketStatusFilter, supportTickets]);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-cyan-50 p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -4785,6 +5437,57 @@ function ProfileSettingsView({
           )}
         </div>
 
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-2">
+          <div className="flex items-center gap-2 overflow-x-auto">
+            <button
+              type="button"
+              onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.PROFILE)}
+              className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
+                activeMenu === PROFILE_VIEW_MENUS.PROFILE
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              ข้อมูลส่วนตัว
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.INVITATIONS)}
+              className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
+                activeMenu === PROFILE_VIEW_MENUS.INVITATIONS
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              คำเชิญโปรเจกต์ ({projectInvitations.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.SUPPORT)}
+              className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
+                activeMenu === PROFILE_VIEW_MENUS.SUPPORT
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              {supportRole.isSupportAdmin ? 'รับ Ticket' : 'เปิด Ticket'}
+            </button>
+            {isRootAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.ADMIN)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
+                  activeMenu === PROFILE_VIEW_MENUS.ADMIN
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                แอดมิน
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-[300px,1fr] gap-6">
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 h-fit">
             <div className="flex flex-col items-center text-center">
@@ -4805,36 +5508,38 @@ function ProfileSettingsView({
           </div>
 
           <div className="space-y-6">
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-800">Profile</h3>
-                <button
-                  type="button"
-                  onClick={openProfileEditor}
-                  className="h-8 w-8 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-blue-600 inline-flex items-center justify-center"
-                  title="Edit profile"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <span className="text-sm font-medium text-gray-600">Username</span>
-                  <p className="w-full border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-gray-800">
-                    {currentUser.username || '-'}
-                  </p>
+            {activeMenu === PROFILE_VIEW_MENUS.PROFILE && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-gray-800">Profile</h3>
+                  <button
+                    type="button"
+                    onClick={openProfileEditor}
+                    className="h-8 w-8 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-blue-600 inline-flex items-center justify-center"
+                    title="Edit profile"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <div className="space-y-1">
-                  <span className="text-sm font-medium text-gray-600">Email</span>
-                  <p className="w-full border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-gray-700 break-all">
-                    {currentUser.email || '-'}
-                  </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <span className="text-sm font-medium text-gray-600">Username</span>
+                    <p className="w-full border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-gray-800">
+                      {currentUser.username || '-'}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-sm font-medium text-gray-600">Email</span>
+                    <p className="w-full border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-gray-700 break-all">
+                      {currentUser.email || '-'}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            {projectInvitations.length > 0 && (
+            {activeMenu === PROFILE_VIEW_MENUS.INVITATIONS && (
               <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-semibold text-gray-800">Project Invitations</h3>
@@ -4855,37 +5560,531 @@ function ProfileSettingsView({
                   </p>
                 )}
 
-                <div className="space-y-3">
-                  {projectInvitations.map((invite) => (
-                    <div
-                      key={invite.id}
-                      className="rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3 flex flex-col gap-3"
+                {projectInvitations.length === 0 ? (
+                  <p className="text-sm text-gray-500">ไม่มีคำเชิญที่รอดำเนินการ</p>
+                ) : (
+                  <div className="space-y-3">
+                    {projectInvitations.map((invite) => (
+                      <div
+                        key={invite.id}
+                        className="rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3 flex flex-col gap-3"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-gray-800 truncate">
+                            {invite.projectName || 'Untitled project'}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Invited by{' '}
+                            <span className="font-medium text-gray-700">{invite.ownerUsername || '-'}</span>
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.ACCEPTED)
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium"
+                          >
+                            <Check className="w-3.5 h-3.5" /> Accept
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.DECLINED)
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs font-medium"
+                          >
+                            <X className="w-3.5 h-3.5" /> Decline
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeMenu === PROFILE_VIEW_MENUS.SUPPORT && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 md:p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-lg font-semibold text-gray-800">
+                    {supportRole.isSupportAdmin ? 'รับ Ticket จากผู้ใช้' : 'เปิด Ticket เพื่อคุยกับแอดมิน'}
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={supportTicketStatusFilter}
+                      onChange={(e) => setSupportTicketStatusFilter(String(e.target.value || 'all').trim())}
+                      className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm"
                     >
-                      <div>
-                        <p className="text-sm font-semibold text-gray-800 truncate">{invite.projectName || 'Untitled project'}</p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Invited by <span className="font-medium text-gray-700">{invite.ownerUsername || '-'}</span>
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.ACCEPTED)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium"
-                        >
-                          <Check className="w-3.5 h-3.5" /> Accept
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.DECLINED)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs font-medium"
-                        >
-                          <X className="w-3.5 h-3.5" /> Decline
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                      {SUPPORT_TICKET_STATUS_OPTIONS.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void loadSupportCenterData()}
+                      disabled={isSupportRoleLoading || isSupportTicketsLoading}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-sm disabled:opacity-50"
+                    >
+                      Refresh
+                    </button>
+                  </div>
                 </div>
+
+                {!supportRole.isSupportAdmin && (
+                  <form onSubmit={handleCreateSupportTicket} className="rounded-xl border border-gray-200 bg-gray-50/60 p-4 space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr,auto] gap-2">
+                      <input
+                        type="text"
+                        value={newTicketSubject}
+                        onChange={(e) => setNewTicketSubject(e.target.value)}
+                        placeholder="หัวข้อ Ticket (ไม่บังคับ)"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                      <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
+                        <Paperclip className="w-4 h-4" />
+                        แนบไฟล์
+                        <input
+                          type="file"
+                          accept="image/*,video/*"
+                          multiple
+                          onChange={(event) => void appendAttachmentsToTarget(event, 'new')}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                    <textarea
+                      value={newTicketMessage}
+                      onChange={(e) => setNewTicketMessage(e.target.value)}
+                      placeholder="รายละเอียด Ticket..."
+                      rows={4}
+                      maxLength={SUPPORT_TICKET_MAX_MESSAGE_LENGTH}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-y"
+                    />
+                    {newTicketAttachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {newTicketAttachments.map((attachment) => (
+                          <div
+                            key={attachment.id}
+                            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700"
+                          >
+                            <span className="max-w-[180px] truncate">{attachment.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeAttachmentFromTarget('new', attachment.id)}
+                              className="text-gray-400 hover:text-red-500"
+                              title="Remove attachment"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={isSupportSubmitting}
+                        className={`px-4 py-2 rounded-lg text-white ${
+                          isSupportSubmitting
+                            ? 'bg-blue-300 cursor-not-allowed'
+                            : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
+                      >
+                        {isSupportSubmitting ? 'กำลังเปิด Ticket...' : 'เปิด Ticket'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                <div className="grid grid-cols-1 xl:grid-cols-[320px,1fr] gap-4">
+                  <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-3 space-y-2 max-h-[64vh] overflow-y-auto">
+                    {isSupportTicketsLoading ? (
+                      <p className="text-sm text-gray-500">กำลังโหลดรายการ Ticket...</p>
+                    ) : filteredSupportTickets.length === 0 ? (
+                      <p className="text-sm text-gray-500">ยังไม่มี Ticket</p>
+                    ) : (
+                      filteredSupportTickets.map((ticket) => {
+                        const ticketId = String(ticket?.id || '').trim();
+                        const status = normalizeSupportTicketStatus(ticket?.status);
+                        const isActive = ticketId && ticketId === activeSupportTicketId;
+                        const statusClass =
+                          status === SUPPORT_TICKET_STATUS.CLOSED
+                            ? 'bg-red-50 text-red-700 border-red-200'
+                            : status === SUPPORT_TICKET_STATUS.IN_PROGRESS
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                        return (
+                          <button
+                            key={ticketId}
+                            type="button"
+                            onClick={() => setActiveSupportTicketId(ticketId)}
+                            className={`w-full text-left rounded-xl border px-3 py-2 transition-colors ${
+                              isActive
+                                ? 'bg-blue-50 border-blue-300'
+                                : 'bg-white border-gray-200 hover:bg-gray-100'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-gray-800 truncate">
+                                {ticket?.subject || '(ไม่มีหัวข้อ)'}
+                              </p>
+                              <span className={`text-[11px] px-2 py-0.5 rounded-full border ${statusClass}`}>
+                                {SUPPORT_TICKET_STATUS_LABELS[status]}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-gray-500 truncate">
+                              {supportRole.isSupportAdmin
+                                ? `โดย ${ticket?.ownerUsername || '-'}`
+                                : `อัปเดต ${formatSupportTicketDateTime(ticket?.updatedAt)}`}
+                            </p>
+                            <p className="mt-1 text-xs text-gray-600 line-clamp-2">
+                              {ticket?.lastMessagePreview || '-'}
+                            </p>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 bg-white p-3 md:p-4 flex flex-col min-h-[380px]">
+                    {isSupportTicketDetailLoading ? (
+                      <p className="text-sm text-gray-500">กำลังโหลดแชท Ticket...</p>
+                    ) : !supportTicketDetail?.ticket ? (
+                      <p className="text-sm text-gray-500">
+                        {filteredSupportTickets.length === 0
+                          ? 'เมื่อเปิด Ticket แล้ว แชทจะขึ้นที่นี่'
+                          : 'เลือก Ticket จากรายการด้านซ้าย'}
+                      </p>
+                    ) : (
+                      <>
+                        <div className="pb-3 border-b border-gray-200 space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h4 className="text-base font-semibold text-gray-800">
+                              {supportTicketDetail.ticket.subject || '(ไม่มีหัวข้อ)'}
+                            </h4>
+                            <span className="text-xs px-2.5 py-1 rounded-full border border-gray-300 bg-gray-50 text-gray-700">
+                              {SUPPORT_TICKET_STATUS_LABELS[
+                                normalizeSupportTicketStatus(supportTicketDetail.ticket.status)
+                              ] || 'Open'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-500">
+                            โดย {supportTicketDetail.ticket.ownerUsername || '-'} | เปิดเมื่อ{' '}
+                            {formatSupportTicketDateTime(supportTicketDetail.ticket.createdAt)}
+                            {normalizeSupportTicketStatus(supportTicketDetail.ticket.status) ===
+                              SUPPORT_TICKET_STATUS.CLOSED &&
+                            String(supportTicketDetail.ticket.closedByUsername || '').trim()
+                              ? ` | ปิดโดย ${supportTicketDetail.ticket.closedByUsername}`
+                              : ''}
+                          </p>
+                          {supportRole.isSupportAdmin && (
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleUpdateSupportTicket(
+                                    supportTicketDetail.ticket.id,
+                                    SUPPORT_TICKET_STATUS.OPEN
+                                  )
+                                }
+                                disabled={isSupportSubmitting}
+                                className="px-2.5 py-1.5 rounded-lg text-xs border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                              >
+                                Open
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleUpdateSupportTicket(
+                                    supportTicketDetail.ticket.id,
+                                    SUPPORT_TICKET_STATUS.IN_PROGRESS
+                                  )
+                                }
+                                disabled={isSupportSubmitting}
+                                className="px-2.5 py-1.5 rounded-lg text-xs border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                              >
+                                In Progress
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleUpdateSupportTicket(
+                                    supportTicketDetail.ticket.id,
+                                    SUPPORT_TICKET_STATUS.CLOSED
+                                  )
+                                }
+                                disabled={isSupportSubmitting}
+                                className="px-2.5 py-1.5 rounded-lg text-xs border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50"
+                              >
+                                Close
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto py-3 space-y-2">
+                          {(Array.isArray(supportTicketDetail.messages) ? supportTicketDetail.messages : []).map((message) => {
+                            const isOwnMessage =
+                              String(message?.senderUserId || '').trim() === String(currentUser?.id || '').trim();
+                            const isAdminMessage = String(message?.senderRole || '').trim().toLowerCase() === 'admin';
+                            return (
+                              <div
+                                key={message.id}
+                                className={`rounded-xl border px-3 py-2 ${
+                                  isOwnMessage
+                                    ? 'bg-blue-50 border-blue-200 ml-4'
+                                    : 'bg-gray-50 border-gray-200 mr-4'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-xs font-medium text-gray-700">
+                                    {message?.senderUsername || '-'} {isAdminMessage ? '(admin)' : '(user)'}
+                                  </p>
+                                  <p className="text-[11px] text-gray-500">
+                                    {formatSupportTicketDateTime(message?.createdAt)}
+                                  </p>
+                                </div>
+                                <p className="mt-1 text-sm text-gray-800 whitespace-pre-wrap break-words">
+                                  {message?.text || ''}
+                                </p>
+                                {Array.isArray(message?.attachments) && message.attachments.length > 0 && (
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {message.attachments.map((attachment) => {
+                                      const isImage = String(attachment?.mimeType || '').startsWith('image/');
+                                      return (
+                                        <a
+                                          key={attachment.id}
+                                          href={attachment.dataUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs text-blue-700 hover:bg-blue-50"
+                                        >
+                                          {isImage ? (
+                                            <img
+                                              src={attachment.dataUrl}
+                                              alt={attachment.name || 'attachment'}
+                                              className="w-8 h-8 rounded object-cover"
+                                            />
+                                          ) : (
+                                            <FileText className="w-3.5 h-3.5" />
+                                          )}
+                                          <span className="max-w-[140px] truncate">{attachment.name}</span>
+                                        </a>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <form onSubmit={handleSendSupportReply} className="pt-3 border-t border-gray-200 space-y-2">
+                          <div className="flex items-start gap-2">
+                            <textarea
+                              value={supportReplyMessage}
+                              onChange={(e) => setSupportReplyMessage(e.target.value)}
+                              placeholder="พิมพ์ข้อความ..."
+                              rows={2}
+                              maxLength={SUPPORT_TICKET_MAX_MESSAGE_LENGTH}
+                              disabled={
+                                !supportRole.isSupportAdmin &&
+                                normalizeSupportTicketStatus(supportTicketDetail.ticket.status) ===
+                                  SUPPORT_TICKET_STATUS.CLOSED
+                              }
+                              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-y disabled:bg-gray-100 disabled:text-gray-400"
+                            />
+                            <label className="inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 cursor-pointer text-sm">
+                              <Paperclip className="w-4 h-4" />
+                              <input
+                                type="file"
+                                accept="image/*,video/*"
+                                multiple
+                                onChange={(event) => void appendAttachmentsToTarget(event, 'reply')}
+                                className="hidden"
+                              />
+                            </label>
+                            <button
+                              type="submit"
+                              disabled={
+                                isSupportSubmitting ||
+                                (!supportRole.isSupportAdmin &&
+                                  normalizeSupportTicketStatus(supportTicketDetail.ticket.status) ===
+                                    SUPPORT_TICKET_STATUS.CLOSED)
+                              }
+                              className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+                            >
+                              ส่ง
+                            </button>
+                          </div>
+                          {supportReplyAttachments.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {supportReplyAttachments.map((attachment) => (
+                                <div
+                                  key={attachment.id}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700"
+                                >
+                                  <span className="max-w-[170px] truncate">{attachment.name}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeAttachmentFromTarget('reply', attachment.id)}
+                                    className="text-gray-400 hover:text-red-500"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {!supportRole.isSupportAdmin &&
+                            normalizeSupportTicketStatus(supportTicketDetail.ticket.status) ===
+                              SUPPORT_TICKET_STATUS.CLOSED && (
+                              <p className="text-xs text-red-600">Ticket นี้ถูกปิดแล้ว (แอดมินยังตอบกลับได้)</p>
+                            )}
+                        </form>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {supportResult?.message && (
+                  <p
+                    className={`text-sm rounded-lg px-3 py-2 border ${
+                      supportResult.ok
+                        ? 'bg-green-50 text-green-700 border-green-200'
+                        : 'bg-red-50 text-red-600 border-red-200'
+                    }`}
+                  >
+                    {supportResult.message}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {activeMenu === PROFILE_VIEW_MENUS.ADMIN && isRootAdmin && (
+              <div className="space-y-4">
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-800">Admin Dashboard</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                      <p className="text-xs text-gray-500">จำนวน Account ทั้งหมด</p>
+                      <p className="text-2xl font-bold text-gray-800 mt-1">
+                        {isAdminStatsLoading ? '...' : Number(adminStats?.totalAccounts || 0)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 space-y-2">
+                      <label className="text-xs text-gray-500 block">Active Accounts</label>
+                      <select
+                        value={normalizeProfileAdminActiveRange(adminActiveRange)}
+                        onChange={(e) => setAdminActiveRange(normalizeProfileAdminActiveRange(e.target.value))}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+                      >
+                        {PROFILE_ADMIN_ACTIVE_RANGE_OPTIONS.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-lg font-semibold text-gray-800">
+                        {isAdminStatsLoading ? '...' : Number(adminStats?.activeAccounts || 0)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => void loadAdminData()}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-sm"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="text-base font-semibold text-gray-800">จัดการผู้ดูแล Ticket</h4>
+                    <button
+                      type="button"
+                      onClick={() => void loadSupportAdmins()}
+                      disabled={isSupportAdminsLoading}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-sm disabled:opacity-50"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                  <form onSubmit={handleAddSupportAdminMember} className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="text"
+                      value={supportAdminIdentifier}
+                      onChange={(e) => setSupportAdminIdentifier(e.target.value)}
+                      placeholder="username หรือ email"
+                      className="flex-1 border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={activeSupportAdminId === 'add'}
+                      className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300"
+                    >
+                      เพิ่มแอดมิน
+                    </button>
+                  </form>
+                  {isSupportAdminsLoading ? (
+                    <p className="text-sm text-gray-500">กำลังโหลดรายชื่อแอดมิน...</p>
+                  ) : supportAdmins.length === 0 ? (
+                    <p className="text-sm text-gray-500">ยังไม่มีแอดมินเพิ่มเติม</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {supportAdmins.map((adminUser) => {
+                        const adminUserId = String(adminUser?.id || '').trim();
+                        const isRoot = adminUser?.isRootAdmin === true;
+                        return (
+                          <div
+                            key={adminUserId || adminUser?.email || adminUser?.username}
+                            className="rounded-xl border border-gray-200 bg-gray-50/70 px-3 py-2 flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-gray-800 truncate">
+                                {adminUser?.username || '-'}
+                              </p>
+                              <p className="text-xs text-gray-500 break-all">{adminUser?.email || '-'}</p>
+                            </div>
+                            {isRoot ? (
+                              <span className="text-xs px-2 py-1 rounded-full border border-purple-200 bg-purple-50 text-purple-700">
+                                Root
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void handleRemoveSupportAdminMember(adminUserId)}
+                                disabled={activeSupportAdminId === adminUserId}
+                                className="px-2.5 py-1.5 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 text-xs disabled:opacity-50"
+                              >
+                                ถอดแอดมิน
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {adminResult?.message && (
+                  <p
+                    className={`text-sm rounded-lg px-3 py-2 border ${
+                      adminResult.ok
+                        ? 'bg-green-50 text-green-700 border-green-200'
+                        : 'bg-red-50 text-red-600 border-red-200'
+                    }`}
+                  >
+                    {adminResult.message}
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -5197,6 +6396,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [projectInvitations, setProjectInvitations] = useState(() =>
     AUTH_API_BASE_URL ? [] : getProjectInvites()
   );
+  const [isRootAdmin, setIsRootAdmin] = useState(false);
   const [googleCalendarStatus, setGoogleCalendarStatus] = useState(() => ({
     ...DEFAULT_GOOGLE_CALENDAR_STATUS,
   }));
@@ -5437,6 +6637,32 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       isCancelled = true;
     };
   }, [isProfileViewOpen]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    setIsRootAdmin(false);
+
+    const resolveAdminRole = async () => {
+      if (!AUTH_API_BASE_URL) {
+        return;
+      }
+      try {
+        await requestCloudDataApi('/admin/me');
+        if (!isCancelled) {
+          setIsRootAdmin(true);
+        }
+      } catch {
+        if (!isCancelled) {
+          setIsRootAdmin(false);
+        }
+      }
+    };
+
+    void resolveAdminRole();
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUser.id, currentUser.authToken]);
 
   const refreshGoogleCalendarStatus = async () => {
     if (!AUTH_API_BASE_URL) {
@@ -6323,9 +7549,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
         const ownerProjectById = new Map();
         const ownerEventsByProjectId = new Map();
+        const ownerPayloadLoadedByOwnerId = new Map();
 
         ownerPayloads.forEach(([ownerId, payload]) => {
           const normalizedOwnerId = String(ownerId || '').trim();
+          ownerPayloadLoadedByOwnerId.set(normalizedOwnerId, Boolean(payload && typeof payload === 'object'));
           const ownerProjects = Array.isArray(payload?.projects) ? payload.projects : [];
           const ownerEvents = Array.isArray(payload?.events) ? payload.events : [];
 
@@ -6385,6 +7613,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           const isOwnedByCurrentUser =
             String(project?.ownerId || '').trim() === currentUser.id &&
             (!projectOwnerUsername || projectOwnerUsername === normalizedCurrentUsername);
+          const projectOwnerId = String(project?.ownerId || '').trim();
+          const hasExternalProjectOwner = Boolean(projectOwnerId && projectOwnerId !== currentUser.id);
+          const ownerPayloadLoaded = hasExternalProjectOwner
+            ? ownerPayloadLoadedByOwnerId.get(projectOwnerId) === true
+            : false;
+
+          if (hasExternalOwnerSnapshot && !isProjectAccessibleByUser(ownerProject, currentUser)) {
+            return;
+          }
 
 	          if (!hasExternalOwnerSnapshot && isOwnedByCurrentUser) {
 	            const localProject = localProjectById.get(projectId);
@@ -6424,6 +7661,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           }
 
 	          if (!ownerProject) {
+	            if (!isOwnedByCurrentUser && hasExternalProjectOwner && ownerPayloadLoaded) {
+	              return;
+	            }
 	            const localProject = localProjectById.get(projectId);
 	            if (!localProject) {
 	              nextProjectsById.set(projectId, project);
@@ -6619,9 +7859,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             sensitivity: 'base',
           });
         });
-        const nextProjectTodos = mergeProjectTodosByProjectId(
+        const mergedProjectTodos = mergeProjectTodosByProjectId(
           baseProjectTodosSnapshot,
           localProjectTodosSnapshot
+        );
+        const nextProjectTodos = Object.fromEntries(
+          Object.entries(mergedProjectTodos).filter(([projectId]) =>
+            accessibleProjectIds.has(String(projectId || '').trim())
+          )
         );
 
         if (requestSeq < collaborativeRefreshStateRef.current.appliedSeq) {
@@ -8819,6 +10064,254 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     return { ok: true, message: 'Password changed successfully.' };
   };
+  const handleLoadAdminAccountStats = useCallback(async (rangeInput = 'today') => {
+    const range = normalizeProfileAdminActiveRange(rangeInput);
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Admin dashboard requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    try {
+      const result = await requestCloudDataApi(
+        `/admin/stats/accounts?range=${encodeURIComponent(range)}`
+      );
+      return {
+        ok: true,
+        stats: {
+          range: normalizeProfileAdminActiveRange(result?.range),
+          totalAccounts: Number(result?.totalAccounts || 0),
+          activeAccounts: Number(result?.activeAccounts || 0),
+          timezone: String(result?.timezone || '').trim(),
+          generatedAt: String(result?.generatedAt || '').trim(),
+        },
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load admin account stats.' };
+    }
+  }, [isRootAdmin]);
+  const handleLoadSupportRole = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) {
+      return {
+        ok: true,
+        role: {
+          isRootAdmin,
+          isSupportAdmin: isRootAdmin,
+        },
+      };
+    }
+    try {
+      const result = await requestCloudDataApi('/support/role');
+      return {
+        ok: true,
+        role: {
+          isRootAdmin: Boolean(result?.isRootAdmin),
+          isSupportAdmin: Boolean(result?.isSupportAdmin),
+        },
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load support role.' };
+    }
+  }, [isRootAdmin]);
+  const handleLoadMySupportTickets = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Support ticket requires Cloud Auth API.' };
+    }
+    try {
+      const result = await requestCloudDataApi('/support/tickets/my');
+      return {
+        ok: true,
+        tickets: Array.isArray(result?.tickets) ? result.tickets : [],
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load tickets.' };
+    }
+  }, []);
+  const handleLoadSupportTickets = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Support ticket requires Cloud Auth API.' };
+    }
+    try {
+      const result = await requestCloudDataApi('/support/tickets');
+      return {
+        ok: true,
+        tickets: Array.isArray(result?.tickets) ? result.tickets : [],
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load tickets.' };
+    }
+  }, []);
+  const handleLoadSupportTicketDetail = useCallback(async (ticketIdInput) => {
+    const ticketId = String(ticketIdInput || '').trim();
+    if (!ticketId) {
+      return { ok: false, message: 'Ticket id is required.' };
+    }
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Support ticket requires Cloud Auth API.' };
+    }
+    try {
+      const result = await requestCloudDataApi(`/support/tickets/${encodeURIComponent(ticketId)}`);
+      return {
+        ok: true,
+        ticket: result?.ticket && typeof result.ticket === 'object' ? result.ticket : null,
+        messages: Array.isArray(result?.messages) ? result.messages : [],
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load ticket detail.' };
+    }
+  }, []);
+  const handleCreateSupportTicket = useCallback(async ({ subject, message, attachments }) => {
+    const normalizedSubject = String(subject || '').trim().slice(0, 160);
+    const normalizedMessage = String(message || '').trim().slice(0, SUPPORT_TICKET_MAX_MESSAGE_LENGTH);
+    const normalizedAttachments = Array.isArray(attachments) ? attachments : [];
+    if (!normalizedMessage && normalizedAttachments.length === 0) {
+      return { ok: false, message: 'กรุณาใส่ข้อความหรือแนบไฟล์' };
+    }
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Support ticket requires Cloud Auth API.' };
+    }
+    try {
+      const result = await requestCloudDataApi('/support/tickets', {
+        method: 'POST',
+        body: {
+          subject: normalizedSubject,
+          message: normalizedMessage,
+          attachments: normalizedAttachments,
+        },
+      });
+      return {
+        ok: true,
+        message: result?.message || 'Ticket opened.',
+        ticket: result?.ticket && typeof result.ticket === 'object' ? result.ticket : null,
+        firstMessage:
+          result?.firstMessage && typeof result.firstMessage === 'object' ? result.firstMessage : null,
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to open ticket.' };
+    }
+  }, []);
+  const handleSendSupportTicketMessage = useCallback(async (ticketIdInput, { message, attachments } = {}) => {
+    const ticketId = String(ticketIdInput || '').trim();
+    const normalizedMessage = String(message || '').trim().slice(0, SUPPORT_TICKET_MAX_MESSAGE_LENGTH);
+    const normalizedAttachments = Array.isArray(attachments) ? attachments : [];
+    if (!ticketId) {
+      return { ok: false, message: 'Ticket id is required.' };
+    }
+    if (!normalizedMessage && normalizedAttachments.length === 0) {
+      return { ok: false, message: 'กรุณาใส่ข้อความหรือแนบไฟล์' };
+    }
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Support ticket requires Cloud Auth API.' };
+    }
+    try {
+      const result = await requestCloudDataApi(`/support/tickets/${encodeURIComponent(ticketId)}/messages`, {
+        method: 'POST',
+        body: {
+          message: normalizedMessage,
+          attachments: normalizedAttachments,
+        },
+      });
+      return {
+        ok: true,
+        message: result?.message || 'Message sent.',
+        messageItem: result?.messageItem && typeof result.messageItem === 'object' ? result.messageItem : null,
+        ticketStatus: normalizeSupportTicketStatus(result?.ticketStatus),
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to send message.' };
+    }
+  }, []);
+  const handleUpdateSupportTicketStatus = useCallback(async (ticketIdInput, statusInput) => {
+    const ticketId = String(ticketIdInput || '').trim();
+    const status = normalizeSupportTicketStatus(statusInput);
+    if (!ticketId) {
+      return { ok: false, message: 'Ticket id is required.' };
+    }
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Support ticket requires Cloud Auth API.' };
+    }
+    try {
+      const result = await requestCloudDataApi(`/support/tickets/${encodeURIComponent(ticketId)}/status`, {
+        method: 'PATCH',
+        body: {
+          status,
+        },
+      });
+      return {
+        ok: true,
+        message: result?.message || 'Ticket updated.',
+        ticket: result?.ticket && typeof result.ticket === 'object' ? result.ticket : null,
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to update ticket status.' };
+    }
+  }, []);
+  const handleLoadSupportAdmins = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Admin dashboard requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    try {
+      const result = await requestCloudDataApi('/admin/support-admins');
+      return {
+        ok: true,
+        admins: Array.isArray(result?.admins) ? result.admins : [],
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load support admins.' };
+    }
+  }, [isRootAdmin]);
+  const handleAddSupportAdmin = useCallback(async (identifierInput) => {
+    const identifier = String(identifierInput || '').trim();
+    if (!identifier) {
+      return { ok: false, message: 'username หรือ email is required.' };
+    }
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Admin dashboard requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    try {
+      const result = await requestCloudDataApi('/admin/support-admins', {
+        method: 'POST',
+        body: {
+          identifier,
+        },
+      });
+      return {
+        ok: true,
+        message: result?.message || 'Support admin added.',
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to add support admin.' };
+    }
+  }, [isRootAdmin]);
+  const handleRemoveSupportAdmin = useCallback(async (userIdInput) => {
+    const userId = String(userIdInput || '').trim();
+    if (!userId) {
+      return { ok: false, message: 'userId is required.' };
+    }
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Admin dashboard requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    try {
+      const result = await requestCloudDataApi(`/admin/support-admins/${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+      });
+      return {
+        ok: true,
+        message: result?.message || 'Support admin removed.',
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to remove support admin.' };
+    }
+  }, [isRootAdmin]);
   const projectUpdatesOverlay = (
     <>
       {projectUpdateToastNotice && !isProjectUpdatesPopupOpen && (
@@ -8868,6 +10361,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         onVerifyPasswordWithGoogle={handleVerifyPasswordWithGoogle}
         projectInvitations={pendingProjectInvitations}
         onRespondToProjectInvite={respondToProjectInvite}
+        isRootAdmin={isRootAdmin}
+        onLoadAdminAccountStats={handleLoadAdminAccountStats}
+        onLoadSupportRole={handleLoadSupportRole}
+        onLoadMySupportTickets={handleLoadMySupportTickets}
+        onLoadSupportTickets={handleLoadSupportTickets}
+        onLoadSupportTicketDetail={handleLoadSupportTicketDetail}
+        onCreateSupportTicket={handleCreateSupportTicket}
+        onSendSupportTicketMessage={handleSendSupportTicketMessage}
+        onUpdateSupportTicketStatus={handleUpdateSupportTicketStatus}
+        onLoadSupportAdmins={handleLoadSupportAdmins}
+        onAddSupportAdmin={handleAddSupportAdmin}
+        onRemoveSupportAdmin={handleRemoveSupportAdmin}
       />
     );
   }
