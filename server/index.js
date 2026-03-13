@@ -70,6 +70,9 @@ const FIRESTORE_LINE_REMINDER_COLLECTION = String(
 const FIRESTORE_LINE_REMINDER_LOG_COLLECTION = String(
   process.env.FIRESTORE_LINE_REMINDER_LOG_COLLECTION || 'line_reminder_logs'
 ).trim();
+const FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION = String(
+  process.env.FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION || 'line_webhook_logs'
+).trim();
 const LINE_REMINDER_CRON_SECRET = String(process.env.LINE_REMINDER_CRON_SECRET || '').trim();
 const DEFAULT_LINE_REMINDER_TIMEZONE = String(
   process.env.LINE_REMINDER_DEFAULT_TIMEZONE || 'Asia/Bangkok'
@@ -78,6 +81,10 @@ const DEFAULT_LINE_REMINDER_HOUR = Math.min(
   23,
   Math.max(0, Number(process.env.LINE_REMINDER_DEFAULT_HOUR || 9))
 );
+const LINE_CHANNEL_SECRET = String(process.env.LINE_CHANNEL_SECRET || '').trim();
+const LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN = String(
+  process.env.LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || process.env.LINE_CHANNEL_ACCESS_TOKEN || ''
+).trim();
 
 const loadGoogleOauthConfigFromJson = (filePath) => {
   const emptyConfig = { clientId: '', clientSecret: '', redirectUris: [] };
@@ -144,6 +151,7 @@ const appDataRef = firestore.collection(APP_DATA_COLLECTION);
 const invitesDocRef = firestore.collection(PROJECT_INVITES_COLLECTION).doc(PROJECT_INVITES_DOC_ID);
 const lineReminderConfigRef = firestore.collection(FIRESTORE_LINE_REMINDER_COLLECTION);
 const lineReminderLogRef = firestore.collection(FIRESTORE_LINE_REMINDER_LOG_COLLECTION);
+const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION);
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 const resolveGoogleCalendarRedirectUri = (req) => {
@@ -416,6 +424,44 @@ const buildLineReminderMessage = ({ projectName, targetDate, tasks }) => {
   }
 
   return [...titleLines, ...taskLines].join('\n').slice(0, 4900);
+};
+
+const isValidLineWebhookSignature = (req) => {
+  if (!LINE_CHANNEL_SECRET) return false;
+  const signature = String(req.get('x-line-signature') || '').trim();
+  if (!signature || !req.rawBody) return false;
+  const expected = crypto
+    .createHmac('sha256', LINE_CHANNEL_SECRET)
+    .update(req.rawBody)
+    .digest('base64');
+  const incomingBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (incomingBuffer.length !== expectedBuffer.length) return false;
+  return crypto.timingSafeEqual(incomingBuffer, expectedBuffer);
+};
+
+const sendLineReplyMessage = async ({ replyToken, message }) => {
+  const token = String(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || '').trim();
+  const safeReplyToken = String(replyToken || '').trim();
+  const text = String(message || '').trim();
+  if (!token || !safeReplyToken || !text) return;
+  const response = await fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      replyToken: safeReplyToken,
+      messages: [{ type: 'text', text: text.slice(0, 4900) }],
+    }),
+  });
+  if (!response.ok) {
+    const responseText = String(await response.text()).trim();
+    throw new Error(
+      `LINE reply failed (${response.status})${responseText ? `: ${responseText.slice(0, 220)}` : ''}`
+    );
+  }
 };
 
 const normalizeGoogleEventColorId = (value) => {
@@ -1097,12 +1143,15 @@ app.get('/health', (_req, res) => {
     firestoreProjectInvitesDocId: PROJECT_INVITES_DOC_ID,
     firestoreLineReminderCollection: FIRESTORE_LINE_REMINDER_COLLECTION,
     firestoreLineReminderLogCollection: FIRESTORE_LINE_REMINDER_LOG_COLLECTION,
+    firestoreLineWebhookLogCollection: FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION,
     googleClientConfigured: Boolean(GOOGLE_CLIENT_ID),
     googleCalendarOAuthConfigured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     googleCalendarRedirectUriPreview: redirectUriPreview,
     lineReminderCronConfigured: Boolean(LINE_REMINDER_CRON_SECRET),
     lineReminderDefaultTimezone: normalizeLineReminderTimezone(DEFAULT_LINE_REMINDER_TIMEZONE),
     lineReminderDefaultHour: DEFAULT_LINE_REMINDER_HOUR,
+    lineWebhookConfigured: Boolean(LINE_CHANNEL_SECRET),
+    lineWebhookReplyConfigured: Boolean(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN),
   });
 });
 
@@ -2473,6 +2522,93 @@ app.put('/data/project-invites', requireAuth, async (req, res) => {
     return res.json({ message: 'Project invites saved.', count: invites.length });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to save project invites.' });
+  }
+});
+
+app.post('/line/webhook', async (req, res) => {
+  try {
+    if (!LINE_CHANNEL_SECRET) {
+      return res.status(503).json({
+        message: 'LINE_CHANNEL_SECRET is not configured on server.',
+      });
+    }
+    if (!isValidLineWebhookSignature(req)) {
+      return res.status(401).json({ message: 'Invalid LINE webhook signature.' });
+    }
+
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+    const destination = String(req.body?.destination || '').trim();
+    const nowIso = new Date().toISOString();
+
+    const writes = [];
+    for (const event of events) {
+      const source = event?.source && typeof event.source === 'object' ? event.source : {};
+      const sourceType = String(source.type || '').trim();
+      const groupId = String(source.groupId || '').trim();
+      const userId = String(source.userId || '').trim();
+      const eventType = String(event?.type || '').trim();
+      const messageType = String(event?.message?.type || '').trim();
+      const messageText =
+        messageType === 'text' ? String(event?.message?.text || '').trim().slice(0, 300) : '';
+      const eventTimestamp = Number(event?.timestamp || Date.now());
+
+      if (groupId) {
+        const logId = crypto
+          .createHash('sha256')
+          .update(`${groupId}|${eventTimestamp}|${eventType}|${messageText}`)
+          .digest('hex');
+        writes.push(
+          lineWebhookLogRef.doc(logId).set(
+            {
+              destination,
+              sourceType,
+              eventType,
+              messageType,
+              messageText,
+              groupId,
+              userId,
+              eventTimestamp,
+              receivedAt: nowIso,
+            },
+            { merge: true }
+          )
+        );
+      }
+
+      const normalizedMessageText = messageText.toLowerCase();
+      const shouldReplyGroupId =
+        groupId &&
+        eventType === 'message' &&
+        messageType === 'text' &&
+        ['/groupid', '/group-id', '/linegroupid'].includes(normalizedMessageText);
+      if (shouldReplyGroupId && event?.replyToken) {
+        const helperText = [
+          'PM Calendar LINE Group ID',
+          groupId,
+          '',
+          'นำค่า Group ID นี้ไปใส่ในหน้า Manage Project > Announcements > LINE Reminder',
+        ].join('\n');
+        writes.push(
+          sendLineReplyMessage({
+            replyToken: String(event.replyToken || '').trim(),
+            message: helperText,
+          }).catch((error) => {
+            console.warn('Failed to send LINE webhook helper reply:', error.message);
+          })
+        );
+      }
+    }
+
+    if (writes.length > 0) {
+      await Promise.all(writes);
+    }
+
+    return res.json({
+      ok: true,
+      received: events.length,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to process LINE webhook.' });
   }
 });
 
