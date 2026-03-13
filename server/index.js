@@ -464,6 +464,26 @@ const sendLineReplyMessage = async ({ replyToken, message }) => {
   }
 };
 
+const normalizeLineCommandText = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '');
+
+const isLineGroupIdCommand = (value) => {
+  const normalized = normalizeLineCommandText(value);
+  return new Set([
+    '/groupid',
+    'groupid',
+    '/group-id',
+    'group-id',
+    '/linegroupid',
+    'linegroupid',
+    '/gid',
+    'gid',
+  ]).has(normalized);
+};
+
 const normalizeGoogleEventColorId = (value) => {
   const colorId = String(value || '').trim();
   return /^(?:[1-9]|1[0-1])$/.test(colorId) ? colorId : '';
@@ -2575,18 +2595,17 @@ app.post('/line/webhook', async (req, res) => {
         );
       }
 
-      const normalizedMessageText = messageText.toLowerCase();
       const shouldReplyGroupId =
         groupId &&
         eventType === 'message' &&
         messageType === 'text' &&
-        ['/groupid', '/group-id', '/linegroupid'].includes(normalizedMessageText);
+        isLineGroupIdCommand(messageText);
       if (shouldReplyGroupId && event?.replyToken) {
         const helperText = [
           'PM Calendar LINE Group ID',
           groupId,
           '',
-          'นำค่า Group ID นี้ไปใส่ในหน้า Manage Project > Announcements > LINE Reminder',
+          'Paste this value into Manage Project > Announcements > LINE Reminder.',
         ].join('\n');
         writes.push(
           sendLineReplyMessage({
@@ -2594,6 +2613,14 @@ app.post('/line/webhook', async (req, res) => {
             message: helperText,
           }).catch((error) => {
             console.warn('Failed to send LINE webhook helper reply:', error.message);
+            return sendLinePushMessage({
+              channelAccessToken: LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN,
+              to: groupId,
+              message: helperText,
+              notificationDisabled: true,
+            }).catch((pushError) => {
+              console.warn('Failed to send LINE webhook helper fallback push:', pushError.message);
+            });
           })
         );
       }
