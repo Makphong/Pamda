@@ -455,7 +455,7 @@ const buildCircularRemoteAvatarUrl = (avatarUrlInput, fallbackNameInput) => {
   if (isSafeHttpUrl(rawAvatarUrl)) {
     return `https://images.weserv.nl/?url=${encodeURIComponent(
       rawAvatarUrl
-    )}&w=64&h=64&fit=cover&mask=circle&maxage=7d`;
+    )}&w=128&h=128&fit=cover&mask=circle&maxage=7d`;
   }
   return buildAssigneeAvatarUrl(fallbackNameInput);
 };
@@ -682,7 +682,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
     const assigneeAvatarContents = assignees.slice(0, 5).map((assignee) => ({
       type: 'image',
       url: assignee.avatarUrl,
-      size: '16px',
+      size: '32px',
       align: 'start',
       aspectMode: 'cover',
       aspectRatio: '1:1',
