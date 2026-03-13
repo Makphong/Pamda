@@ -481,13 +481,17 @@ const normalizeHexColor = (value, fallback = '#64748b') => {
   return fallback;
 };
 
-const hexToRgba = (hexInput, alpha = 1) => {
+const tintHexColor = (hexInput, ratioInput = 0.5) => {
   const hex = normalizeHexColor(hexInput, '#64748b').slice(1);
+  const ratio = Math.min(1, Math.max(0, Number(ratioInput)));
   const r = Number.parseInt(hex.slice(0, 2), 16);
   const g = Number.parseInt(hex.slice(2, 4), 16);
   const b = Number.parseInt(hex.slice(4, 6), 16);
-  const safeAlpha = Math.min(1, Math.max(0, Number(alpha)));
-  return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+  const nr = Math.round(r + (255 - r) * ratio);
+  const ng = Math.round(g + (255 - g) * ratio);
+  const nb = Math.round(b + (255 - b) * ratio);
+  const toHex = (value) => value.toString(16).padStart(2, '0');
+  return `#${toHex(nr)}${toHex(ng)}${toHex(nb)}`;
 };
 
 const resolveTaskStatusTone = (statusInput) => {
@@ -542,8 +546,8 @@ const resolveDepartmentTone = (departmentNameInput, departmentColorMapInput) => 
   return {
     label: clampLineText(departmentName, 30) || 'Unassigned',
     textColor: baseColor,
-    borderColor: hexToRgba(baseColor, 0.45),
-    backgroundColor: hexToRgba(baseColor, 0.14),
+    borderColor: tintHexColor(baseColor, 0.5),
+    backgroundColor: tintHexColor(baseColor, 0.86),
   };
 };
 
