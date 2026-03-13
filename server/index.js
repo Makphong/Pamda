@@ -601,9 +601,14 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
       .map((assigneeId) => resolveLineMemberProfile(memberMap, assigneeId))
       .filter(Boolean);
     const assigneeAvatarContents = assignees.slice(0, 5).map((assignee) => ({
-      type: 'icon',
+      type: 'image',
       url: assignee.avatarUrl,
-      size: 'sm',
+      size: 'xs',
+      aspectMode: 'cover',
+      aspectRatio: '1:1',
+      gravity: 'center',
+      cornerRadius: '999px',
+      flex: 0,
     }));
     const overflowAssigneeCount = Math.max(0, assignees.length - assigneeAvatarContents.length);
     if (overflowAssigneeCount > 0) {
