@@ -86,10 +86,16 @@ const GOOGLE_CLIENT_ID =
   String(process.env.GOOGLE_CLIENT_ID || '').trim() || GOOGLE_OAUTH_JSON_CONFIG.clientId;
 const GOOGLE_CLIENT_SECRET =
   String(process.env.GOOGLE_CLIENT_SECRET || '').trim() || GOOGLE_OAUTH_JSON_CONFIG.clientSecret;
+const AUTH_TOKEN_SECRET = String(
+  process.env.AUTH_TOKEN_SECRET || process.env.PM_CALENDAR_AUTH_TOKEN_SECRET || ''
+).trim();
+const EFFECTIVE_AUTH_TOKEN_SECRET = AUTH_TOKEN_SECRET || '__pm_calendar_insecure_dev_secret__';
+const AUTH_TOKEN_TTL_MS = Math.max(60 * 60 * 1000, Number(process.env.AUTH_TOKEN_TTL_MS || 30 * 24 * 60 * 60 * 1000));
 
 const sanitizeEmail = (value) => String(value || '').trim().toLowerCase();
 const sanitizeUsername = (value) => String(value || '').trim().toLowerCase();
 const sanitizeUserId = (value) => String(value || '').trim();
+const sanitizeAuthToken = (value) => String(value || '').trim();
 
 const requiredEnv = ['GMAIL_USER', 'GMAIL_APP_PASSWORD', 'OTP_FROM_EMAIL'];
 const missingEnv = requiredEnv.filter((key) => !String(process.env[key] || '').trim());
@@ -102,6 +108,11 @@ if (missingEnv.length > 0) {
 if (!GOOGLE_CLIENT_SECRET) {
   console.warn(
     'Google Calendar linking is disabled until GOOGLE_CLIENT_SECRET (or GOOGLE_OAUTH_JSON_PATH with client_secret) is configured.'
+  );
+}
+if (!AUTH_TOKEN_SECRET) {
+  console.warn(
+    'AUTH_TOKEN_SECRET is not configured. Falling back to an insecure development secret. Set AUTH_TOKEN_SECRET in production.'
   );
 }
 
@@ -499,19 +510,37 @@ const splitIntoChunks = (value, chunkSize) => {
   return parts;
 };
 
-const readAccountPayloadFromStore = async (userId) => {
+const readAccountPayloadRecordFromStore = async (userId) => {
   const userDataDocRef = appDataRef.doc(userId);
   const metaDoc = await userDataDocRef.get();
-  if (!metaDoc.exists) return {};
+  if (!metaDoc.exists) {
+    return {
+      payload: {},
+      version: 0,
+      updatedAt: null,
+    };
+  }
 
   const metaData = metaDoc.data() || {};
+  const version = toSafeInteger(metaData.version, 0);
+  const updatedAt = metaData.updatedAt ? String(metaData.updatedAt) : null;
   const directPayload = metaData.payload;
   if (directPayload && typeof directPayload === 'object' && !Array.isArray(directPayload)) {
-    return directPayload;
+    return {
+      payload: directPayload,
+      version,
+      updatedAt,
+    };
   }
 
   const chunkCount = Number(metaData.chunkCount || 0);
-  if (!Number.isInteger(chunkCount) || chunkCount <= 0) return {};
+  if (!Number.isInteger(chunkCount) || chunkCount <= 0) {
+    return {
+      payload: {},
+      version,
+      updatedAt,
+    };
+  }
 
   const chunksSnapshot = await userDataDocRef
     .collection(APP_DATA_CHUNK_COLLECTION)
@@ -519,50 +548,120 @@ const readAccountPayloadFromStore = async (userId) => {
     .limit(chunkCount)
     .get();
 
-  if (chunksSnapshot.empty) return {};
+  if (chunksSnapshot.empty) {
+    return {
+      payload: {},
+      version,
+      updatedAt,
+    };
+  }
 
   const serialized = chunksSnapshot.docs
     .map((doc) => String(doc.data()?.data || ''))
     .join('');
-  if (!serialized) return {};
+  if (!serialized) {
+    return {
+      payload: {},
+      version,
+      updatedAt,
+    };
+  }
 
   try {
     const parsed = JSON.parse(serialized);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    return {
+      payload: parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {},
+      version,
+      updatedAt,
+    };
   } catch {
-    return {};
+    return {
+      payload: {},
+      version,
+      updatedAt,
+    };
   }
 };
 
-const writeAccountPayloadToStore = async (userId, payload) => {
+const readAccountPayloadFromStore = async (userId) => {
+  const record = await readAccountPayloadRecordFromStore(userId);
+  return record?.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+    ? record.payload
+    : {};
+};
+
+const writeAccountPayloadToStore = async (userId, payload, options = {}) => {
   const userDataDocRef = appDataRef.doc(userId);
   const serializedPayload = JSON.stringify(payload);
   const chunks = splitIntoChunks(serializedPayload, APP_DATA_CHUNK_SIZE);
-  const batch = firestore.batch();
+  const requestedBaseVersionRaw = options?.baseVersion;
+  const hasRequestedBaseVersion =
+    requestedBaseVersionRaw !== undefined && requestedBaseVersionRaw !== null && requestedBaseVersionRaw !== '';
+  const requestedBaseVersion = hasRequestedBaseVersion
+    ? toSafeInteger(requestedBaseVersionRaw, -1)
+    : null;
+  const nowIso = new Date().toISOString();
+  let nextVersion = 0;
 
-  const existingChunksSnapshot = await userDataDocRef.collection(APP_DATA_CHUNK_COLLECTION).get();
-  existingChunksSnapshot.docs.forEach((doc) => {
-    batch.delete(doc.ref);
-  });
+  try {
+    await firestore.runTransaction(async (transaction) => {
+      const metaSnapshot = await transaction.get(userDataDocRef);
+      const metaData = metaSnapshot.exists ? metaSnapshot.data() || {} : {};
+      const currentVersion = toSafeInteger(metaData.version, 0);
+      if (
+        hasRequestedBaseVersion &&
+        requestedBaseVersion !== null &&
+        requestedBaseVersion >= 0 &&
+        requestedBaseVersion !== currentVersion
+      ) {
+        const conflictError = new Error('Account data version conflict.');
+        conflictError.code = 'ACCOUNT_VERSION_CONFLICT';
+        throw conflictError;
+      }
 
-  batch.set(
-    userDataDocRef,
-    {
-      chunkCount: chunks.length,
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  );
+      const previousChunkCount = toSafeInteger(metaData.chunkCount, 0);
+      nextVersion = currentVersion + 1;
 
-  chunks.forEach((chunk, index) => {
-    const chunkDocRef = userDataDocRef.collection(APP_DATA_CHUNK_COLLECTION).doc(`part_${index}`);
-    batch.set(chunkDocRef, {
-      index,
-      data: chunk,
+      transaction.set(
+        userDataDocRef,
+        {
+          chunkCount: chunks.length,
+          updatedAt: nowIso,
+          version: nextVersion,
+        },
+        { merge: true }
+      );
+
+      chunks.forEach((chunk, index) => {
+        const chunkDocRef = userDataDocRef.collection(APP_DATA_CHUNK_COLLECTION).doc(`part_${index}`);
+        transaction.set(chunkDocRef, {
+          index,
+          data: chunk,
+        });
+      });
+
+      for (let index = chunks.length; index < previousChunkCount; index += 1) {
+        const chunkDocRef = userDataDocRef.collection(APP_DATA_CHUNK_COLLECTION).doc(`part_${index}`);
+        transaction.delete(chunkDocRef);
+      }
     });
-  });
+  } catch (error) {
+    if (error?.code === 'ACCOUNT_VERSION_CONFLICT') {
+      const latest = await readAccountPayloadRecordFromStore(userId);
+      const conflictError = new Error('Account data version conflict.');
+      conflictError.code = 'ACCOUNT_VERSION_CONFLICT';
+      conflictError.currentPayload = latest.payload || {};
+      conflictError.currentVersion = toSafeInteger(latest.version, 0);
+      conflictError.currentUpdatedAt = latest.updatedAt || null;
+      throw conflictError;
+    }
+    throw error;
+  }
 
-  await batch.commit();
+  return {
+    version: nextVersion,
+    updatedAt: nowIso,
+  };
 };
 
 const mailer = nodemailer.createTransport({
@@ -579,6 +678,100 @@ const toPublicUser = (user) => ({
   email: user.email,
   avatarUrl: user.avatarUrl || '',
 });
+
+const toSafeInteger = (value, fallback = 0) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(parsed) || parsed < 0) return fallback;
+  return parsed;
+};
+
+const createAuthToken = (user) => {
+  const nowMs = Date.now();
+  const payload = {
+    sub: sanitizeUserId(user?.id),
+    email: sanitizeEmail(user?.email),
+    username: sanitizeUsername(user?.username),
+    iat: nowMs,
+    exp: nowMs + AUTH_TOKEN_TTL_MS,
+  };
+  const payloadPart = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', EFFECTIVE_AUTH_TOKEN_SECRET)
+    .update(payloadPart)
+    .digest('base64url');
+  return `${payloadPart}.${signature}`;
+};
+
+const verifyAuthToken = (tokenInput) => {
+  const token = sanitizeAuthToken(tokenInput);
+  if (!token || !token.includes('.')) return null;
+  const [payloadPartRaw, signatureRaw] = token.split('.');
+  const payloadPart = String(payloadPartRaw || '').trim();
+  const signature = String(signatureRaw || '').trim();
+  if (!payloadPart || !signature) return null;
+
+  const expectedSignature = crypto
+    .createHmac('sha256', EFFECTIVE_AUTH_TOKEN_SECRET)
+    .update(payloadPart)
+    .digest('base64url');
+  const expectedBuffer = Buffer.from(expectedSignature);
+  const incomingBuffer = Buffer.from(signature);
+  if (expectedBuffer.length !== incomingBuffer.length) return null;
+  if (!crypto.timingSafeEqual(expectedBuffer, incomingBuffer)) return null;
+
+  let payload = null;
+  try {
+    payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+  } catch {
+    payload = null;
+  }
+  if (!payload || typeof payload !== 'object') return null;
+
+  const sub = sanitizeUserId(payload.sub);
+  const email = sanitizeEmail(payload.email);
+  const username = sanitizeUsername(payload.username);
+  const exp = Number(payload.exp || 0);
+  if (!sub || !email || !username || !Number.isFinite(exp) || Date.now() > exp) {
+    return null;
+  }
+  return {
+    sub,
+    email,
+    username,
+    iat: Number(payload.iat || 0),
+    exp,
+  };
+};
+
+const getBearerToken = (req) => {
+  const authHeader = String(req.headers?.authorization || '').trim();
+  if (!authHeader.toLowerCase().startsWith('bearer ')) return '';
+  return sanitizeAuthToken(authHeader.slice(7));
+};
+
+const requireAuth = (req, res, next) => {
+  const token = getBearerToken(req);
+  const verified = verifyAuthToken(token);
+  if (!verified) {
+    return res.status(401).json({ message: 'Unauthorized request.' });
+  }
+  req.authUser = verified;
+  return next();
+};
+
+const ensureAuthUserMatches = (req, res, targetUserIdInput) => {
+  const targetUserId = sanitizeUserId(targetUserIdInput);
+  if (!targetUserId) {
+    res.status(400).json({ message: 'userId is required.' });
+    return false;
+  }
+  const authUserId = sanitizeUserId(req.authUser?.sub);
+  if (!authUserId || authUserId !== targetUserId) {
+    res.status(403).json({ message: 'Forbidden. Cannot access another user account.' });
+    return false;
+  }
+  return true;
+};
 
 const otpDocId = (email) => crypto.createHash('sha256').update(email).digest('hex');
 const generateOtpCode = () => String(Math.floor(100000 + Math.random() * 900000));
@@ -735,9 +928,11 @@ app.post('/auth/register', async (req, res) => {
     await usersRef.doc(userId).set(user);
     await otpRef.doc(otpDocId(email)).delete();
 
+    const publicUser = toPublicUser({ id: userId, ...user });
     return res.status(201).json({
       message: 'Account created successfully.',
-      user: toPublicUser({ id: userId, ...user }),
+      user: publicUser,
+      token: createAuthToken(publicUser),
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Registration failed.' });
@@ -786,9 +981,11 @@ app.post('/auth/login', async (req, res) => {
       );
     }
 
+    const publicUser = toPublicUser(user);
     return res.json({
       message: 'Login successful.',
-      user: toPublicUser(user),
+      user: publicUser,
+      token: createAuthToken(publicUser),
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Login failed.' });
@@ -875,9 +1072,11 @@ app.post('/auth/google', async (req, res) => {
       );
     }
 
+    const publicUser = toPublicUser(user);
     return res.json({
       message: 'Google sign-in successful.',
-      user: toPublicUser(user),
+      user: publicUser,
+      token: createAuthToken(publicUser),
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Google sign-in failed.' });
@@ -903,11 +1102,14 @@ app.post('/auth/verify-otp', async (req, res) => {
   }
 });
 
-app.get('/google/calendar/auth-url', async (req, res) => {
+app.get('/google/calendar/auth-url', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId);
     if (!userId) {
       return res.status(400).json({ message: 'userId is required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const oauthForCalendar = createGoogleCalendarOauthClient(req);
@@ -1093,11 +1295,14 @@ app.get('/google/calendar/callback', async (req, res) => {
   }
 });
 
-app.get('/google/calendar/status', async (req, res) => {
+app.get('/google/calendar/status', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId);
     if (!userId) {
       return res.status(400).json({ message: 'userId is required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const userDoc = await usersRef.doc(userId).get();
@@ -1122,11 +1327,14 @@ app.get('/google/calendar/status', async (req, res) => {
   }
 });
 
-app.get('/google/calendar/calendars', async (req, res) => {
+app.get('/google/calendar/calendars', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId);
     if (!userId) {
       return res.status(400).json({ message: 'userId is required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const oauthForCalendar = createGoogleCalendarOauthClient(req);
@@ -1205,11 +1413,14 @@ app.get('/google/calendar/calendars', async (req, res) => {
   }
 });
 
-app.put('/google/calendar/calendars', async (req, res) => {
+app.put('/google/calendar/calendars', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId || req.body?.userId);
     if (!userId) {
       return res.status(400).json({ message: 'userId is required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const oauthForCalendar = createGoogleCalendarOauthClient(req);
@@ -1291,11 +1502,14 @@ app.put('/google/calendar/calendars', async (req, res) => {
   }
 });
 
-app.delete('/google/calendar/link', async (req, res) => {
+app.delete('/google/calendar/link', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId || req.body?.userId);
     if (!userId) {
       return res.status(400).json({ message: 'userId is required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const userDoc = await usersRef.doc(userId).get();
@@ -1321,11 +1535,14 @@ app.delete('/google/calendar/link', async (req, res) => {
   }
 });
 
-app.get('/google/calendar/events', async (req, res) => {
+app.get('/google/calendar/events', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId);
     if (!userId) {
       return res.status(400).json({ message: 'userId is required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const oauthForCalendar = createGoogleCalendarOauthClient(req);
@@ -1425,11 +1642,14 @@ app.get('/google/calendar/events', async (req, res) => {
   }
 });
 
-app.post('/google/calendar/events', async (req, res) => {
+app.post('/google/calendar/events', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId || req.body?.userId);
     if (!userId) {
       return res.status(400).json({ message: 'userId is required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const oauthForCalendar = createGoogleCalendarOauthClient(req);
@@ -1680,11 +1900,14 @@ app.post('/google/calendar/events', async (req, res) => {
   }
 });
 
-app.delete('/google/calendar/events', async (req, res) => {
+app.delete('/google/calendar/events', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId || req.body?.userId);
     if (!userId) {
       return res.status(400).json({ message: 'userId is required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const oauthForCalendar = createGoogleCalendarOauthClient(req);
@@ -1768,7 +1991,7 @@ app.delete('/google/calendar/events', async (req, res) => {
   }
 });
 
-app.get('/users/lookup', async (req, res) => {
+app.get('/users/lookup', requireAuth, async (req, res) => {
   try {
     const identifierRaw = String(req.query?.identifier || '').trim();
     if (!identifierRaw) {
@@ -1790,11 +2013,11 @@ app.get('/users/lookup', async (req, res) => {
   }
 });
 
-app.put('/users/:userId/profile', async (req, res) => {
+app.put('/users/:userId/profile', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.params?.userId);
-    if (!userId) {
-      return res.status(400).json({ message: 'userId is required.' });
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const username = sanitizeUsername(req.body?.username);
@@ -1838,11 +2061,11 @@ app.put('/users/:userId/profile', async (req, res) => {
   }
 });
 
-app.put('/users/:userId/password', async (req, res) => {
+app.put('/users/:userId/password', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.params?.userId);
-    if (!userId) {
-      return res.status(400).json({ message: 'userId is required.' });
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const newPassword = String(req.body?.newPassword || '');
@@ -1904,11 +2127,11 @@ app.put('/users/:userId/password', async (req, res) => {
   }
 });
 
-app.get('/data/account/:userId', async (req, res) => {
+app.get('/data/account/:userId', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.params?.userId);
-    if (!userId) {
-      return res.status(400).json({ message: 'userId is required.' });
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const userDoc = await usersRef.doc(userId).get();
@@ -1916,19 +2139,23 @@ app.get('/data/account/:userId', async (req, res) => {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    const payload = await readAccountPayloadFromStore(userId);
+    const record = await readAccountPayloadRecordFromStore(userId);
 
-    return res.json({ payload });
+    return res.json({
+      payload: record.payload || {},
+      version: toSafeInteger(record.version, 0),
+      updatedAt: record.updatedAt || null,
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to fetch account data.' });
   }
 });
 
-app.put('/data/account/:userId', async (req, res) => {
+app.put('/data/account/:userId', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.params?.userId);
-    if (!userId) {
-      return res.status(400).json({ message: 'userId is required.' });
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
 
     const userDoc = await usersRef.doc(userId).get();
@@ -1941,15 +2168,33 @@ app.put('/data/account/:userId', async (req, res) => {
       return res.status(400).json({ message: 'payload must be an object.' });
     }
 
-    await writeAccountPayloadToStore(userId, incomingPayload);
+    const baseVersionRaw = req.body?.baseVersion;
+    const hasBaseVersion =
+      baseVersionRaw !== undefined && baseVersionRaw !== null && String(baseVersionRaw).trim() !== '';
+    const baseVersion = hasBaseVersion ? toSafeInteger(baseVersionRaw, -1) : null;
+    const writeResult = await writeAccountPayloadToStore(userId, incomingPayload, {
+      baseVersion,
+    });
 
-    return res.json({ message: 'Account data saved.' });
+    return res.json({
+      message: 'Account data saved.',
+      version: toSafeInteger(writeResult?.version, 0),
+      updatedAt: writeResult?.updatedAt || null,
+    });
   } catch (error) {
+    if (error?.code === 'ACCOUNT_VERSION_CONFLICT') {
+      return res.status(409).json({
+        message: 'Account data is out of date. Please retry with latest version.',
+        payload: error.currentPayload || {},
+        version: toSafeInteger(error.currentVersion, 0),
+        updatedAt: error.currentUpdatedAt || null,
+      });
+    }
     return res.status(500).json({ message: error.message || 'Failed to save account data.' });
   }
 });
 
-app.get('/data/project-invites', async (_req, res) => {
+app.get('/data/project-invites', requireAuth, async (_req, res) => {
   try {
     const doc = await invitesDocRef.get();
     const rawInvites = doc.exists ? doc.data()?.invites : [];
@@ -1962,7 +2207,7 @@ app.get('/data/project-invites', async (_req, res) => {
   }
 });
 
-app.put('/data/project-invites', async (req, res) => {
+app.put('/data/project-invites', requireAuth, async (req, res) => {
   try {
     const rawInvites = req.body?.invites;
     if (!Array.isArray(rawInvites)) {

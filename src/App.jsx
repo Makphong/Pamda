@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { 
   Calendar, 
   Plus, 
@@ -655,6 +655,8 @@ const AUTH_USER_KEY = 'pm_calendar_auth_user';
 const AUTH_USERS_KEY = 'pm_calendar_users';
 const ACCOUNT_DB_PREFIX = 'pm_calendar_db_';
 const ACCOUNT_DB_SAVE_QUEUE_BY_USER = new Map();
+const ACCOUNT_DB_VERSION_BY_USER = new Map();
+const CLOUD_SYNC_NOTICE_KEY = 'pm_calendar_cloud_sync_notice_v1';
 const PROJECT_INVITES_KEY = 'pm_calendar_project_invites';
 const PROJECT_INVITE_STATUSES = {
   PENDING: 'pending',
@@ -1638,7 +1640,7 @@ const serializeStoredNoteDocument = (documentPayload) => {
   const normalized = normalizeNoteDocumentPayload(documentPayload);
   return `${NOTE_DOCUMENT_SERIALIZATION_PREFIX}${JSON.stringify(normalized)}`;
 };
-const NOTE_PRESENCE_TTL_MS = 15000;
+const NOTE_PRESENCE_TTL_MS = 60000;
 const NOTE_PRESENCE_TYPING_MAX = 120;
 const NOTE_PRESENCE_CURSOR_COLORS = [
   '#2563eb',
@@ -2162,8 +2164,26 @@ const normalizeAuthUser = (user) => {
     username,
     email,
     avatarUrl: String(user.avatarUrl || '').trim(),
+    authToken: String(user.authToken || user.token || '').trim(),
   };
 };
+const composeAuthUserWithToken = (user, token) => ({
+  ...(user && typeof user === 'object' ? user : {}),
+  authToken: String(token || user?.authToken || user?.token || '').trim(),
+});
+
+const getStoredAuthUser = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(AUTH_USER_KEY);
+    if (!raw) return null;
+    return normalizeAuthUser(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+};
+
+const getStoredAuthToken = () => String(getStoredAuthUser()?.authToken || '').trim();
 
 const getAccountDbKey = (userId) => `${ACCOUNT_DB_PREFIX}${userId}`;
 
@@ -2183,6 +2203,231 @@ const writeAccountDbPayload = (userId, payload) => {
   const key = getAccountDbKey(userId);
   const safePayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
   localStorage.setItem(key, JSON.stringify(safePayload));
+};
+const toSafeAccountVersion = (value) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(parsed) || parsed < 0) return null;
+  return parsed;
+};
+const getProjectConflictTimestampMs = (project) => {
+  const updatedAtMs = toTimestampMs(project?.updatedAt);
+  if (updatedAtMs > 0) return updatedAtMs;
+  const changeFeed = normalizeProjectActivityFeed(project?.changeFeed, project);
+  return changeFeed.reduce((latestMs, entry) => {
+    const entryMs = toTimestampMs(entry?.createdAt);
+    return entryMs > latestMs ? entryMs : latestMs;
+  }, 0);
+};
+const mergeProjectChangeFeedForConflict = (baseProject, incomingProject) => {
+  const baseFeed = normalizeProjectActivityFeed(baseProject?.changeFeed, baseProject);
+  const incomingFeed = normalizeProjectActivityFeed(incomingProject?.changeFeed, incomingProject);
+  const mergedById = new Map();
+  [...incomingFeed, ...baseFeed].forEach((entry) => {
+    const entryId = String(entry?.id || '').trim();
+    if (!entryId || mergedById.has(entryId)) return;
+    mergedById.set(entryId, entry);
+  });
+  return Array.from(mergedById.values())
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, MAX_PROJECT_ACTIVITY_FEED);
+};
+const mergeAccountProjectsForConflict = (baseProjectsInput, incomingProjectsInput) => {
+  const baseProjects = Array.isArray(baseProjectsInput) ? baseProjectsInput : [];
+  const incomingProjects = Array.isArray(incomingProjectsInput) ? incomingProjectsInput : [];
+  const projectOrder = [];
+  const baseById = new Map();
+  const incomingById = new Map();
+
+  baseProjects.forEach((project, index) => {
+    const projectId = String(project?.id || '').trim();
+    if (!projectId) {
+      projectOrder.push(`base:${index}`);
+      baseById.set(`base:${index}`, project);
+      return;
+    }
+    if (!projectOrder.includes(projectId)) {
+      projectOrder.push(projectId);
+    }
+    baseById.set(projectId, project);
+  });
+  incomingProjects.forEach((project, index) => {
+    const projectId = String(project?.id || '').trim();
+    if (!projectId) {
+      projectOrder.push(`incoming:${index}`);
+      incomingById.set(`incoming:${index}`, project);
+      return;
+    }
+    if (!projectOrder.includes(projectId)) {
+      projectOrder.push(projectId);
+    }
+    incomingById.set(projectId, project);
+  });
+
+  return projectOrder
+    .map((projectId) => {
+      const baseProject = baseById.get(projectId);
+      const incomingProject = incomingById.get(projectId);
+      if (!baseProject) return incomingProject;
+      if (!incomingProject) return baseProject;
+
+      const baseMs = getProjectConflictTimestampMs(baseProject);
+      const incomingMs = getProjectConflictTimestampMs(incomingProject);
+      const preferredProject = incomingMs >= baseMs ? incomingProject : baseProject;
+      const secondaryProject = preferredProject === incomingProject ? baseProject : incomingProject;
+      const mergedNotes = mergeProjectNotesContentByRevision(
+        baseProject?.notesContent,
+        baseProject?.noteRevisionMap,
+        incomingProject?.notesContent,
+        incomingProject?.noteRevisionMap
+      );
+      const mergedNotesPresence = mergeProjectNotesPresence(
+        baseProject?.notesPresence,
+        incomingProject?.notesPresence
+      );
+      const mergedChangeFeed = mergeProjectChangeFeedForConflict(baseProject, incomingProject);
+      const mergedMembers = Array.from(
+        new Set(
+          [...(Array.isArray(baseProject?.members) ? baseProject.members : []), ...(Array.isArray(incomingProject?.members) ? incomingProject.members : [])]
+            .map((member) => String(member || '').trim().toLowerCase())
+            .filter(Boolean)
+        )
+      );
+      const teamMemberMap = new Map();
+      [...(Array.isArray(baseProject?.teamMembers) ? baseProject.teamMembers : []), ...(Array.isArray(incomingProject?.teamMembers) ? incomingProject.teamMembers : [])].forEach(
+        (memberInput) => {
+          const member = memberInput && typeof memberInput === 'object' ? memberInput : null;
+          if (!member) return;
+          const key = String(member.userId || member.id || member.username || member.name || '')
+            .trim()
+            .toLowerCase();
+          if (!key) return;
+          const existingMember = teamMemberMap.get(key);
+          teamMemberMap.set(key, existingMember ? { ...existingMember, ...member } : member);
+        }
+      );
+      const mergedTeamMembers = Array.from(teamMemberMap.values());
+      const mergedRoles = Array.from(
+        new Set(
+          [...(Array.isArray(baseProject?.roles) ? baseProject.roles : []), ...(Array.isArray(incomingProject?.roles) ? incomingProject.roles : [])]
+            .map((role) => String(role || '').trim())
+            .filter(Boolean)
+        )
+      );
+      const mergedPositions = Array.from(
+        new Set(
+          [...(Array.isArray(baseProject?.positions) ? baseProject.positions : []), ...(Array.isArray(incomingProject?.positions) ? incomingProject.positions : [])]
+            .map((position) => String(position || '').trim())
+            .filter(Boolean)
+        )
+      );
+      const mergedDepartments = Array.from(
+        new Set(
+          [...(Array.isArray(baseProject?.departments) ? baseProject.departments : []), ...(Array.isArray(incomingProject?.departments) ? incomingProject.departments : [])]
+            .map((department) => String(department || '').trim())
+            .filter(Boolean)
+        )
+      );
+      const mergedDepartmentColors = {
+        ...(baseProject?.departmentColors && typeof baseProject.departmentColors === 'object'
+          ? baseProject.departmentColors
+          : {}),
+        ...(incomingProject?.departmentColors && typeof incomingProject.departmentColors === 'object'
+          ? incomingProject.departmentColors
+          : {}),
+      };
+      const preferredNotesPreferences =
+        incomingProject?.notesPreferences &&
+        typeof incomingProject.notesPreferences === 'object' &&
+        !Array.isArray(incomingProject.notesPreferences)
+          ? incomingProject.notesPreferences
+          : baseProject?.notesPreferences;
+      const preferredVisibility =
+        typeof incomingProject?.isVisible === 'boolean'
+          ? incomingProject.isVisible
+          : baseProject?.isVisible;
+
+      return {
+        ...secondaryProject,
+        ...preferredProject,
+        notesContent: mergedNotes.notesContent,
+        noteRevisionMap: mergedNotes.noteRevisionMap,
+        notesPresence: mergedNotesPresence,
+        changeFeed: mergedChangeFeed,
+        members: mergedMembers,
+        teamMembers: mergedTeamMembers,
+        roles: mergedRoles,
+        positions: mergedPositions,
+        departments: mergedDepartments,
+        departmentColors: mergedDepartmentColors,
+        notesPreferences: preferredNotesPreferences || {},
+        isVisible: typeof preferredVisibility === 'boolean' ? preferredVisibility : Boolean(preferredProject?.isVisible),
+      };
+    })
+    .filter(Boolean);
+};
+const getEventConflictTimestampMs = (event) => {
+  const updatedAtMs = toTimestampMs(event?.updatedAt);
+  if (updatedAtMs > 0) return updatedAtMs;
+  return toTimestampMs(event?.createdAt);
+};
+const mergeAccountEventsForConflict = (baseEventsInput, incomingEventsInput) => {
+  const baseEvents = Array.isArray(baseEventsInput) ? baseEventsInput : [];
+  const incomingEvents = Array.isArray(incomingEventsInput) ? incomingEventsInput : [];
+  const mergedByKey = new Map();
+  [...baseEvents, ...incomingEvents].forEach((eventInput) => {
+    const event = eventInput && typeof eventInput === 'object' ? eventInput : null;
+    if (!event) return;
+    const eventId = String(event.id || '').trim();
+    const fallbackKey = `f:${event?.projectId || ''}|${event?.title || ''}|${event?.startDate || ''}|${event?.endDate || ''}|${event?.startTime || ''}|${event?.endTime || ''}`;
+    const key = eventId ? `id:${eventId}` : fallbackKey;
+    const existing = mergedByKey.get(key);
+    if (!existing) {
+      mergedByKey.set(key, event);
+      return;
+    }
+    const existingMs = getEventConflictTimestampMs(existing);
+    const incomingMs = getEventConflictTimestampMs(event);
+    if (incomingMs >= existingMs) {
+      mergedByKey.set(key, event);
+    }
+  });
+  return Array.from(mergedByKey.values());
+};
+const mergeSeenProjectUpdateIdsForConflict = (baseIdsInput, incomingIdsInput) => {
+  const ids = Array.from(
+    new Set(
+      [...(Array.isArray(baseIdsInput) ? baseIdsInput : []), ...(Array.isArray(incomingIdsInput) ? incomingIdsInput : [])]
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+    )
+  );
+  return ids.slice(-1400);
+};
+const mergeAccountDbPayloadForConflict = (basePayloadInput, incomingPayloadInput) => {
+  const basePayload =
+    basePayloadInput && typeof basePayloadInput === 'object' && !Array.isArray(basePayloadInput)
+      ? basePayloadInput
+      : {};
+  const incomingPayload =
+    incomingPayloadInput && typeof incomingPayloadInput === 'object' && !Array.isArray(incomingPayloadInput)
+      ? incomingPayloadInput
+      : {};
+
+  const mergedPayload = {
+    ...basePayload,
+    ...incomingPayload,
+    projects: mergeAccountProjectsForConflict(basePayload.projects, incomingPayload.projects),
+    events: mergeAccountEventsForConflict(basePayload.events, incomingPayload.events),
+    projectTodosByProjectId: mergeProjectTodosByProjectId(
+      basePayload.projectTodosByProjectId,
+      incomingPayload.projectTodosByProjectId
+    ),
+    seenProjectUpdateIds: mergeSeenProjectUpdateIdsForConflict(
+      basePayload.seenProjectUpdateIds,
+      incomingPayload.seenProjectUpdateIds
+    ),
+  };
+  return mergedPayload;
 };
 const getAccountSaveQueueState = (userId) => {
   const state = ACCOUNT_DB_SAVE_QUEUE_BY_USER.get(userId);
@@ -2206,11 +2451,58 @@ const flushAccountSaveQueue = async (userId) => {
   while (state.jobs.length > 0) {
     const nextJob = state.jobs.shift();
     if (!nextJob) continue;
+    let payloadToSave =
+      nextJob.payload && typeof nextJob.payload === 'object' && !Array.isArray(nextJob.payload)
+        ? nextJob.payload
+        : {};
     try {
-      await requestCloudDataApi(`/data/account/${encodeURIComponent(userId)}`, {
-        method: 'PUT',
-        body: { payload: nextJob.payload },
-      });
+      let didSave = false;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const baseVersion = ACCOUNT_DB_VERSION_BY_USER.get(userId);
+        try {
+          const result = await requestCloudDataApi(`/data/account/${encodeURIComponent(userId)}`, {
+            method: 'PUT',
+            body: {
+              payload: payloadToSave,
+              baseVersion: Number.isInteger(baseVersion) ? baseVersion : undefined,
+            },
+          });
+          const savedVersion = toSafeAccountVersion(result?.version);
+          if (savedVersion !== null) {
+            ACCOUNT_DB_VERSION_BY_USER.set(userId, savedVersion);
+          }
+          writeAccountDbPayload(userId, payloadToSave);
+          didSave = true;
+          break;
+        } catch (error) {
+          const isConflict = Number(error?.status || 0) === 409;
+          const remotePayload =
+            isConflict &&
+            error?.payload?.payload &&
+            typeof error.payload.payload === 'object' &&
+            !Array.isArray(error.payload.payload)
+              ? error.payload.payload
+              : null;
+          const remoteVersion = toSafeAccountVersion(error?.payload?.version);
+          if (remoteVersion !== null) {
+            ACCOUNT_DB_VERSION_BY_USER.set(userId, remoteVersion);
+          }
+          if (isConflict && remotePayload) {
+            payloadToSave = mergeAccountDbPayloadForConflict(remotePayload, payloadToSave);
+            writeAccountDbPayload(userId, payloadToSave);
+            continue;
+          }
+          if (Number(error?.status || 0) === 401 || Number(error?.status || 0) === 403) {
+            console.warn('Failed to save account data to Cloud API: unauthorized request.');
+            break;
+          }
+          console.warn('Failed to save account data to Firestore API:', error.message);
+          break;
+        }
+      }
+      if (!didSave) {
+        writeAccountDbPayload(userId, payloadToSave);
+      }
     } catch (error) {
       console.warn('Failed to save account data to Firestore API:', error.message);
     } finally {
@@ -2439,7 +2731,10 @@ const postAuthApi = async (path, payload) => {
 
   if (!response.ok) {
     const message = result?.message || 'Authentication request failed.';
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = result;
+    throw error;
   }
 
   return result;
@@ -2451,9 +2746,16 @@ const requestCloudDataApi = async (path, options = {}) => {
   }
 
   const method = String(options.method || 'GET').toUpperCase();
+  const authToken = getStoredAuthToken();
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
   const response = await fetch(`${AUTH_API_BASE_URL}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
     cache: 'no-store',
   });
@@ -2467,7 +2769,10 @@ const requestCloudDataApi = async (path, options = {}) => {
 
   if (!response.ok) {
     const message = result?.message || 'Cloud data request failed.';
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = result;
+    throw error;
   }
 
   return result;
@@ -2628,6 +2933,10 @@ const loadAccountDbPayload = async (userId, options = {}) => {
       return localPayload;
     }
     const result = await requestCloudDataApi(`/data/account/${encodeURIComponent(normalizedUserId)}`);
+    const remoteVersion = toSafeAccountVersion(result?.version);
+    if (remoteVersion !== null) {
+      ACCOUNT_DB_VERSION_BY_USER.set(normalizedUserId, remoteVersion);
+    }
     const remotePayload =
       result?.payload && typeof result.payload === 'object' && !Array.isArray(result.payload)
         ? result.payload
@@ -2647,6 +2956,10 @@ const loadAccountDbPayload = async (userId, options = {}) => {
     writeAccountDbPayload(normalizedUserId, remotePayload);
     return remotePayload;
   } catch (error) {
+    if (Number(error?.status || 0) === 401 || Number(error?.status || 0) === 403) {
+      console.warn('Cloud account data request is unauthorized. Falling back to local cache.');
+      return localPayload;
+    }
     console.warn('Failed to load account data from Firestore API, using local cache:', error.message);
     return localPayload;
   }
@@ -3388,6 +3701,9 @@ export default function App() {
 
   const handleAuthSuccess = (user) => {
     const safeUser = normalizeAuthUser(user);
+    if (safeUser?.id) {
+      ACCOUNT_DB_VERSION_BY_USER.delete(safeUser.id);
+    }
     setCurrentUser(safeUser);
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(safeUser));
   };
@@ -3395,10 +3711,16 @@ export default function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem(AUTH_USER_KEY);
+    ACCOUNT_DB_SAVE_QUEUE_BY_USER.clear();
+    ACCOUNT_DB_VERSION_BY_USER.clear();
   };
 
   const handleCurrentUserUpdate = (user) => {
-    const safeUser = normalizeAuthUser(user);
+    const safeUser = normalizeAuthUser({
+      ...(currentUser && typeof currentUser === 'object' ? currentUser : {}),
+      ...(user && typeof user === 'object' ? user : {}),
+      authToken: String(user?.authToken || currentUser?.authToken || '').trim(),
+    });
     setCurrentUser(safeUser);
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(safeUser));
   };
@@ -3490,8 +3812,9 @@ function AuthScreen({ onAuthSuccess }) {
 
     try {
       const result = await postAuthApi('/auth/google', payload);
-      syncUserToLocalCache(result.user);
-      onAuthSuccess(result.user);
+      const authenticatedUser = composeAuthUserWithToken(result.user, result.token);
+      syncUserToLocalCache(authenticatedUser);
+      onAuthSuccess(authenticatedUser);
     } catch (err) {
       setError(err.message || 'Google sign-in failed.');
     } finally {
@@ -3656,8 +3979,9 @@ function AuthScreen({ onAuthSuccess }) {
             identifier: normalizedIdentifier,
             password,
           });
-          syncUserToLocalCache(result.user);
-          onAuthSuccess(result.user);
+          const authenticatedUser = composeAuthUserWithToken(result.user, result.token);
+          syncUserToLocalCache(authenticatedUser);
+          onAuthSuccess(authenticatedUser);
           return;
         }
 
@@ -3712,8 +4036,9 @@ function AuthScreen({ onAuthSuccess }) {
         password,
         otp: otpCode.trim(),
       });
-      syncUserToLocalCache(result.user, password);
-      onAuthSuccess(result.user);
+      const authenticatedUser = composeAuthUserWithToken(result.user, result.token);
+      syncUserToLocalCache(authenticatedUser, password);
+      onAuthSuccess(authenticatedUser);
     } catch (err) {
       setError(err.message || 'Authentication failed.');
     } finally {
@@ -4725,6 +5050,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const ownerNotePatchSyncStateRef = useRef(new Map());
   const sharedOwnerNotePatchSyncStateRef = useRef(new Map());
   const ownerIdLookupCacheRef = useRef(new Map());
+  const collaborativeRefreshStateRef = useRef({
+    inFlight: false,
+    requestSeq: 0,
+    appliedSeq: 0,
+  });
+  const hasTriggeredMissingTokenLogoutRef = useRef(false);
   const previousUnseenProjectUpdateIdsRef = useRef([]);
   const projectUpdateToastTimersRef = useRef({ autoHide: null, clear: null });
 
@@ -4756,7 +5087,44 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     });
     sharedOwnerNotePatchSyncStateRef.current.clear();
     ownerIdLookupCacheRef.current.clear();
+    collaborativeRefreshStateRef.current = {
+      inFlight: false,
+      requestSeq: 0,
+      appliedSeq: 0,
+    };
+    ACCOUNT_DB_VERSION_BY_USER.delete(currentUser.id);
   }, [currentUser.id]);
+
+  useEffect(() => {
+    if (AUTH_API_BASE_URL) return;
+    if (typeof window === 'undefined') return;
+    const hasShownNotice = localStorage.getItem(CLOUD_SYNC_NOTICE_KEY) === '1';
+    if (hasShownNotice) return;
+    localStorage.setItem(CLOUD_SYNC_NOTICE_KEY, '1');
+    void popup.alert({
+      title: 'Cloud sync is disabled',
+      message:
+        'AUTH_API_BASE_URL is not configured. Data is currently saved only on this browser/device.',
+    });
+  }, [popup]);
+
+  useEffect(() => {
+    if (!AUTH_API_BASE_URL) return;
+    if (String(currentUser?.authToken || '').trim()) {
+      hasTriggeredMissingTokenLogoutRef.current = false;
+      return;
+    }
+    if (hasTriggeredMissingTokenLogoutRef.current) return;
+    hasTriggeredMissingTokenLogoutRef.current = true;
+    void popup
+      .alert({
+        title: 'Session expired',
+        message: 'Please sign in again to continue Cloud sync.',
+      })
+      .finally(() => {
+        onLogout?.();
+      });
+  }, [currentUser?.authToken, onLogout, popup]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -5643,6 +6011,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     let isCancelled = false;
 
     const refreshCollaborativeSnapshot = async () => {
+      const refreshState = collaborativeRefreshStateRef.current;
+      if (refreshState.inFlight) {
+        return;
+      }
+      refreshState.inFlight = true;
+      refreshState.requestSeq += 1;
+      const requestSeq = refreshState.requestSeq;
       try {
         const [latestPayload, latestInvites] = await Promise.all([
           loadAccountDbPayload(currentUser.id, {
@@ -6067,6 +6442,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           localProjectTodosSnapshot
         );
 
+        if (requestSeq < collaborativeRefreshStateRef.current.appliedSeq) {
+          return;
+        }
+        collaborativeRefreshStateRef.current.appliedSeq = requestSeq;
         setProjects((prevProjects) => (isJsonEqual(prevProjects, nextProjects) ? prevProjects : nextProjects));
         setEvents((prevEvents) => (isJsonEqual(prevEvents, nextEvents) ? prevEvents : nextEvents));
         setProjectTodosByProjectId((prevTodos) =>
@@ -6074,8 +6453,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         );
       } catch (error) {
         if (!isCancelled) {
+          if (Number(error?.status || 0) === 401 || Number(error?.status || 0) === 403) {
+            console.warn('Collaborative refresh unauthorized. Please sign in again.');
+            return;
+          }
           console.warn('Failed to refresh collaborative snapshot from cloud:', error.message);
         }
+      } finally {
+        refreshState.inFlight = false;
       }
     };
 
@@ -6085,7 +6470,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     const collaborativeRefreshIntervalMs = activeDashboardProjectId
       ? activeDashboardTab === 'notes'
-        ? 900
+        ? 500
         : 2000
       : COLLABORATIVE_REFRESH_INTERVAL_MS;
     const refreshInterval = window.setInterval(() => {
@@ -7993,6 +8378,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       username: normalizedUsername,
       email: normalizedEmail,
       avatarUrl: normalizedAvatarUrl,
+      authToken: currentUser.authToken,
     });
     onUpdateCurrentUser(nextCurrentUser);
     const usernameChanged = Boolean(oldUsername && oldUsername !== normalizedUsername);
@@ -8007,6 +8393,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     if (usernameChanged) {
       setProjects(nextProjects);
+      const sharedProjectIdsToSync = nextProjects
+        .filter(
+          (project) =>
+            String(project?.ownerId || '').trim() !== currentUser.id &&
+            isProjectAccessibleByUser(project, nextCurrentUser)
+        )
+        .map((project) => String(project?.id || '').trim())
+        .filter(Boolean);
+      if (sharedProjectIdsToSync.length > 0) {
+        syncSharedProjectDetailsForProjects(sharedProjectIdsToSync, nextProjects);
+      }
     }
 
     setProjectInvitations((prevInvites) => {
@@ -11212,11 +11609,12 @@ function ProjectDashboard({
     if (!normalizedNoteId) return;
     const currentRevision =
       Number.parseInt(String(noteRevisionMap?.[normalizedNoteId]?.revision || '0'), 10) || 0;
+    const nowMs = Date.now();
     const revision = {
       updatedAt: new Date().toISOString(),
       updatedById: currentUser.id,
       updatedByUsername: currentUser.username,
-      revision: currentRevision + 1,
+      revision: Math.max(currentRevision + 1, nowMs),
     };
     const nextNotes = { ...notesContent, [normalizedNoteId]: String(content || '') };
     const nextRevisionMap = { ...noteRevisionMap, [normalizedNoteId]: revision };
@@ -11228,7 +11626,7 @@ function ProjectDashboard({
     });
   };
 
-  const flushPresencePatch = (patch, delayMs = 220) => {
+  const flushPresencePatch = (patch, delayMs = 140) => {
     if (notesPresenceFlushTimerRef.current) {
       window.clearTimeout(notesPresenceFlushTimerRef.current);
     }
@@ -14156,6 +14554,7 @@ function NoteEditor({
   const imageEditHoldUntilRef = React.useRef(0);
   const docImageClipboardRef = React.useRef(null);
   const previousNoteIdRef = React.useRef(noteId);
+  const lastLocalNoteMutationAtRef = React.useRef(0);
   const lastHydratedDocPageRef = React.useRef('');
   const lastDocPresenceSnapshotRef = React.useRef({
     pageId: '',
@@ -14350,6 +14749,9 @@ function NoteEditor({
     }
     noteDocumentRef.current = normalized;
     setNoteDocument(normalized);
+    if (options.markLocalMutation !== false) {
+      lastLocalNoteMutationAtRef.current = Date.now();
+    }
     onSave(noteId, nextSerialized);
   };
   const applyNoteHistorySnapshot = (serializedSnapshot) => {
@@ -17106,6 +17508,10 @@ function NoteEditor({
       return;
     }
     if (!isSwitchingNote) {
+      const isRecentlyMutating = Date.now() - lastLocalNoteMutationAtRef.current < 900;
+      if (isRecentlyMutating) {
+        return;
+      }
       const currentSerialized = serializeStoredNoteDocument(
         normalizeNoteDocumentPayload(noteDocumentRef.current || noteDocument)
       );
@@ -19706,7 +20112,7 @@ function NoteEditor({
     }
     presenceTimerRef.current = window.setTimeout(() => {
       emitPresenceUpdate(typingText);
-    }, 220);
+    }, 140);
   };
   const switchActivePage = (nextPageId) => {
     const normalizedId = String(nextPageId || '').trim();
