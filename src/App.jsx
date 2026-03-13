@@ -101,6 +101,84 @@ const PERSONAL_EVENING_PROMPTS = [
   '2. วางแผน: พรุ่งนี้ฉันจะทำอย่างไรหรืออะไรเพื่อให้วันพรุ่งนี้ดีขึ้นกว่าวันนี้',
 ];
 const PERSONAL_EVENING_SCORE_TITLE = 'รายการประเมิณสามด้าน';
+const getIpadViewportState = () => {
+  if (typeof window === 'undefined') {
+    return {
+      isIpad: false,
+      isPortrait: false,
+      isLandscape: false,
+    };
+  }
+  const userAgent = String(window.navigator?.userAgent || '');
+  const platform = String(window.navigator?.platform || '');
+  const maxTouchPoints = Number(window.navigator?.maxTouchPoints || 0);
+  const isClassicIpad = /iPad/i.test(userAgent);
+  const isIpadOsDesktopMode = platform === 'MacIntel' && maxTouchPoints > 1;
+  const matchesIpadViewport = window.matchMedia('(min-width: 744px) and (max-width: 1366px)').matches;
+  const isIpad = matchesIpadViewport && (isClassicIpad || isIpadOsDesktopMode);
+  const isPortrait = window.matchMedia('(orientation: portrait)').matches;
+  return {
+    isIpad,
+    isPortrait,
+    isLandscape: isIpad && !isPortrait,
+  };
+};
+const getIpadRootClassState = () => {
+  if (typeof document === 'undefined') {
+    return {
+      isIpad: false,
+      isIpadPortrait: false,
+      isIpadLandscape: false,
+    };
+  }
+  const root = document.documentElement;
+  const isIpad = root.classList.contains('pm-ipad');
+  const isIpadPortrait = root.classList.contains('pm-ipad-portrait');
+  const isIpadLandscape = root.classList.contains('pm-ipad-landscape');
+  return {
+    isIpad,
+    isIpadPortrait,
+    isIpadLandscape,
+  };
+};
+const areIpadRootClassStatesEqual = (left, right) =>
+  left.isIpad === right.isIpad &&
+  left.isIpadPortrait === right.isIpadPortrait &&
+  left.isIpadLandscape === right.isIpadLandscape;
+const useIpadClassState = () => {
+  const [state, setState] = useState(() => getIpadRootClassState());
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
+    const root = document.documentElement;
+    const syncState = () => {
+      const nextState = getIpadRootClassState();
+      setState((prevState) =>
+        areIpadRootClassStatesEqual(prevState, nextState) ? prevState : nextState
+      );
+    };
+
+    syncState();
+    window.addEventListener('resize', syncState);
+    window.addEventListener('orientationchange', syncState);
+
+    let observer = null;
+    if (typeof MutationObserver === 'function') {
+      observer = new MutationObserver(syncState);
+      observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    return () => {
+      window.removeEventListener('resize', syncState);
+      window.removeEventListener('orientationchange', syncState);
+      if (observer) {
+        observer.disconnect();
+      }
+    };
+  }, []);
+
+  return state;
+};
 const toPersonalDateKey = (dateInput = new Date()) => {
   const date = dateInput instanceof Date ? new Date(dateInput.getTime()) : new Date(dateInput);
   if (Number.isNaN(date.getTime())) return '';
@@ -3699,6 +3777,30 @@ export default function App() {
     ensureLocalTestUsers();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
+
+    const rootElement = document.documentElement;
+    const syncIpadClass = () => {
+      const deviceState = getIpadViewportState();
+      rootElement.classList.toggle('pm-ipad', deviceState.isIpad);
+      rootElement.classList.toggle('pm-ipad-portrait', deviceState.isIpad && deviceState.isPortrait);
+      rootElement.classList.toggle('pm-ipad-landscape', deviceState.isIpad && deviceState.isLandscape);
+    };
+
+    syncIpadClass();
+    window.addEventListener('resize', syncIpadClass);
+    window.addEventListener('orientationchange', syncIpadClass);
+
+    return () => {
+      window.removeEventListener('resize', syncIpadClass);
+      window.removeEventListener('orientationchange', syncIpadClass);
+      rootElement.classList.remove('pm-ipad');
+      rootElement.classList.remove('pm-ipad-portrait');
+      rootElement.classList.remove('pm-ipad-landscape');
+    };
+  }, []);
+
   const handleAuthSuccess = (user) => {
     const safeUser = normalizeAuthUser(user);
     if (safeUser?.id) {
@@ -4964,6 +5066,7 @@ function ProfileSettingsView({
 
 function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const popup = usePopup();
+  const { isIpadPortrait: isIpadPortraitViewport } = useIpadClassState();
   // --- State ---
   const [projects, setProjects] = useState([]);
 
@@ -5666,15 +5769,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }, [monthsToRender]);
 
   // Derived state
+  const isCalendarCompactViewport = isCompactViewport || isIpadPortraitViewport;
+  const shouldUseCompactTopNavigation = isCompactViewport || isIpadPortraitViewport;
   const visibleProjects = projects.filter(p => p.isVisible);
   const mobileVisibleProjects = visibleProjects.slice(0, 4);
   const selectedMobileProject = useMemo(
     () => visibleProjects.find((project) => project.id === mobileCalendarProjectId) || null,
     [visibleProjects, mobileCalendarProjectId]
   );
-  const effectiveMergeView = isCompactViewport ? !selectedMobileProject : isMergeView;
-  const shouldShowTodoBoard = !isCompactViewport && isTodoSplitView;
-  const shouldHideCalendarScrollbar = !isCompactViewport;
+  const effectiveMergeView = isCalendarCompactViewport ? !selectedMobileProject : isMergeView;
+  const shouldShowTodoBoard = !isCalendarCompactViewport && isTodoSplitView;
+  const shouldHideCalendarScrollbar = !isCalendarCompactViewport;
   const mergeViewProjects = useMemo(() => {
     if (!googleCalendarStatus.linked) return visibleProjects;
     const alreadyIncluded = visibleProjects.some((project) => project.id === GOOGLE_CALENDAR_PROJECT_ID);
@@ -6504,11 +6609,23 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }, [isAccountDataHydrated, currentUser, activeDashboardProjectId, activeDashboardTab]);
 
   useEffect(() => {
-    if (!isCompactViewport) return;
+    if (!isCalendarCompactViewport) return;
     if (selectedMobileProject) return;
     if (mobileCalendarProjectId === null) return;
     setMobileCalendarProjectId(null);
-  }, [isCompactViewport, selectedMobileProject, mobileCalendarProjectId]);
+  }, [isCalendarCompactViewport, selectedMobileProject, mobileCalendarProjectId]);
+
+  const handleLogoutClick = useCallback(async () => {
+    const shouldLogout = await popup.confirm({
+      title: 'Logout',
+      message: 'ต้องการออกจากระบบใช่ไหม?',
+      confirmText: 'Logout',
+      cancelText: 'Cancel',
+      tone: 'danger',
+    });
+    if (!shouldLogout) return;
+    onLogout?.();
+  }, [onLogout, popup]);
 
   // --- Handlers ---
   const handleLinkGoogleCalendar = async () => {
@@ -7521,7 +7638,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   };
 
   const handleMobileProjectSelect = (projectId) => {
-    if (!isCompactViewport) return;
+    if (!isCalendarCompactViewport) return;
     setIsPersonalWorkspaceOpen(false);
     if (!projectId) {
       setMobileCalendarProjectId(null);
@@ -8327,10 +8444,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     return { ok: true, message: `You left "${targetProject.name}".` };
   };
 
-  const handleSaveProfile = async ({ username, avatarUrl }) => {
-    const normalizedUsername = String(username || '').trim().toLowerCase();
-    const normalizedEmail = String(currentUser.email || '').trim().toLowerCase();
-    const normalizedAvatarUrl = String(avatarUrl || '').trim();
+	  const handleSaveProfile = async ({ username, avatarUrl }) => {
+	    const normalizedUsername = String(username || '').trim().toLowerCase();
+	    const normalizedEmail = String(currentUser.email || '').trim().toLowerCase();
+	    const normalizedAvatarUrl = String(avatarUrl || '').trim();
+	    const duplicateUsernameMessage = 'ชื่อบัญชีนี้มีผู้ใช้แล้ว';
 
     if (!normalizedUsername || !normalizedEmail) {
       return { ok: false, message: 'Username and email are required.' };
@@ -8342,27 +8460,35 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return { ok: false, message: 'Current user record not found.' };
     }
 
-    if (users.some((user) => user.id !== currentUser.id && user.username === normalizedUsername)) {
-      return { ok: false, message: 'This username is already taken.' };
-    }
+	    if (users.some((user) => user.id !== currentUser.id && user.username === normalizedUsername)) {
+	      return { ok: false, message: duplicateUsernameMessage };
+	    }
 
     if (users.some((user) => user.id !== currentUser.id && user.email === normalizedEmail)) {
       return { ok: false, message: 'This email is already registered.' };
     }
 
-    if (AUTH_API_BASE_URL) {
-      try {
-        await requestCloudDataApi(`/users/${encodeURIComponent(currentUser.id)}/profile`, {
+	    if (AUTH_API_BASE_URL) {
+	      try {
+	        await requestCloudDataApi(`/users/${encodeURIComponent(currentUser.id)}/profile`, {
           method: 'PUT',
           body: {
             username: normalizedUsername,
             avatarUrl: normalizedAvatarUrl,
           },
         });
-      } catch (error) {
-        return { ok: false, message: error.message || 'Failed to update profile on server.' };
-      }
-    }
+	      } catch (error) {
+	        const rawMessage = String(error?.message || '').trim().toLowerCase();
+	        const isDuplicateUsernameError =
+	          Number(error?.status || 0) === 409 &&
+	          (rawMessage.includes('username') || rawMessage.includes('taken') || rawMessage.includes('already')) ||
+	          rawMessage.includes('this username is already taken');
+	        if (isDuplicateUsernameError) {
+	          return { ok: false, message: duplicateUsernameMessage };
+	        }
+	        return { ok: false, message: error.message || 'Failed to update profile on server.' };
+	      }
+	    }
 
     const oldUsername = String(existingUser.username || '').trim().toLowerCase();
     const oldEmail = String(existingUser.email || '').trim().toLowerCase();
@@ -8627,14 +8753,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }
 
   if (isProfileViewOpen) {
-    return (
-      <ProfileSettingsView
-        currentUser={currentUser}
-        onBack={() => setIsProfileViewOpen(false)}
-        onLogout={onLogout}
-        onSaveProfile={handleSaveProfile}
-        onChangePassword={handleChangePassword}
-        onRequestPasswordOtp={handleRequestPasswordOtp}
+      return (
+        <ProfileSettingsView
+          currentUser={currentUser}
+          onBack={() => setIsProfileViewOpen(false)}
+          onLogout={handleLogoutClick}
+          onSaveProfile={handleSaveProfile}
+          onChangePassword={handleChangePassword}
+          onRequestPasswordOtp={handleRequestPasswordOtp}
         onVerifyPasswordOtp={handleVerifyPasswordOtp}
         onVerifyPasswordWithGoogle={handleVerifyPasswordWithGoogle}
         projectInvitations={pendingProjectInvitations}
@@ -8674,8 +8800,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     <div className="flex flex-col h-screen bg-gray-100 font-sans text-sm md:text-base" style={{ height: '100dvh' }}>
       
       {/* --- Top Navigation Bar --- */}
-      <header className="bg-white shadow-sm border-b px-3 sm:px-4 md:px-6 py-3 shrink-0 z-20">
-        <div className="md:hidden">
+      <header
+        data-calendar-top-nav="true"
+        className="bg-white shadow-sm border-b px-3 sm:px-4 md:px-6 py-3 shrink-0 z-20"
+      >
+        <div className={shouldUseCompactTopNavigation ? '' : 'hidden'}>
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0">
               <CalendarDays className="w-6 h-6 shrink-0 text-blue-600" />
@@ -8771,17 +8900,23 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           </div>
         </div>
 
-        <div className="hidden md:flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
+        <div
+          data-calendar-desktop-nav="true"
+          className={`items-center justify-between gap-4 ${
+            shouldUseCompactTopNavigation ? 'hidden' : 'flex'
+          }`}
+        >
+          <div data-calendar-desktop-brand="true" className="flex items-center gap-2">
             <CalendarDays className="w-6 h-6 text-blue-600" />
             <h1 className="text-xl font-bold text-gray-800">
               {isPersonalWorkspaceOpen ? 'Personal Reflection Space' : 'Multi-Project Calendar'}
             </h1>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div data-calendar-desktop-actions="true" className="flex items-center gap-4">
             <button
               onClick={togglePersonalWorkspace}
+              data-calendar-main-btn="true"
               className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border font-medium transition-colors ${
                 isPersonalWorkspaceOpen
                   ? 'bg-blue-50 text-blue-700 border-blue-200'
@@ -8790,11 +8925,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
               title="Open personal workspace"
             >
               <FileText className="w-4 h-4" />
-              <span className="hidden sm:inline">Personal</span>
+              <span className="hidden sm:inline whitespace-nowrap">Personal</span>
             </button>
 
             {isPersonalWorkspaceOpen ? (
-              <div className="flex bg-gray-100 p-1 rounded-lg border">
+              <div data-calendar-desktop-personal-tabs="true" className="flex bg-gray-100 p-1 rounded-lg border">
                 <button
                   type="button"
                   onClick={() => setPersonalWorkspaceTab(PERSONAL_WORKSPACE_TABS.JOURNAL)}
@@ -8805,11 +8940,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                   }`}
                 >
                   <CheckSquare className="w-4 h-4" />
-                  <span className="hidden sm:inline">Daily Journal</span>
+                  <span className="hidden sm:inline whitespace-nowrap">Daily Journal</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setPersonalWorkspaceTab(PERSONAL_WORKSPACE_TABS.DASHBOARD)}
+                  data-calendar-personal-dashboard-tab="true"
                   className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
                     personalWorkspaceTab === PERSONAL_WORKSPACE_TABS.DASHBOARD
                       ? 'bg-white shadow-sm font-medium text-blue-600'
@@ -8817,7 +8953,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                   }`}
                 >
                   <BarChart2 className="w-4 h-4" />
-                  <span className="hidden sm:inline">Personal Dashboard</span>
+                  <span className="hidden sm:inline whitespace-nowrap">Personal Dashboard</span>
                 </button>
               </div>
             ) : (
@@ -8827,6 +8963,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                     setIsPersonalWorkspaceOpen(false);
                     setIsTodoSplitView((prev) => !prev);
                   }}
+                  data-calendar-main-btn="true"
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border font-medium transition-colors ${
                     isTodoSplitView
                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -8835,10 +8972,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                   title="Toggle Todo mode"
                 >
                   <CheckSquare className="w-4 h-4" />
-                  <span className="hidden sm:inline">Todo</span>
+                  <span className="hidden sm:inline whitespace-nowrap">Todo</span>
                 </button>
 
-                <div className="flex bg-gray-100 p-1 rounded-lg border">
+                <div data-calendar-desktop-view-tabs="true" className="flex bg-gray-100 p-1 rounded-lg border">
                   <button
                     onClick={() => {
                       setIsPersonalWorkspaceOpen(false);
@@ -8851,7 +8988,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                     }`}
                   >
                     <LayoutGrid className="w-4 h-4" />
-                    <span className="hidden sm:inline">Split View</span>
+                    <span className="hidden sm:inline whitespace-nowrap">Split View</span>
                   </button>
                   <button
                     onClick={() => {
@@ -8865,7 +9002,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                     }`}
                   >
                     <Layers className="w-4 h-4" />
-                    <span className="hidden sm:inline">Merge View</span>
+                    <span className="hidden sm:inline whitespace-nowrap">Merge View</span>
                   </button>
                 </div>
 
@@ -8873,10 +9010,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
                 <button
                   onClick={handleNewEventClick}
+                  data-calendar-main-btn="true"
                   className="flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-2 rounded-lg font-medium transition-colors"
                 >
                   <Plus className="w-4 h-4" />
-                  <span className="hidden sm:inline">Add Event</span>
+                  <span className="hidden sm:inline whitespace-nowrap">Add Event</span>
                 </button>
 
                 <button
@@ -8884,10 +9022,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                     setIsPersonalWorkspaceOpen(false);
                     setShowProjectModal(true);
                   }}
+                  data-calendar-manage-project="true"
+                  data-calendar-main-btn="true"
                   className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
                 >
                   <Settings className="w-4 h-4" />
-                  <span>Manage Project</span>
+                  <span className="whitespace-nowrap">Manage Project</span>
                 </button>
               </>
             )}
@@ -8895,11 +9035,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             <button
               type="button"
               onClick={() => setIsProfileViewOpen(true)}
+              data-calendar-profile-trigger="true"
               className="flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-gray-100 transition-colors"
               title="Open profile settings"
             >
               <UserAvatar user={currentUser} sizeClass="w-8 h-8" textClass="text-[11px]" />
-              <div className="hidden lg:flex flex-col leading-tight text-left">
+              <div data-calendar-profile-meta="true" className="hidden lg:flex flex-col leading-tight text-left">
                 <span className="text-[11px] text-gray-400">Signed in as</span>
                 <span className="text-sm font-semibold text-gray-700 truncate max-w-[180px]">
                   {currentUser.username || currentUser.email}
@@ -8908,12 +9049,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             </button>
 
             <button
-              onClick={onLogout}
+              onClick={() => {
+                void handleLogoutClick();
+              }}
+              data-calendar-main-btn="true"
               className="inline-flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 border border-gray-200 px-3 py-2 rounded-lg font-medium transition-colors"
               title="Logout"
             >
               <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Logout</span>
+              <span className="hidden sm:inline whitespace-nowrap">Logout</span>
             </button>
           </div>
         </div>
@@ -8930,7 +9074,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             data={personalWorkspaceData}
             onChangeData={setPersonalWorkspaceData}
             activeTab={personalWorkspaceTab}
-            isCompactViewport={isCompactViewport}
+            isCompactViewport={isCalendarCompactViewport}
           />
         ) : visibleProjects.length === 0 ? (
           <div className="flex h-full items-center justify-center flex-col text-gray-400 gap-4">
@@ -8938,15 +9082,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             <p className="text-lg">กรุณาเลือกหรือเพิ่มโปรเจกต์จากเมนู "จัดการ Project"</p>
           </div>
         ) : (
-          <div
-            className={
-              !isCompactViewport && !effectiveMergeView && !shouldShowTodoBoard
+            <div
+              className={
+              !isCalendarCompactViewport && !effectiveMergeView && !shouldShowTodoBoard
                 ? 'min-w-[800px] w-full'
                 : 'w-full'
-            }
-          > {/* Ensure it doesn't squish too much on small screens */}
+              }
+            > {/* Ensure it doesn't squish too much on small screens */}
             
-            {!isCompactViewport && (
+            {!isCalendarCompactViewport && (
               <>
                 {/* Sticky Project Headers (Only in Split View) */}
                 {!effectiveMergeView && (
@@ -9019,14 +9163,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                 {monthsToRender.map(({ month, year }, idx) => (
                   <div key={`${year}-${month}`} className="border-b-4 border-gray-200">
                     {/* Month Title */}
-                    <div className={`bg-gray-100 py-2 px-3 sm:px-4 border-b border-gray-200 ${isCompactViewport ? '' : 'sticky top-14 z-[5] shadow-sm'}`}>
+                    <div className={`bg-gray-100 py-2 px-3 sm:px-4 border-b border-gray-200 ${isCalendarCompactViewport ? '' : 'sticky top-14 z-[5] shadow-sm'}`}>
                       <h2 className="text-base sm:text-lg font-bold text-gray-800 whitespace-nowrap">
                         {THAI_MONTHS[month]} {year}
                       </h2>
                     </div>
 
                     <div className="flex">
-                      {isCompactViewport ? (
+                      {isCalendarCompactViewport ? (
                         <div className="flex-1 bg-white p-2">
                           <MonthGrid
                             year={year}
@@ -9086,11 +9230,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         )}
       </main>
 
-      {isCompactViewport && !isPersonalWorkspaceOpen && (
+      {isCalendarCompactViewport && !isPersonalWorkspaceOpen && (
         <button
           type="button"
           onClick={handleNewEventClick}
-          className="md:hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-30 w-12 h-12 rounded-full bg-blue-600 text-white shadow-[0_10px_22px_rgba(37,99,235,0.25)] hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center"
+          className="fixed bottom-5 left-1/2 -translate-x-1/2 z-30 w-12 h-12 rounded-full bg-blue-600 text-white shadow-[0_10px_22px_rgba(37,99,235,0.25)] hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center"
           title="Add event"
         >
           <Plus className="w-5 h-5" />
@@ -10696,6 +10840,8 @@ function ProjectDashboard({
   onActiveTabChange,
 }) {
   const popup = usePopup();
+  const { isIpadPortrait: isIpadPortraitViewport } = useIpadClassState();
+  const shouldUseCompactDashboardNav = isIpadPortraitViewport;
   // เปลี่ยนค่าเริ่มต้นให้เปิดหน้า Project Organization เป็นอันดับแรก
   const [activeTabLocal, setActiveTabLocal] = useState(DEFAULT_PROJECT_DASHBOARD_TAB);
   const activeTab = normalizeProjectDashboardTab(activeTabProp ?? activeTabLocal);
@@ -12090,10 +12236,16 @@ function ProjectDashboard({
       </header>
 
       {/* Dashboard Body */}
-      <div className="flex flex-1 flex-col md:flex-row overflow-hidden">
+      <div
+        className={`flex flex-1 flex-col ${shouldUseCompactDashboardNav ? '' : 'md:flex-row'} overflow-hidden`}
+      >
         
         {/* Sidebar */}
-        <aside className="hidden md:flex w-64 bg-gray-50 border-r flex-col shrink-0 overflow-y-auto">
+        <aside
+          className={`w-64 bg-gray-50 border-r flex-col shrink-0 overflow-y-auto ${
+            shouldUseCompactDashboardNav ? 'hidden' : 'hidden md:flex'
+          }`}
+        >
           <div className="p-4">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Management</p>
             <nav className="space-y-1">
@@ -12116,7 +12268,9 @@ function ProjectDashboard({
         </aside>
 
         <div
-          className="md:hidden border-b bg-gray-50/90 px-2 py-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden"
+          className={`border-b bg-gray-50/90 px-2 py-1.5 overflow-x-auto [&::-webkit-scrollbar]:hidden ${
+            shouldUseCompactDashboardNav ? '' : 'md:hidden'
+          }`}
           style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
         >
           <nav className="flex items-center gap-1.5 min-w-max">
@@ -12138,7 +12292,11 @@ function ProjectDashboard({
         </div>
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto bg-white px-3 sm:px-4 md:px-8 py-3 md:py-8">
+        <main
+          className={`flex-1 overflow-y-auto bg-white px-3 sm:px-4 ${
+            shouldUseCompactDashboardNav ? 'md:px-4' : 'md:px-8'
+          } py-3 md:py-8`}
+        >
           <div className="max-w-6xl mx-auto">
             
             <div
@@ -13035,9 +13193,9 @@ function ProjectDashboard({
                       height: 1.45rem;
                       background: #64748b;
                     }
-                    @media (max-width: 767px) {
-                      .pm-org-forest {
-                        display: block;
+	                    @media (max-width: 767px) {
+	                      .pm-org-forest {
+	                        display: block;
                         width: 100%;
                         gap: 0;
                         padding: 0.25rem 0 0.5rem;
@@ -13096,13 +13254,76 @@ function ProjectDashboard({
                       .pm-org-children > .pm-org-item > .pm-org-node-wrap {
                         padding-top: 0.5rem;
                       }
-                      .pm-org-children > .pm-org-item > .pm-org-node-wrap::before {
-                        display: none;
-                      }
-                    }
-                  `}</style>
-                </div>
-              </div>
+	                      .pm-org-children > .pm-org-item > .pm-org-node-wrap::before {
+	                        display: none;
+	                      }
+	                    }
+	                    html.pm-ipad-portrait .pm-org-forest {
+	                      display: block;
+	                      width: 100%;
+	                      gap: 0;
+	                      padding: 0.25rem 0 0.5rem;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-island {
+	                      display: block;
+	                      width: 100%;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-root {
+	                      display: block;
+	                      width: 100%;
+	                      margin: 0;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-item {
+	                      width: 100%;
+	                      padding: 0;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-node-wrap {
+	                      justify-content: flex-start;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-children {
+	                      display: block;
+	                      width: 100%;
+	                      position: relative;
+	                      margin: 0.6rem 0 0;
+	                      padding: 0 0 0 1.1rem;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-children::before {
+	                      content: '';
+	                      position: absolute;
+	                      top: 0.4rem;
+	                      bottom: 0.6rem;
+	                      left: 0.45rem;
+	                      width: 2px;
+	                      background: #64748b;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-children > .pm-org-item {
+	                      position: relative;
+	                      padding: 0 0 0.2rem;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-children > .pm-org-item:last-child {
+	                      padding-bottom: 0;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-children > .pm-org-item::before {
+	                      content: '';
+	                      position: absolute;
+	                      top: 1rem;
+	                      left: 0.45rem;
+	                      width: 0.65rem;
+	                      height: 0;
+	                      border-top: 2px solid #64748b;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-children > .pm-org-item:only-child::before {
+	                      display: block;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-children > .pm-org-item > .pm-org-node-wrap {
+	                      padding-top: 0.5rem;
+	                    }
+	                    html.pm-ipad-portrait .pm-org-children > .pm-org-item > .pm-org-node-wrap::before {
+	                      display: none;
+	                    }
+	                  `}</style>
+	                </div>
+	              </div>
             )}
             {activeTab === 'announcements' && (
               <div className="space-y-4 md:space-y-5">
@@ -13254,12 +13475,22 @@ function ProjectDashboard({
               </div>
             )}
             {activeTab === 'notes' && (
-              <div className="flex flex-col min-h-[65vh] md:h-[calc(100vh-180px)]">
+              <div
+                className={`flex flex-col min-h-[65vh] ${
+                  shouldUseCompactDashboardNav ? '' : 'md:h-[calc(100vh-180px)]'
+                }`}
+              >
                  {/* Content Area */}
-                 <div className="flex flex-col md:flex-row gap-4 md:gap-6 flex-1 min-h-0 min-w-0">
+                 <div
+                   className={`flex flex-col ${shouldUseCompactDashboardNav ? '' : 'md:flex-row'} gap-4 md:gap-6 flex-1 min-h-0 min-w-0`}
+                 >
                     {/* Selector */}
-                    <div className="w-full md:w-72 bg-white border border-gray-200 rounded-xl shadow-sm p-3 shrink-0 space-y-2 md:h-full md:flex md:flex-col md:min-h-0">
-                      <div className="md:hidden space-y-2">
+                    <div
+                      className={`w-full ${shouldUseCompactDashboardNav ? '' : 'md:w-72'} bg-white border border-gray-200 rounded-xl shadow-sm p-3 shrink-0 space-y-2 ${
+                        shouldUseCompactDashboardNav ? '' : 'md:h-full md:flex md:flex-col md:min-h-0'
+                      }`}
+                    >
+                      <div className={`${shouldUseCompactDashboardNav ? '' : 'md:hidden'} space-y-2`}>
                         <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
                           {noteSection === 'department' ? 'Select department' : 'Select member'}
                         </p>
@@ -13278,7 +13509,13 @@ function ProjectDashboard({
                           emptyText={noteSection === 'department' ? 'No department found' : 'No member found'}
                         />
                       </div>
-                      <div className="hidden md:flex md:flex-col md:flex-1 md:min-h-0 space-y-2">
+                      <div
+                        className={`space-y-2 ${
+                          shouldUseCompactDashboardNav
+                            ? 'hidden'
+                            : 'hidden md:flex md:flex-col md:flex-1 md:min-h-0'
+                        }`}
+                      >
                         <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
                           {noteSection === 'department' ? 'Select department' : 'Select member'}
                         </p>
@@ -14721,11 +14958,13 @@ function NoteEditor({
   const [isSheetDataTypeMenuOpen, setIsSheetDataTypeMenuOpen] = useState(false);
   const [isCompactSheetViewport, setIsCompactSheetViewport] = useState(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-    return window.matchMedia('(max-width: 1023px)').matches;
+    const isCompactByWidth = window.matchMedia('(max-width: 1023px)').matches;
+    return isCompactByWidth || getIpadRootClassState().isIpad;
   });
   const [isMobileNoteViewport, setIsMobileNoteViewport] = useState(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
-    return window.matchMedia('(max-width: 767px)').matches;
+    const isMobileByWidth = window.matchMedia('(max-width: 767px)').matches;
+    return isMobileByWidth || getIpadRootClassState().isIpadPortrait;
   });
   const [mobileToolbarSection, setMobileToolbarSection] = useState('');
   const isDesktopSheetViewport = !isCompactSheetViewport;
@@ -17713,30 +17952,58 @@ function NoteEditor({
   React.useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
     const mediaQuery = window.matchMedia('(max-width: 1023px)');
-    const handleViewportChange = (event) => {
-      setIsCompactSheetViewport(event.matches);
+    const resolveCompactViewport = () => {
+      const isCompactByWidth = window.matchMedia('(max-width: 1023px)').matches;
+      return isCompactByWidth || getIpadRootClassState().isIpad;
     };
-    setIsCompactSheetViewport(mediaQuery.matches);
+    const handleViewportChange = () => {
+      setIsCompactSheetViewport(resolveCompactViewport());
+    };
+    setIsCompactSheetViewport(resolveCompactViewport());
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('orientationchange', handleViewportChange);
     if (typeof mediaQuery.addEventListener === 'function') {
       mediaQuery.addEventListener('change', handleViewportChange);
-      return () => mediaQuery.removeEventListener('change', handleViewportChange);
+      return () => {
+        mediaQuery.removeEventListener('change', handleViewportChange);
+        window.removeEventListener('resize', handleViewportChange);
+        window.removeEventListener('orientationchange', handleViewportChange);
+      };
     }
     mediaQuery.addListener(handleViewportChange);
-    return () => mediaQuery.removeListener(handleViewportChange);
+    return () => {
+      mediaQuery.removeListener(handleViewportChange);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('orientationchange', handleViewportChange);
+    };
   }, []);
   React.useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
     const mediaQuery = window.matchMedia('(max-width: 767px)');
-    const handleViewportChange = (event) => {
-      setIsMobileNoteViewport(event.matches);
+    const resolveMobileViewport = () => {
+      const isMobileByWidth = window.matchMedia('(max-width: 767px)').matches;
+      return isMobileByWidth || getIpadRootClassState().isIpadPortrait;
     };
-    setIsMobileNoteViewport(mediaQuery.matches);
+    const handleViewportChange = () => {
+      setIsMobileNoteViewport(resolveMobileViewport());
+    };
+    setIsMobileNoteViewport(resolveMobileViewport());
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('orientationchange', handleViewportChange);
     if (typeof mediaQuery.addEventListener === 'function') {
       mediaQuery.addEventListener('change', handleViewportChange);
-      return () => mediaQuery.removeEventListener('change', handleViewportChange);
+      return () => {
+        mediaQuery.removeEventListener('change', handleViewportChange);
+        window.removeEventListener('resize', handleViewportChange);
+        window.removeEventListener('orientationchange', handleViewportChange);
+      };
     }
     mediaQuery.addListener(handleViewportChange);
-    return () => mediaQuery.removeListener(handleViewportChange);
+    return () => {
+      mediaQuery.removeListener(handleViewportChange);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('orientationchange', handleViewportChange);
+    };
   }, []);
   React.useEffect(() => {
     if (!isMobileNoteViewport && mobileToolbarSection) {

@@ -25,3 +25,246 @@
     }
   }
 }
+
+@layer base {
+  .pm-ipad body {
+    overscroll-behavior-y: contain;
+    touch-action: manipulation;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .pm-ipad body,
+  .pm-ipad #root {
+    font-size: 15px;
+    line-height: 1.45;
+  }
+
+  .pm-ipad * {
+    min-width: 0;
+    -webkit-tap-highlight-color: rgba(37, 99, 235, 0.14);
+  }
+
+  .pm-ipad button,
+  .pm-ipad [role='button'],
+  .pm-ipad input[type='button'],
+  .pm-ipad input[type='submit'],
+  .pm-ipad input[type='reset'],
+  .pm-ipad select {
+    min-height: 40px;
+  }
+
+  .pm-ipad input,
+  .pm-ipad select,
+  .pm-ipad textarea {
+    font-size: 16px;
+  }
+
+  .pm-ipad .overflow-x-auto,
+  .pm-ipad .overflow-y-auto {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
+  .pm-ipad [class*='max-w-6xl'],
+  .pm-ipad [class*='max-w-5xl'],
+  .pm-ipad [class*='max-w-4xl'],
+  .pm-ipad [class*='max-w-3xl'],
+  .pm-ipad [class*='max-w-2xl'] {
+    max-width: min(100%, calc(100vw - 2rem)) !important;
+  }
+
+  .pm-ipad [class*='min-w-[800px]'],
+  .pm-ipad [class*='min-w-[760px]'],
+  .pm-ipad [class*='min-w-[720px]'] {
+    min-width: 100% !important;
+  }
+
+  .pm-ipad table[class*='min-w-[720px]'],
+  .pm-ipad table[class*='min-w-[760px]'],
+  .pm-ipad table[class*='min-w-[800px]'] {
+    min-width: 100% !important;
+  }
+
+  .pm-ipad td,
+  .pm-ipad th {
+    word-break: break-word;
+  }
+
+  .pm-ipad [data-note-editor-full-header='true'],
+  .pm-ipad [data-note-sheet-column-header='true'] {
+    transform: translateZ(0);
+    will-change: transform;
+  }
+
+  .pm-ipad .pm-org-node-wrap > div {
+    max-width: 100%;
+  }
+
+  .pm-ipad-portrait [class*='md:flex-row'],
+  .pm-ipad-portrait [class*='lg:flex-row'] {
+    flex-direction: column !important;
+  }
+
+  .pm-ipad-portrait [class*='md:w-72'],
+  .pm-ipad-portrait [class*='lg:w-[340px]'] {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .pm-ipad-portrait [class*='md:h-[calc(100vh-180px)]'] {
+    height: auto !important;
+    min-height: 65vh !important;
+  }
+
+  .pm-ipad-portrait [class*='xl:grid-cols-4'],
+  .pm-ipad-portrait [class*='lg:grid-cols-4'],
+  .pm-ipad-portrait [class*='lg:grid-cols-3'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .pm-ipad-portrait [class*='md:px-8'] {
+    padding-left: 1.25rem !important;
+    padding-right: 1.25rem !important;
+  }
+
+  .pm-ipad-portrait [class*='md:py-8'] {
+    padding-top: 1.5rem !important;
+    padding-bottom: 1.5rem !important;
+  }
+
+  .pm-ipad-landscape [class*='xl:grid-cols-4'] {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .pm-ipad-landscape [class*='max-w-6xl'] {
+    max-width: min(100%, calc(100vw - 3rem)) !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-top-nav='true'] {
+    padding-left: 0.5rem !important;
+    padding-right: 0.5rem !important;
+    padding-top: 0.45rem !important;
+    padding-bottom: 0.45rem !important;
+    overflow: hidden;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-nav='true'] {
+    gap: 0.35rem !important;
+    min-width: 0;
+    flex-wrap: nowrap;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-brand='true'] {
+    min-width: 0;
+    flex: 0 1 auto;
+    gap: 0.3rem !important;
+    max-width: min(31vw, 17rem);
+    overflow: hidden;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-brand='true'] svg {
+    width: 1rem !important;
+    height: 1rem !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-brand='true'] h1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 1.1rem !important;
+    line-height: 1.05 !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-actions='true'] {
+    gap: 0.3rem !important;
+    min-width: 0;
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-actions='true'] > * {
+    flex-shrink: 1;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-actions='true'] button {
+    white-space: nowrap;
+  }
+
+  .pm-ipad-landscape [data-calendar-main-btn='true'] {
+    padding: 0.3rem 0.42rem !important;
+    font-size: 0.8rem !important;
+    line-height: 1.2;
+    gap: 0.24rem !important;
+    font-weight: 600 !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-main-btn='true'] svg {
+    width: 0.85rem !important;
+    height: 0.85rem !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-main-btn='true'] span {
+    max-width: 5.2rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-personal-tabs='true'],
+  .pm-ipad-landscape [data-calendar-desktop-view-tabs='true'] {
+    padding: 0.1rem !important;
+    gap: 0.1rem !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-personal-tabs='true'] button,
+  .pm-ipad-landscape [data-calendar-desktop-view-tabs='true'] button {
+    padding: 0.24rem 0.36rem !important;
+    font-size: 0.79rem !important;
+    gap: 0.2rem !important;
+    font-weight: 600 !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-personal-tabs='true'] button svg,
+  .pm-ipad-landscape [data-calendar-desktop-view-tabs='true'] button svg {
+    width: 0.8rem !important;
+    height: 0.8rem !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-desktop-personal-tabs='true'] button span,
+  .pm-ipad-landscape [data-calendar-desktop-view-tabs='true'] button span {
+    max-width: 4.7rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pm-ipad-landscape [data-calendar-profile-trigger='true'] {
+    padding: 0.15rem !important;
+    gap: 0.2rem !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-profile-meta='true'] {
+    display: none !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-manage-project='true'] {
+    padding-left: 0.45rem !important;
+    padding-right: 0.45rem !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-manage-project='true'] span,
+  .pm-ipad-landscape [data-calendar-personal-dashboard-tab='true'] span {
+    max-width: none !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+  }
+
+  .pm-ipad-landscape [data-calendar-personal-dashboard-tab='true'] {
+    padding-left: 0.32rem !important;
+    padding-right: 0.32rem !important;
+    font-size: 0.75rem !important;
+  }
+}
