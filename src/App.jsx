@@ -12662,14 +12662,14 @@ function ProjectDashboard({
     currentUserId: currentUser.id,
     projectOwnerId: project.ownerId,
   });
-  const normalizeTaskViewMode = (value) =>
-    String(value || '').trim().toLowerCase() === 'table'
-      ? 'table'
-      : String(value || '').trim().toLowerCase() === 'gallery'
-        ? 'gallery'
-        : String(value || '').trim().toLowerCase() === 'board'
-          ? 'board'
-          : 'board';
+  const normalizeTaskViewMode = (value) => {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    if (normalizedValue === 'table') return 'table';
+    if (normalizedValue === 'gallery') return 'gallery';
+    if (normalizedValue === 'workload') return 'workload';
+    if (normalizedValue === 'board') return 'board';
+    return 'board';
+  };
   const initialTaskView = normalizeTaskViewMode(initialNotesPreferences.taskView);
   const [noteSection, setNoteSection] = useState(
     initialNotesPreferences.section === 'member' ? 'member' : 'department'
@@ -13650,6 +13650,32 @@ function ProjectDashboard({
 
   // --- Task Management View Logic ---
   const TASK_STATUSES = ['To Do', 'In Progress', 'Review', 'Done'];
+  const WORKLOAD_RANGE_OPTIONS = [
+    { id: 'week', label: 'Week' },
+    { id: 'month', label: 'Month' },
+    { id: 'year', label: 'Year' },
+    { id: 'all', label: 'All' },
+  ];
+  const DEFAULT_WORKLOAD_RANGE = 'year';
+  const TASK_TIME_FILTER_OPTIONS = [
+    { id: 'all', label: 'ทั้งหมด' },
+    { id: 'week', label: 'Week' },
+    { id: 'month', label: 'Month' },
+    { id: 'year', label: 'Year' },
+  ];
+  const DEFAULT_TASK_TIME_FILTER = 'all';
+  const normalizeWorkloadRange = (value) => {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    return WORKLOAD_RANGE_OPTIONS.some((option) => option.id === normalizedValue)
+      ? normalizedValue
+      : DEFAULT_WORKLOAD_RANGE;
+  };
+  const normalizeTaskTimeFilter = (value) => {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    return TASK_TIME_FILTER_OPTIONS.some((option) => option.id === normalizedValue)
+      ? normalizedValue
+      : DEFAULT_TASK_TIME_FILTER;
+  };
   const normalizeTaskStatus = (value) => {
     const status = String(value || '').trim();
     return TASK_STATUSES.includes(status) ? status : 'To Do';
@@ -14025,6 +14051,9 @@ function ProjectDashboard({
 
   const [statusFilter, setStatusFilter] = useState([]);
   const [deptFilter, setDeptFilter] = useState([]);
+  const [taskDisplayFilterMode, setTaskDisplayFilterMode] = useState('all');
+  const [taskTimeFilter, setTaskTimeFilter] = useState(DEFAULT_TASK_TIME_FILTER);
+  const [workloadRange, setWorkloadRange] = useState(DEFAULT_WORKLOAD_RANGE);
   const defaultTaskAssigneeFilterIds = useMemo(() => {
     const normalizedCurrentUserId = String(currentUser?.id || '').trim();
     return normalizedCurrentUserId ? [normalizedCurrentUserId] : [];
@@ -14072,8 +14101,17 @@ function ProjectDashboard({
       normalizedTaskAssigneeFilters.some(
         (assigneeId) => !normalizedDefaultTaskAssigneeFilters.includes(assigneeId)
       ));
+  const isTaskDisplayFilterActive = taskDisplayFilterMode !== 'all';
+  const isTaskTimeFilterActive = normalizeTaskTimeFilter(taskTimeFilter) !== DEFAULT_TASK_TIME_FILTER;
+  const isWorkloadRangeFilterActive =
+    normalizeWorkloadRange(workloadRange) !== DEFAULT_WORKLOAD_RANGE;
   const isTaskFilterActive =
-    statusFilter.length > 0 || deptFilter.length > 0 || hasCustomizedAssigneeFilter;
+    statusFilter.length > 0 ||
+    deptFilter.length > 0 ||
+    hasCustomizedAssigneeFilter ||
+    isTaskDisplayFilterActive ||
+    isTaskTimeFilterActive ||
+    isWorkloadRangeFilterActive;
   const projectTasks = useMemo(
     () =>
       (Array.isArray(events) ? events : []).filter((ev) => {
@@ -14105,6 +14143,57 @@ function ProjectDashboard({
     });
     return counter;
   }, [projectTasks]);
+  const parseTaskDueDate = (dateInput) => {
+    const raw = String(dateInput || '').trim();
+    const matched = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!matched) return null;
+    const [, yearText, monthText, dayText] = matched;
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    const parsedDate = new Date(year, month - 1, day, 0, 0, 0, 0);
+    if (
+      Number.isNaN(parsedDate.getTime()) ||
+      parsedDate.getFullYear() !== year ||
+      parsedDate.getMonth() !== month - 1 ||
+      parsedDate.getDate() !== day
+    ) {
+      return null;
+    }
+    return parsedDate;
+  };
+  const resolveTaskTimeFilterWindow = (rangeInput) => {
+    const range = normalizeTaskTimeFilter(rangeInput);
+    if (range === 'all') return null;
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const weekStart = new Date(today.getTime());
+    const currentDay = weekStart.getDay();
+    const offsetToMonday = currentDay === 0 ? 6 : currentDay - 1;
+    weekStart.setDate(weekStart.getDate() - offsetToMonday);
+    if (range === 'week') {
+      const weekEnd = new Date(weekStart.getTime());
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      return { startDate: weekStart, endDate: weekEnd };
+    }
+    if (range === 'month') {
+      return {
+        startDate: new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0),
+        endDate: new Date(today.getFullYear(), today.getMonth() + 1, 0, 0, 0, 0, 0),
+      };
+    }
+    if (range === 'year') {
+      return {
+        startDate: new Date(today.getFullYear(), 0, 1, 0, 0, 0, 0),
+        endDate: new Date(today.getFullYear(), 11, 31, 0, 0, 0, 0),
+      };
+    }
+    return null;
+  };
+  const taskTimeFilterWindow = useMemo(
+    () => resolveTaskTimeFilterWindow(taskTimeFilter),
+    [taskTimeFilter]
+  );
   const filteredTasks = projectTasks.filter((ev) => {
     const normalizedRecordType = String(ev.recordType || '').trim().toLowerCase();
     const isTaskRecord =
@@ -14121,7 +14210,27 @@ function ProjectDashboard({
     const matchAssignee =
       !hasCustomizedAssigneeFilter ||
       normalizedTaskAssigneeFilters.some((assigneeId) => eventAssigneeIds.includes(assigneeId));
-    return matchStatus && matchDept && matchAssignee;
+    const relationshipMode = String(taskDisplayFilterMode || '').trim();
+    let matchDisplayMode = true;
+    if (relationshipMode === 'standalone_and_subtask') {
+      const taskId = String(ev?.id || '').trim();
+      const parentTaskId = getTaskParentId(ev);
+      const hasSubtask = Number(subtaskCountByParentId.get(taskId) || 0) > 0;
+      const isStandaloneWithoutSub = !parentTaskId && !hasSubtask;
+      const isSubtask = Boolean(parentTaskId);
+      matchDisplayMode = isStandaloneWithoutSub || isSubtask;
+    }
+    let matchTaskTimeFilter = true;
+    if (taskTimeFilterWindow) {
+      const dueDate = parseTaskDueDate(ev?.endDate);
+      if (!dueDate) {
+        matchTaskTimeFilter = false;
+      } else {
+        matchTaskTimeFilter =
+          dueDate >= taskTimeFilterWindow.startDate && dueDate <= taskTimeFilterWindow.endDate;
+      }
+    }
+    return matchStatus && matchDept && matchAssignee && matchDisplayMode && matchTaskTimeFilter;
   });
 
   const handleStatusChange = (eventId, newStatus) => {
@@ -14151,6 +14260,259 @@ function ProjectDashboard({
     });
     return grouped;
   }, [filteredTasks]);
+  const parseWorkloadTaskDate = (dateInput) => parseTaskDueDate(dateInput);
+  const getWorkloadWeekStart = (dateInput) => {
+    const date = dateInput instanceof Date ? new Date(dateInput.getTime()) : new Date(dateInput);
+    if (Number.isNaN(date.getTime())) return null;
+    date.setHours(0, 0, 0, 0);
+    const day = date.getDay();
+    const offsetToMonday = day === 0 ? 6 : day - 1;
+    date.setDate(date.getDate() - offsetToMonday);
+    return date;
+  };
+  const addWorkloadDays = (dateInput, daysInput) => {
+    const date = dateInput instanceof Date ? new Date(dateInput.getTime()) : new Date(dateInput);
+    if (Number.isNaN(date.getTime())) return null;
+    date.setDate(date.getDate() + Number(daysInput || 0));
+    return date;
+  };
+  const getWorkloadIsoWeekNumber = (dateInput) => {
+    const date = dateInput instanceof Date ? new Date(dateInput.getTime()) : new Date(dateInput);
+    if (Number.isNaN(date.getTime())) return 0;
+    const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = utcDate.getUTCDay() || 7;
+    utcDate.setUTCDate(utcDate.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
+    return Math.ceil((((utcDate - yearStart) / 86400000) + 1) / 7);
+  };
+  const formatWorkloadShortDate = (dateInput) => {
+    const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+  const getWorkloadPrimaryMonthMeta = (weekStartInput) => {
+    const safeWeekStart =
+      weekStartInput instanceof Date ? new Date(weekStartInput.getTime()) : new Date(weekStartInput);
+    if (Number.isNaN(safeWeekStart.getTime())) {
+      const fallbackDate = new Date();
+      return {
+        monthKey: `${fallbackDate.getFullYear()}-${fallbackDate.getMonth()}`,
+        monthLabel: fallbackDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+      };
+    }
+    const monthCounts = new Map();
+    let primaryMonthKey = `${safeWeekStart.getFullYear()}-${safeWeekStart.getMonth()}`;
+    let primaryMonthCount = 0;
+    let primaryMonthDate = safeWeekStart;
+    for (let offset = 0; offset < 7; offset += 1) {
+      const currentDate = addWorkloadDays(safeWeekStart, offset) || safeWeekStart;
+      const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`;
+      const nextCount = Number(monthCounts.get(monthKey) || 0) + 1;
+      monthCounts.set(monthKey, nextCount);
+      if (nextCount > primaryMonthCount) {
+        primaryMonthCount = nextCount;
+        primaryMonthKey = monthKey;
+        primaryMonthDate = currentDate;
+      }
+    }
+    return {
+      monthKey: primaryMonthKey,
+      monthLabel: primaryMonthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+    };
+  };
+  const workloadWindow = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const currentWeekStart = getWorkloadWeekStart(today) || today;
+    const currentWeekEnd = addWorkloadDays(currentWeekStart, 6) || currentWeekStart;
+    const rangeMode = normalizeWorkloadRange(workloadRange);
+    let rangeEndDate = new Date(currentWeekEnd.getTime());
+    if (rangeMode === 'month') {
+      rangeEndDate = new Date(today.getFullYear(), today.getMonth() + 1, 0, 0, 0, 0, 0);
+    } else if (rangeMode === 'year') {
+      rangeEndDate = new Date(today.getFullYear(), 11, 31, 0, 0, 0, 0);
+    } else if (rangeMode === 'all') {
+      let maxFutureDate = null;
+      (Array.isArray(filteredTasks) ? filteredTasks : []).forEach((task) => {
+        const dueDate = parseWorkloadTaskDate(task?.endDate) || today;
+        const dueWeekStart = getWorkloadWeekStart(dueDate) || currentWeekStart;
+        if (dueWeekStart < currentWeekStart) return;
+        if (!maxFutureDate || dueDate > maxFutureDate) {
+          maxFutureDate = dueDate;
+        }
+      });
+      const minimumFutureRange = new Date(today.getFullYear(), today.getMonth() + 11, 31, 0, 0, 0, 0);
+      rangeEndDate =
+        maxFutureDate && maxFutureDate > minimumFutureRange ? maxFutureDate : minimumFutureRange;
+    }
+    const normalizedRangeEnd = new Date(
+      rangeEndDate.getFullYear(),
+      rangeEndDate.getMonth(),
+      rangeEndDate.getDate(),
+      0,
+      0,
+      0,
+      0
+    );
+    if (normalizedRangeEnd < currentWeekEnd) {
+      return {
+        today,
+        currentWeekStart,
+        rangeEndDate: currentWeekEnd,
+      };
+    }
+    return {
+      today,
+      currentWeekStart,
+      rangeEndDate: normalizedRangeEnd,
+    };
+  }, [filteredTasks, workloadRange]);
+  const workloadWeekColumns = useMemo(() => {
+    const columns = [];
+    const startWeek = workloadWindow.currentWeekStart;
+    const endWeekStart = getWorkloadWeekStart(workloadWindow.rangeEndDate) || startWeek;
+    let cursor = new Date(startWeek.getTime());
+    let guard = 0;
+    while (cursor <= endWeekStart && guard < 260) {
+      const weekStart = new Date(cursor.getTime());
+      const weekEnd = addWorkloadDays(weekStart, 6) || weekStart;
+      const primaryMonth = getWorkloadPrimaryMonthMeta(weekStart);
+      const weekNumber = getWorkloadIsoWeekNumber(weekStart);
+      columns.push({
+        key: toLocalDayKey(weekStart),
+        weekStart,
+        weekEnd,
+        monthKey: primaryMonth.monthKey,
+        monthLabel: primaryMonth.monthLabel,
+        label: `W${weekNumber} ${formatWorkloadShortDate(weekStart)} - ${formatWorkloadShortDate(weekEnd)}`,
+      });
+      cursor = addWorkloadDays(cursor, 7) || new Date(cursor.getTime() + 7 * 24 * 60 * 60 * 1000);
+      guard += 1;
+    }
+    if (columns.length === 0) {
+      const primaryMonth = getWorkloadPrimaryMonthMeta(startWeek);
+      columns.push({
+        key: toLocalDayKey(startWeek),
+        weekStart: startWeek,
+        weekEnd: addWorkloadDays(startWeek, 6) || startWeek,
+        monthKey: primaryMonth.monthKey,
+        monthLabel: primaryMonth.monthLabel,
+        label: `W${getWorkloadIsoWeekNumber(startWeek)} ${formatWorkloadShortDate(startWeek)}`,
+      });
+    }
+    return columns;
+  }, [workloadWindow]);
+  const workloadMonthHeader = useMemo(() => {
+    if (!Array.isArray(workloadWeekColumns) || workloadWeekColumns.length === 0) {
+      return { segments: [], totalDays: 0 };
+    }
+    const dayMs = 24 * 60 * 60 * 1000;
+    const firstWeek = workloadWeekColumns[0];
+    const lastWeek = workloadWeekColumns[workloadWeekColumns.length - 1];
+    const rangeStart = new Date(
+      firstWeek.weekStart.getFullYear(),
+      firstWeek.weekStart.getMonth(),
+      firstWeek.weekStart.getDate(),
+      0,
+      0,
+      0,
+      0
+    );
+    const rangeEnd = new Date(
+      lastWeek.weekEnd.getFullYear(),
+      lastWeek.weekEnd.getMonth(),
+      lastWeek.weekEnd.getDate(),
+      0,
+      0,
+      0,
+      0
+    );
+    const totalDays = Math.max(1, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / dayMs) + 1);
+    const segments = [];
+    let cursor = new Date(rangeStart.getTime());
+    let guard = 0;
+    while (cursor <= rangeEnd && guard < 120) {
+      const segmentStart = new Date(cursor.getTime());
+      const monthEnd = new Date(segmentStart.getFullYear(), segmentStart.getMonth() + 1, 0, 0, 0, 0, 0);
+      const segmentEnd = monthEnd < rangeEnd ? monthEnd : rangeEnd;
+      const daySpan = Math.max(1, Math.round((segmentEnd.getTime() - segmentStart.getTime()) / dayMs) + 1);
+      segments.push({
+        key: `${segmentStart.getFullYear()}-${segmentStart.getMonth()}`,
+        label: segmentStart.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+        daySpan,
+      });
+      cursor = addWorkloadDays(segmentEnd, 1) || new Date(segmentEnd.getTime() + dayMs);
+      guard += 1;
+    }
+    return { segments, totalDays };
+  }, [workloadWeekColumns]);
+  const workloadTasksWithMeta = useMemo(() => {
+    const weekKeySet = new Set(workloadWeekColumns.map((column) => column.key));
+    const currentWeekStart = workloadWindow.currentWeekStart;
+    const today = workloadWindow.today;
+    return (Array.isArray(filteredTasks) ? filteredTasks : [])
+      .map((task) => {
+        const dueDate = parseWorkloadTaskDate(task?.endDate) || today;
+        const weekStart = getWorkloadWeekStart(dueDate) || currentWeekStart;
+        return {
+          task,
+          dueDate,
+          weekStart,
+          weekKey: toLocalDayKey(weekStart),
+        };
+      })
+      .filter((entry) => entry.weekStart >= currentWeekStart && weekKeySet.has(entry.weekKey))
+      .sort((left, right) => {
+        const timeDiff = left.dueDate.getTime() - right.dueDate.getTime();
+        if (timeDiff !== 0) return timeDiff;
+        return String(left.task?.title || '').localeCompare(String(right.task?.title || ''), undefined, {
+          sensitivity: 'base',
+        });
+      });
+  }, [filteredTasks, workloadWeekColumns, workloadWindow]);
+  const workloadMemberRows = useMemo(() => {
+    const sortedMembers = [...teamMembers].sort((left, right) =>
+      String(left.name || '').localeCompare(String(right.name || ''), undefined, {
+        sensitivity: 'base',
+      })
+    );
+    const rows = sortedMembers.map((member) => ({
+      member,
+      taskCount: 0,
+      tasksByWeek: {},
+    }));
+    const rowByMemberId = new Map(rows.map((row) => [String(row.member?.id || '').trim(), row]));
+    workloadTasksWithMeta.forEach((entry) => {
+      const assigneeIds = normalizeTaskAssigneeIds(entry.task);
+      assigneeIds.forEach((assigneeId) => {
+        const row = rowByMemberId.get(String(assigneeId || '').trim());
+        if (!row) return;
+        if (!Array.isArray(row.tasksByWeek[entry.weekKey])) {
+          row.tasksByWeek[entry.weekKey] = [];
+        }
+        row.tasksByWeek[entry.weekKey].push(entry.task);
+        row.taskCount += 1;
+      });
+    });
+    return rows;
+  }, [teamMembers, workloadTasksWithMeta]);
+  const getWorkloadTaskChipStyle = useCallback(
+    (taskInput) => {
+      const safeDepartment = String(taskInput?.department || '').trim();
+      const departmentColorHex = safeDepartment
+        ? resolveDepartmentColorHex(projectDepartmentColors, safeDepartment, '#3b82f6')
+        : '#64748b';
+      return {
+        borderColor: toRgba(departmentColorHex, 0.46),
+        color: departmentColorHex,
+        backgroundColor: toRgba(departmentColorHex, 0.1),
+      };
+    },
+    [projectDepartmentColors]
+  );
   const handleTaskDragStart = (taskId, event) => {
     const normalizedTaskId = String(taskId || '').trim();
     if (!normalizedTaskId) return;
@@ -14258,15 +14620,18 @@ function ProjectDashboard({
   );
 
   const openTaskDetail = (task) => {
+    setShowFilterPopup(false);
     setPaneTask(task);
     setIsPaneOpen(true);
   };
 
   const openAddTask = () => {
+    setShowFilterPopup(false);
     setPaneTask(null);
     setIsPaneOpen(true);
   };
   const openAddSubtask = (parentTaskInput) => {
+    setShowFilterPopup(false);
     const parentTask = parentTaskInput && typeof parentTaskInput === 'object' ? parentTaskInput : null;
     const parentTaskId = String(parentTask?.id || '').trim();
     if (!parentTaskId) return;
@@ -14766,11 +15131,12 @@ function ProjectDashboard({
                 
                 {/* Controls: Filter & View Toggle */}
                 <div className="flex items-center md:justify-between gap-2 md:gap-4 bg-gray-50 p-2 md:p-4 rounded-xl border border-gray-200">
-                  <div className="relative shrink-0">
-                    <button 
-                      onClick={() => setShowFilterPopup(!showFilterPopup)}
-                      className="relative h-10 w-10 md:h-auto md:w-auto flex items-center justify-center md:justify-start gap-2 bg-white border border-gray-300 hover:bg-gray-50 px-0 md:px-4 md:py-2 rounded-lg text-sm font-medium text-gray-700 transition-colors shadow-sm shrink-0 [&>span:first-of-type]:hidden md:[&>span:first-of-type]:inline"
-                    >
+	                  <div className="flex items-center gap-2 shrink-0 relative">
+                      <div className="relative shrink-0">
+	                    <button 
+	                      onClick={() => setShowFilterPopup(!showFilterPopup)}
+	                      className="relative h-10 w-10 md:h-auto md:w-auto flex items-center justify-center md:justify-start gap-2 bg-white border border-gray-300 hover:bg-gray-50 px-0 md:px-4 md:py-2 rounded-lg text-sm font-medium text-gray-700 transition-colors shadow-sm shrink-0 [&>span:first-of-type]:hidden md:[&>span:first-of-type]:inline"
+	                    >
                       <Filter className="w-4 h-4 text-gray-500" />
                       <span>ฟิลเตอร์</span>
                       {isTaskFilterActive && (
@@ -14778,13 +15144,13 @@ function ProjectDashboard({
                       )}
                     </button>
                     
-                    {/* Filter Popup */}
-                    {showFilterPopup && (
-                      <div className="absolute top-full left-0 mt-2 w-[min(18rem,calc(100vw-2.5rem))] md:w-72 bg-white border border-gray-200 shadow-xl rounded-xl p-4 z-20">
-                        <div className="flex justify-between items-center mb-4">
-                          <h4 className="font-semibold text-gray-800">ตั้งค่าฟิลเตอร์</h4>
-                          <button onClick={() => setShowFilterPopup(false)} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
-                        </div>
+	                    {/* Filter Popup */}
+	                    {showFilterPopup && (
+	                      <div className="absolute top-full left-0 mt-2 w-[min(18rem,calc(100vw-2.5rem))] md:w-72 bg-white border border-gray-200 shadow-xl rounded-xl p-4 z-[130]">
+	                        <div className="flex justify-between items-center mb-4">
+	                          <h4 className="font-semibold text-gray-800">ตั้งค่าฟิลเตอร์</h4>
+	                          <button onClick={() => setShowFilterPopup(false)} className="text-gray-400 hover:text-gray-600"><X className="w-4 h-4" /></button>
+	                        </div>
                         <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
                           {/* Status Filter */}
                           <div>
@@ -14832,10 +15198,10 @@ function ProjectDashboard({
                           
                           <div className="h-px bg-gray-100 w-full"></div>
 
-                          {/* Assignee Filter */}
-                          <div>
-                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">Assignee</label>
-                            <div className="space-y-1">
+	                          {/* Assignee Filter */}
+	                          <div>
+	                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">Assignee</label>
+	                            <div className="space-y-1">
                               {sortedTaskFilterMembers.map((member) => {
                                 const checked = normalizedTaskAssigneeFilters.includes(member.id);
                                 return (
@@ -14862,52 +15228,131 @@ function ProjectDashboard({
                               {sortedTaskFilterMembers.length === 0 && (
                                 <p className="text-xs text-gray-400 px-1.5 py-1">No members in project</p>
                               )}
-                            </div>
-                          </div>
+	                            </div>
+	                          </div>
+	                          
+	                          <div className="h-px bg-gray-100 w-full"></div>
 
-                          <div className="pt-3 border-t border-gray-100 flex justify-end">
-                            <button 
-                              onClick={() => {
-                                setStatusFilter([]);
-                                setDeptFilter([]);
-                                setAssigneeFilterIds([]);
-                              }}
+	                          {/* Display Mode Filter */}
+		                          <div>
+		                            <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">การแสดงผล Task</label>
+		                            <div className="space-y-1">
+	                              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 p-1.5 rounded-md transition-colors">
+	                                <input
+	                                  type="radio"
+	                                  name="task-display-filter-mode"
+	                                  checked={taskDisplayFilterMode === 'all'}
+	                                  onChange={() => setTaskDisplayFilterMode('all')}
+	                                  className="text-blue-600 focus:ring-blue-500 w-4 h-4 border-gray-300 cursor-pointer"
+	                                />
+	                                Task ทั้งหมด
+	                              </label>
+	                              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 p-1.5 rounded-md transition-colors">
+	                                <input
+	                                  type="radio"
+	                                  name="task-display-filter-mode"
+	                                  checked={taskDisplayFilterMode === 'standalone_and_subtask'}
+	                                  onChange={() => setTaskDisplayFilterMode('standalone_and_subtask')}
+	                                  className="text-blue-600 focus:ring-blue-500 w-4 h-4 border-gray-300 cursor-pointer"
+	                                />
+	                                เฉพาะ Task ไม่มี Sub + Subtask
+		                              </label>
+		                            </div>
+		                          </div>
+
+                              <div className="h-px bg-gray-100 w-full"></div>
+
+                              <div>
+                                <label className="text-[11px] font-bold text-gray-500 mb-2 block uppercase tracking-wider">
+                                  แสดง Task ตามเวลา
+                                </label>
+                                <div className="space-y-1">
+                                  {TASK_TIME_FILTER_OPTIONS.map((option) => (
+                                    <label
+                                      key={`task-time-filter-${option.id}`}
+                                      className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 p-1.5 rounded-md transition-colors"
+                                    >
+                                      <input
+                                        type="radio"
+                                        name="task-time-filter-mode"
+                                        checked={normalizeTaskTimeFilter(taskTimeFilter) === option.id}
+                                        onChange={() => setTaskTimeFilter(option.id)}
+                                        className="text-blue-600 focus:ring-blue-500 w-4 h-4 border-gray-300 cursor-pointer"
+                                      />
+                                      {option.label}
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+
+		                          <div className="pt-3 border-t border-gray-100 flex justify-end">
+			                            <button 
+			                              onClick={() => {
+			                                setStatusFilter([]);
+			                                setDeptFilter([]);
+			                                setAssigneeFilterIds([]);
+                                  setTaskDisplayFilterMode('all');
+                                  setTaskTimeFilter(DEFAULT_TASK_TIME_FILTER);
+                                  setWorkloadRange(DEFAULT_WORKLOAD_RANGE);
+			                              }}
                               className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                               disabled={!isTaskFilterActive}
                             >
                               ล้างฟิลเตอร์ทั้งหมด
                             </button>
                           </div>
-                        </div>
-                      </div>
-                    )}
+	                        </div>
+	                      </div>
+	                    )}
+	                  </div>
+                    <div className="relative shrink-0">
+                      <select
+                        value={normalizeWorkloadRange(workloadRange)}
+                        onChange={(event) => setWorkloadRange(normalizeWorkloadRange(event.target.value))}
+                        className="h-10 md:h-auto appearance-none bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 md:px-3.5 py-2 rounded-lg text-xs md:text-sm font-medium pr-8 shadow-sm outline-none"
+                        title="Work load range"
+                      >
+                        {WORKLOAD_RANGE_OPTIONS.map((option) => (
+                          <option key={`workload-range-outside-${option.id}`} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    </div>
                   </div>
                   
-	                  <div className="flex items-center gap-2 md:gap-3 shrink-0 md:ml-auto">
-		                    <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm shrink-0">
-		                      <button
-		                        onClick={() => setTaskView('board')}
-		                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'board' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-		                      >
-		                        <Layers className="w-4 h-4" /> Board
+		                  <div className="flex items-center gap-2 md:gap-3 shrink-0 md:ml-auto">
+			                    <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm shrink-0">
+			                      <button
+			                        onClick={() => setTaskView('board')}
+			                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'board' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+			                      >
+			                        <Layers className="w-4 h-4" /> Board
+			                      </button>
+			                      <button
+			                        onClick={() => setTaskView('workload')}
+			                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'workload' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+			                      >
+			                        <Users className="w-4 h-4" /> Work load
+			                      </button>
+			                      <button 
+			                        onClick={() => setTaskView('gallery')}
+			                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'gallery' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+			                      >
+			                        <LayoutGrid className="w-4 h-4" /> Gallery
 		                      </button>
-		                      <button 
-		                        onClick={() => setTaskView('gallery')}
-		                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'gallery' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-		                      >
-		                        <LayoutGrid className="w-4 h-4" /> Gallery
-		                      </button>
-		                      <button 
-		                        onClick={() => setTaskView('table')}
-		                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'table' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-		                      >
-		                        <AlignLeft className="w-4 h-4" /> Table
-	                      </button>
-	                    </div>
-                    
-                    {/* Production Ready "Add Task" Button */}
-                    <button 
-                      onClick={openAddTask}
+			                      <button 
+			                        onClick={() => setTaskView('table')}
+			                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'table' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+			                      >
+				                        <AlignLeft className="w-4 h-4" /> Table
+			                      </button>
+			                    </div>
+	                    
+	                    {/* Production Ready "Add Task" Button */}
+	                    <button 
+	                      onClick={openAddTask}
                       className="h-10 w-10 md:h-auto md:w-auto bg-blue-600 hover:bg-blue-700 text-white px-0 md:px-4 md:py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors shadow-sm whitespace-nowrap shrink-0"
                     >
                       <Plus className="w-4 h-4" /> <span className="hidden md:inline">เพิ่ม Task</span>
@@ -14916,7 +15361,7 @@ function ProjectDashboard({
                 </div>
 
                 {/* View Content */}
-                {filteredTasks.length === 0 ? (
+                {taskView !== 'workload' && filteredTasks.length === 0 ? (
                   <div className="text-center py-16 text-gray-500 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50/50">
                     <CheckSquare className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                     <p className="font-medium text-lg">ไม่มีงานที่ตรงกับฟิลเตอร์ที่เลือก</p>
@@ -15154,6 +15599,136 @@ function ProjectDashboard({
 	                        </div>
 	                      </div>
 	                    )}
+
+	                    {/* --- Work load View --- */}
+	                    {taskView === 'workload' && (
+	                      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+	                        <div
+                            className="overflow-x-auto overflow-y-hidden [&::-webkit-scrollbar]:hidden"
+                            style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
+                          >
+	                          <table className="w-full min-w-[980px] border-separate border-spacing-0 text-sm">
+	                            <thead>
+		                              <tr>
+		                                <th
+		                                  rowSpan={2}
+		                                  className="sticky left-0 z-10 bg-white border-r border-b border-gray-200 px-3 py-3 text-center align-middle w-[168px] min-w-[168px] max-w-[168px]"
+		                                >
+		                                  <span className="block text-xs font-semibold uppercase tracking-wider text-gray-500 text-center">
+		                                    Team Members
+		                                  </span>
+	                                </th>
+                                <th
+                                  colSpan={Math.max(1, workloadWeekColumns.length)}
+                                  className="border-b border-gray-200 bg-gray-50/70 p-0"
+                                >
+                                  <div className="flex w-full">
+                                    {(Array.isArray(workloadMonthHeader.segments)
+                                      ? workloadMonthHeader.segments
+                                      : []
+                                    ).map((segment, segmentIndex, segmentArray) => (
+                                      <div
+                                        key={`workload-month-segment-${segment.key}-${segmentIndex}`}
+                                        className={`py-2 text-center text-sm font-semibold text-gray-700 ${
+                                          segmentIndex < segmentArray.length - 1
+                                            ? 'border-r border-r-gray-300'
+                                            : ''
+                                        }`}
+                                        style={{
+                                          width: `${(Number(segment.daySpan || 0) / Math.max(1, Number(workloadMonthHeader.totalDays || 1))) * 100}%`,
+                                        }}
+                                      >
+                                        {segment.label}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </th>
+	                              </tr>
+	                              <tr>
+	                                {workloadWeekColumns.map((column) => (
+	                                  <th
+	                                    key={`workload-week-${column.key}`}
+	                                    className="min-w-[190px] border-b border-r border-gray-200 bg-gray-50/70 px-2 py-2 text-center text-[11px] font-medium text-gray-600"
+	                                  >
+	                                    {column.label}
+	                                  </th>
+	                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {workloadMemberRows.length === 0 ? (
+                                <tr>
+                                  <td
+                                    colSpan={Math.max(2, workloadWeekColumns.length + 1)}
+                                    className="px-4 py-8 text-center text-sm text-gray-400"
+                                  >
+                                    No members in this project
+                                  </td>
+                                </tr>
+		                              ) : (
+		                                workloadMemberRows.map((row) => (
+		                                  <tr key={`workload-member-row-${row.member.id}`}>
+			                                    <td className="sticky left-0 z-[5] bg-white border-r border-b border-gray-200 px-2.5 py-2.5 align-middle w-[168px] min-w-[168px] max-w-[168px]">
+		                                      <div className="flex items-center gap-2.5">
+		                                        <UserAvatar
+		                                          user={row.member}
+		                                          sizeClass="w-7 h-7"
+	                                          textClass="text-[10px]"
+	                                          ringClass="ring-2 ring-white shadow-sm"
+	                                        />
+		                                        <div className="min-w-0">
+		                                          <p className="text-sm font-medium text-gray-800 truncate">
+		                                            {row.member.name}
+		                                          </p>
+		                                          <p className="text-sm font-semibold text-gray-500 truncate">
+		                                            {row.taskCount} Task{row.taskCount === 1 ? '' : 's'}
+		                                          </p>
+		                                        </div>
+                                      </div>
+                                    </td>
+                                    {workloadWeekColumns.map((column) => {
+                                      const cellTasks = Array.isArray(row.tasksByWeek[column.key])
+                                        ? row.tasksByWeek[column.key]
+                                        : [];
+	                                      return (
+	                                        <td
+	                                          key={`workload-cell-${row.member.id}-${column.key}`}
+	                                          className="align-top border-r border-b border-gray-200 p-2 min-h-[72px]"
+	                                        >
+                                          {cellTasks.length === 0 ? (
+                                            <div className="h-6" />
+                                          ) : (
+                                            <div className="space-y-1.5">
+                                              {cellTasks.map((task) => (
+                                                <button
+                                                  key={`workload-task-${row.member.id}-${column.key}-${task.id}`}
+                                                  type="button"
+                                                  onClick={() => openTaskDetail(task)}
+                                                  className="w-full text-left text-[11px] truncate px-2 h-6 rounded-md border shadow-sm flex items-center hover:opacity-85 transition-opacity"
+                                                  style={getWorkloadTaskChipStyle(task)}
+                                                  title={String(task?.title || '').trim()}
+                                                >
+                                                  {String(task?.title || '').trim() || 'Untitled task'}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                        {workloadTasksWithMeta.length === 0 && (
+                          <div className="border-t border-gray-200 px-4 py-3 text-xs text-gray-500">
+                            ไม่มี Task ในช่วงเวลาที่เลือก (เริ่มแสดงตั้งแต่สัปดาห์ปัจจุบันเท่านั้น)
+                          </div>
+                        )}
+                      </div>
+                    )}
 
 	                    {/* --- Gallery View --- */}
 		                    {taskView === 'gallery' && (
