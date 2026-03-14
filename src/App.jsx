@@ -10989,6 +10989,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                             onEventClick={handleEventClick}
                             hidePastWeeks={hidePastWeeks}
                             currentWeekStart={currentWeekStart}
+                            calendarColumnCount={1}
                           />
                         </div>
                       ) : effectiveMergeView ? (
@@ -11005,6 +11006,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                             onEventClick={handleEventClick}
                             hidePastWeeks={hidePastWeeks}
                             currentWeekStart={currentWeekStart}
+                            calendarColumnCount={1}
                           />
                         </div>
                       ) : (
@@ -11022,6 +11024,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                               onEventClick={handleEventClick}
                               hidePastWeeks={hidePastWeeks}
                               currentWeekStart={currentWeekStart}
+                              calendarColumnCount={visibleProjects.length}
                             />
                           </div>
                         ))
@@ -30782,6 +30785,7 @@ function MonthGrid({
   onEventClick,
   hidePastWeeks,
   currentWeekStart,
+  calendarColumnCount = 1,
 }) {
   const toDateStr = (date) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
@@ -30826,6 +30830,15 @@ function MonthGrid({
   };
   const dayQuickPanelRef = useRef(null);
   const [activeDayQuickPanelDate, setActiveDayQuickPanelDate] = useState('');
+  const normalizedCalendarColumnCount = Math.max(1, Number(calendarColumnCount) || 1);
+  const dayQuickPanelWidthPx =
+    normalizedCalendarColumnCount >= 4
+      ? 220
+      : normalizedCalendarColumnCount === 3
+        ? 250
+        : normalizedCalendarColumnCount === 2
+          ? 300
+          : 340;
   const dayEventsByDate = useMemo(() => {
     const mapped = {};
     (Array.isArray(events) ? events : []).forEach((event) => {
@@ -31090,6 +31103,7 @@ function MonthGrid({
                     Number(totalEventCountByDay?.[dayIndex] || 0) -
                       Number(visibleEventCountByDay?.[dayIndex] || 0)
                   );
+                  const dayQuickPanelAlignClass = dayIndex >= 4 ? 'right-1' : 'left-1';
 
 	                  return (
 	                    <div
@@ -31123,11 +31137,15 @@ function MonthGrid({
                         <div
                           ref={dayQuickPanelRef}
                           data-day-quick-panel="true"
-                          className="absolute left-1 right-1 top-5 z-30 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                          className={`absolute top-5 z-30 rounded-lg border border-gray-200 bg-white shadow-xl p-2 ${dayQuickPanelAlignClass}`}
+                          style={{
+                            width: `${dayQuickPanelWidthPx}px`,
+                            maxWidth: 'calc(100vw - 1rem)',
+                          }}
                           onClick={(event) => event.stopPropagation()}
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <p className="text-[11px] font-semibold text-gray-700">
+                            <p className="text-[11px] font-semibold text-gray-700 whitespace-nowrap">
                               {formatDayQuickPanelDateLabel(dayData.dateStr)}
                             </p>
                             <button
@@ -31137,7 +31155,7 @@ function MonthGrid({
                                 setActiveDayQuickPanelDate('');
                                 onDayClick(dayData.dateStr);
                               }}
-                              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 whitespace-nowrap shrink-0"
                             >
                               <Plus className="w-3 h-3" />
                               Add event
