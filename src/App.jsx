@@ -31052,12 +31052,6 @@ function MonthGrid({
 	          const rowMinHeight = 96;
 	          const maxVisibleLanes = 2;
 	          const visibleWeekSegments = weekSegments.filter((segment) => segment.lane < maxVisibleLanes);
-          const isDayQuickPanelOpenInCurrentWeek = Boolean(
-            String(activeDayQuickPanelDate || '').trim() &&
-              week.some(
-                (dayData) => !dayData.empty && dayData.dateStr === String(activeDayQuickPanelDate || '').trim()
-              )
-          );
           const totalEventCountByDay = Array.from({ length: 7 }, () => 0);
           const visibleEventCountByDay = Array.from({ length: 7 }, () => 0);
           weekSegments.forEach((segment) => {
@@ -31161,6 +31155,15 @@ function MonthGrid({
                                   allProjects[0];
                                 const itemColor =
                                   PROJECT_COLORS[itemProject?.colorIndex ?? 0] || PROJECT_COLORS[0];
+                                const isTaskItem =
+                                  String(eventItem?.recordType || '').trim().toLowerCase() === 'task';
+                                const itemDepartmentColorHex = isTaskItem
+                                  ? resolveDepartmentColorHex(
+                                      itemProject?.departmentColors,
+                                      eventItem?.department,
+                                      getProjectColorHexByIndex(itemProject?.colorIndex)
+                                    )
+                                  : '';
                                 const itemHasTime = shouldShowEventTime(eventItem);
                                 const itemStartTime = String(eventItem?.startTime || '').trim();
                                 const itemEndTime = String(eventItem?.endTime || '').trim();
@@ -31180,7 +31183,16 @@ function MonthGrid({
                                     className="w-full text-left rounded-md border border-gray-200 bg-gray-50 hover:bg-white hover:border-blue-200 px-2 py-1.5"
                                   >
                                     <div className="flex items-center gap-1.5 min-w-0">
-                                      <span className={`w-2 h-2 rounded-full shrink-0 ${itemColor.bg}`} />
+                                      {isTaskItem ? (
+                                        <span
+                                          className="w-2 h-2 rounded-full shrink-0 border border-white/70"
+                                          style={{
+                                            backgroundColor: itemDepartmentColorHex || '#94a3b8',
+                                          }}
+                                        />
+                                      ) : (
+                                        <span className={`w-2 h-2 rounded-full shrink-0 ${itemColor.bg}`} />
+                                      )}
                                       <p className="text-[11px] font-semibold text-gray-700 truncate">
                                         {String(eventItem?.title || '').trim() || 'Untitled event'}
                                       </p>
@@ -31198,7 +31210,7 @@ function MonthGrid({
 	                })}
 	              </div>
 
-	              {visibleWeekSegments.length > 0 && !isDayQuickPanelOpenInCurrentWeek && (
+	              {visibleWeekSegments.length > 0 && (
 	                <div className="pointer-events-none absolute left-0 right-0 top-6 px-[2px]">
 	                  {visibleWeekSegments.map((segment, segmentIndex) => {
 	                    const leftPercent = (segment.startIdx / 7) * 100;
