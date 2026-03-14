@@ -767,6 +767,9 @@ const SUPPORT_TICKET_STATUS_OPTIONS = [
 const SUPPORT_TICKET_MAX_ATTACHMENTS = 3;
 const SUPPORT_TICKET_MAX_ATTACHMENT_BYTES = 220000;
 const SUPPORT_TICKET_MAX_MESSAGE_LENGTH = 4000;
+const TASK_COMMENT_MAX_LENGTH = 2000;
+const TASK_ATTACHMENT_MAX_FILES = 6;
+const TASK_ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
 const PROFILE_ADMIN_ACTIVE_RANGE_OPTIONS = [
   { id: 'today', label: 'วันนี้' },
   { id: 'month', label: 'เดือนนี้' },
@@ -1456,6 +1459,110 @@ const normalizeTaskAssigneeIds = (taskInput) => {
     normalizedIds.unshift(fallbackSingle);
   }
   return Array.from(new Set(normalizedIds));
+};
+const normalizeTaskCommentEntry = (commentInput) => {
+  const comment =
+    commentInput && typeof commentInput === 'object' && !Array.isArray(commentInput)
+      ? commentInput
+      : {};
+  const text = String(comment.text || '').trim().slice(0, TASK_COMMENT_MAX_LENGTH);
+  if (!text) return null;
+  const createdAtRaw = String(comment.createdAt || '').trim();
+  const createdAt =
+    createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime())
+      ? createdAtRaw
+      : new Date().toISOString();
+  return {
+    id: String(comment.id || generateId()).trim() || generateId(),
+    userId: String(comment.userId || '').trim(),
+    username: String(comment.username || '').trim(),
+    userEmail: String(comment.userEmail || '').trim().toLowerCase(),
+    avatarUrl: String(comment.avatarUrl || '').trim(),
+    parentId: String(comment.parentId || '').trim(),
+    replyToCommentId: String(comment.replyToCommentId || '').trim(),
+    replyToUserId: String(comment.replyToUserId || '').trim(),
+    replyToUsername: String(comment.replyToUsername || '').trim(),
+    text,
+    createdAt,
+  };
+};
+const normalizeTaskCommentEntries = (commentsInput) =>
+  (Array.isArray(commentsInput) ? commentsInput : [])
+    .map((comment) => normalizeTaskCommentEntry(comment))
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftMs = Number(new Date(left.createdAt).getTime()) || 0;
+      const rightMs = Number(new Date(right.createdAt).getTime()) || 0;
+      if (leftMs !== rightMs) return leftMs - rightMs;
+      return String(left.id || '').localeCompare(String(right.id || ''), undefined, {
+        sensitivity: 'base',
+      });
+    });
+const buildTaskCommentDescendantIdSet = (commentsInput, rootCommentIdInput) => {
+  const comments = Array.isArray(commentsInput) ? commentsInput : [];
+  const rootCommentId = String(rootCommentIdInput || '').trim();
+  const idSet = new Set();
+  if (!rootCommentId) return idSet;
+  idSet.add(rootCommentId);
+  let hasNext = true;
+  while (hasNext) {
+    hasNext = false;
+    comments.forEach((comment) => {
+      const commentId = String(comment?.id || '').trim();
+      const parentId = String(comment?.parentId || '').trim();
+      if (!commentId || !parentId) return;
+      if (!idSet.has(parentId) || idSet.has(commentId)) return;
+      idSet.add(commentId);
+      hasNext = true;
+    });
+  }
+  return idSet;
+};
+const normalizeTaskAttachmentEntry = (attachmentInput) => {
+  const attachment =
+    attachmentInput && typeof attachmentInput === 'object' && !Array.isArray(attachmentInput)
+      ? attachmentInput
+      : {};
+  const dataUrl = String(attachment.dataUrl || '').trim();
+  if (!dataUrl) return null;
+  const name = String(attachment.name || 'attachment').trim() || 'attachment';
+  const mimeType = String(attachment.mimeType || '').trim();
+  const sizeRaw = Number(attachment.size);
+  const createdAtRaw = String(attachment.createdAt || '').trim();
+  const createdAt =
+    createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime())
+      ? createdAtRaw
+      : new Date().toISOString();
+  return {
+    id: String(attachment.id || generateId()).trim() || generateId(),
+    name: name.slice(0, 180),
+    mimeType,
+    size: Number.isFinite(sizeRaw) && sizeRaw > 0 ? Math.round(sizeRaw) : 0,
+    dataUrl,
+    uploadedById: String(attachment.uploadedById || '').trim(),
+    uploadedByUsername: String(attachment.uploadedByUsername || '').trim(),
+    uploadedByAvatarUrl: String(attachment.uploadedByAvatarUrl || '').trim(),
+    createdAt,
+  };
+};
+const normalizeTaskAttachmentEntries = (attachmentsInput) =>
+  (Array.isArray(attachmentsInput) ? attachmentsInput : [])
+    .map((attachment) => normalizeTaskAttachmentEntry(attachment))
+    .filter(Boolean)
+    .sort((left, right) => {
+      const leftMs = Number(new Date(left.createdAt).getTime()) || 0;
+      const rightMs = Number(new Date(right.createdAt).getTime()) || 0;
+      if (leftMs !== rightMs) return rightMs - leftMs;
+      return String(left.id || '').localeCompare(String(right.id || ''), undefined, {
+        sensitivity: 'base',
+      });
+    });
+const formatTaskAttachmentSize = (sizeInput) => {
+  const size = Number(sizeInput);
+  if (!Number.isFinite(size) || size <= 0) return '-';
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+  if (size >= 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+  return `${Math.round(size)} B`;
 };
 const resolveTaskDepartmentsFromAssignees = (
   assigneeIdsInput,
@@ -8698,6 +8805,16 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!normalizedProjectId) return;
     const nowIso = new Date().toISOString();
     const normalizedAssigneeIds = normalizeTaskAssigneeIds(taskData);
+    const hasCommentsField =
+      taskData &&
+      typeof taskData === 'object' &&
+      !Array.isArray(taskData) &&
+      Object.prototype.hasOwnProperty.call(taskData, 'comments');
+    const hasAttachmentsField =
+      taskData &&
+      typeof taskData === 'object' &&
+      !Array.isArray(taskData) &&
+      Object.prototype.hasOwnProperty.call(taskData, 'attachments');
     const normalizedTaskData = {
       ...(taskData && typeof taskData === 'object' ? taskData : {}),
       assigneeIds: normalizedAssigneeIds,
@@ -8706,6 +8823,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       createdAt: String(taskData?.createdAt || '').trim() || nowIso,
       updatedAt: nowIso,
     };
+    if (hasCommentsField) {
+      normalizedTaskData.comments = normalizeTaskCommentEntries(taskData.comments);
+    }
+    if (hasAttachmentsField) {
+      normalizedTaskData.attachments = normalizeTaskAttachmentEntries(taskData.attachments);
+    }
     const isUpdate = Boolean(taskData?.id);
     const localTaskId = isUpdate ? String(taskData.id || '').trim() : generateId();
     const localTaskProjectId = normalizedProjectId;
@@ -12525,7 +12648,15 @@ function ProjectDashboard({
     currentUserId: currentUser.id,
     projectOwnerId: project.ownerId,
   });
-  const initialTaskView = initialNotesPreferences.taskView === 'table' ? 'table' : 'gallery';
+  const normalizeTaskViewMode = (value) =>
+    String(value || '').trim().toLowerCase() === 'table'
+      ? 'table'
+      : String(value || '').trim().toLowerCase() === 'gallery'
+        ? 'gallery'
+        : String(value || '').trim().toLowerCase() === 'board'
+          ? 'board'
+          : 'board';
+  const initialTaskView = normalizeTaskViewMode(initialNotesPreferences.taskView);
   const [noteSection, setNoteSection] = useState(
     initialNotesPreferences.section === 'member' ? 'member' : 'department'
   ); // 'department' | 'member'
@@ -12700,7 +12831,7 @@ function ProjectDashboard({
     );
     const nextSidebarCollapsed = Boolean(nextNotesPreferences.fullSidebarCollapsed);
     const nextFullEditorOpen = Boolean(nextNotesPreferences.fullEditorOpen);
-    const nextTaskView = nextNotesPreferences.taskView === 'table' ? 'table' : 'gallery';
+    const nextTaskView = normalizeTaskViewMode(nextNotesPreferences.taskView);
 
     setNoteSection((prev) => (prev === nextNoteSection ? prev : nextNoteSection));
     setSelectedDepartmentNoteId((prev) => (prev === nextDepartmentNoteId ? prev : nextDepartmentNoteId));
@@ -13496,6 +13627,10 @@ function ProjectDashboard({
 
   // --- Task Management View Logic ---
   const TASK_STATUSES = ['To Do', 'In Progress', 'Review', 'Done'];
+  const normalizeTaskStatus = (value) => {
+    const status = String(value || '').trim();
+    return TASK_STATUSES.includes(status) ? status : 'To Do';
+  };
   const DEPARTMENTS = useMemo(
     () =>
       normalizeDepartments([
@@ -13737,7 +13872,7 @@ function ProjectDashboard({
     );
     const currentSidebarCollapsed = Boolean(currentNotesPreferences.fullSidebarCollapsed);
     const currentFullEditorOpen = Boolean(currentNotesPreferences.fullEditorOpen);
-    const currentTaskView = currentNotesPreferences.taskView === 'table' ? 'table' : 'gallery';
+    const currentTaskView = normalizeTaskViewMode(currentNotesPreferences.taskView);
 
     const hasChanges =
       currentNoteSection !== noteSection ||
@@ -13874,6 +14009,8 @@ function ProjectDashboard({
   const [assigneeFilterIds, setAssigneeFilterIds] = useState(defaultTaskAssigneeFilterIds);
   const [showFilterPopup, setShowFilterPopup] = useState(false);
   const [activeProjectLogMenuEntryId, setActiveProjectLogMenuEntryId] = useState('');
+  const [draggingTaskId, setDraggingTaskId] = useState('');
+  const [dragOverStatus, setDragOverStatus] = useState('');
   
   // Slide-over Pane State
   const [paneTask, setPaneTask] = useState(null);
@@ -13882,6 +14019,23 @@ function ProjectDashboard({
   useEffect(() => {
     setAssigneeFilterIds(defaultTaskAssigneeFilterIds);
   }, [project.id, defaultTaskAssigneeFilterIds]);
+  useEffect(() => {
+    if (!isPaneOpen) return;
+    const paneTaskId = String(paneTask?.id || '').trim();
+    if (!paneTaskId) return;
+    const latestTask =
+      (Array.isArray(events) ? events : []).find(
+        (event) => String(event?.id || '').trim() === paneTaskId
+      ) || null;
+    if (!latestTask) {
+      setPaneTask(null);
+      setIsPaneOpen(false);
+      return;
+    }
+    if (!isJsonEqual(paneTask, latestTask)) {
+      setPaneTask(latestTask);
+    }
+  }, [events, isPaneOpen, paneTask]);
 
   const normalizedTaskAssigneeFilters = normalizeTaskAssigneeIds({
     assigneeIds: assigneeFilterIds,
@@ -13906,7 +14060,8 @@ function ProjectDashboard({
           typeof ev.hasExplicitStartDate === 'boolean' ||
           typeof ev.hasExplicitStartTime === 'boolean'));
     if (!isTaskRecord) return false;
-    const matchStatus = statusFilter.length === 0 || statusFilter.includes(ev.status || 'To Do');
+    const normalizedStatus = normalizeTaskStatus(ev.status);
+    const matchStatus = statusFilter.length === 0 || statusFilter.includes(normalizedStatus);
     const matchDept = deptFilter.length === 0 || deptFilter.includes(ev.department || 'Unassigned');
     const eventAssigneeIds = normalizeTaskAssigneeIds(ev);
     const matchAssignee =
@@ -13917,8 +14072,73 @@ function ProjectDashboard({
 
   const handleStatusChange = (eventId, newStatus) => {
     if (onUpdateEvent) {
-      onUpdateEvent(eventId, { status: newStatus });
+      onUpdateEvent(eventId, { status: normalizeTaskStatus(newStatus) });
     }
+  };
+  const filteredTaskById = useMemo(
+    () =>
+      new Map(
+        (Array.isArray(filteredTasks) ? filteredTasks : []).map((task) => [String(task?.id || '').trim(), task])
+      ),
+    [filteredTasks]
+  );
+  const tasksByStatus = useMemo(() => {
+    const grouped = Object.fromEntries(TASK_STATUSES.map((status) => [status, []]));
+    (Array.isArray(filteredTasks) ? filteredTasks : []).forEach((task) => {
+      const status = normalizeTaskStatus(task?.status);
+      grouped[status].push(task);
+    });
+    TASK_STATUSES.forEach((status) => {
+      grouped[status].sort((left, right) =>
+        String(left?.title || '').localeCompare(String(right?.title || ''), undefined, {
+          sensitivity: 'base',
+        })
+      );
+    });
+    return grouped;
+  }, [filteredTasks]);
+  const handleTaskDragStart = (taskId, event) => {
+    const normalizedTaskId = String(taskId || '').trim();
+    if (!normalizedTaskId) return;
+    setDraggingTaskId(normalizedTaskId);
+    const transfer = event?.dataTransfer;
+    if (transfer) {
+      transfer.effectAllowed = 'move';
+      transfer.setData('text/plain', normalizedTaskId);
+      transfer.setData('application/x-pm-task-id', normalizedTaskId);
+    }
+  };
+  const handleTaskDragEnd = () => {
+    setDraggingTaskId('');
+    setDragOverStatus('');
+  };
+  useEffect(() => {
+    const clearTaskDragState = () => {
+      setDraggingTaskId('');
+      setDragOverStatus('');
+    };
+    window.addEventListener('dragend', clearTaskDragState);
+    window.addEventListener('drop', clearTaskDragState);
+    return () => {
+      window.removeEventListener('dragend', clearTaskDragState);
+      window.removeEventListener('drop', clearTaskDragState);
+    };
+  }, []);
+  const handleTaskDropToStatus = (statusInput, event) => {
+    event?.preventDefault?.();
+    const targetStatus = normalizeTaskStatus(statusInput);
+    const transfer = event?.dataTransfer;
+    const droppedTaskId =
+      String(transfer?.getData('application/x-pm-task-id') || '').trim() ||
+      String(transfer?.getData('text/plain') || '').trim() ||
+      String(draggingTaskId || '').trim();
+    setDragOverStatus('');
+    if (!droppedTaskId) return;
+    const task = filteredTaskById.get(droppedTaskId);
+    if (!task) return;
+    const currentStatus = normalizeTaskStatus(task.status);
+    if (currentStatus === targetStatus) return;
+    handleStatusChange(droppedTaskId, targetStatus);
   };
 
   const getAssignee = (id) =>
@@ -13956,6 +14176,32 @@ function ProjectDashboard({
     if (!assigneeIds.length) return [getAssignee('')];
     return assigneeIds.map((assigneeId) => getAssignee(assigneeId));
   };
+  const handlePatchTask = useCallback(
+    (taskIdInput, patchInput) => {
+      const taskId = String(taskIdInput || '').trim();
+      if (!taskId || typeof onUpdateEvent !== 'function') return;
+      const patch =
+        patchInput && typeof patchInput === 'object' && !Array.isArray(patchInput)
+          ? { ...patchInput }
+          : {};
+      if (Object.prototype.hasOwnProperty.call(patch, 'comments')) {
+        patch.comments = normalizeTaskCommentEntries(patch.comments);
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'attachments')) {
+        patch.attachments = normalizeTaskAttachmentEntries(patch.attachments);
+      }
+      if (Object.keys(patch).length === 0) return;
+      onUpdateEvent(taskId, patch);
+      setPaneTask((prevTask) => {
+        if (String(prevTask?.id || '').trim() !== taskId) return prevTask;
+        return {
+          ...(prevTask && typeof prevTask === 'object' ? prevTask : {}),
+          ...patch,
+        };
+      });
+    },
+    [onUpdateEvent]
+  );
 
   const openTaskDetail = (task) => {
     setPaneTask(task);
@@ -14555,18 +14801,24 @@ function ProjectDashboard({
                   </div>
                   
 	                  <div className="flex items-center gap-2 md:gap-3 shrink-0 md:ml-auto">
-	                    <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm shrink-0">
-	                      <button 
-	                        onClick={() => setTaskView('gallery')}
-	                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'gallery' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-	                      >
-	                        <LayoutGrid className="w-4 h-4" /> Gallery
-	                      </button>
-	                      <button 
-	                        onClick={() => setTaskView('table')}
-	                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'table' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-	                      >
-	                        <AlignLeft className="w-4 h-4" /> Table
+		                    <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm shrink-0">
+		                      <button
+		                        onClick={() => setTaskView('board')}
+		                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'board' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+		                      >
+		                        <Layers className="w-4 h-4" /> Board
+		                      </button>
+		                      <button 
+		                        onClick={() => setTaskView('gallery')}
+		                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'gallery' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+		                      >
+		                        <LayoutGrid className="w-4 h-4" /> Gallery
+		                      </button>
+		                      <button 
+		                        onClick={() => setTaskView('table')}
+		                        className={`px-2.5 md:px-3 py-1.5 text-xs md:text-sm font-medium rounded-md flex items-center gap-1.5 md:gap-2 transition-colors ${taskView === 'table' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+		                      >
+		                        <AlignLeft className="w-4 h-4" /> Table
 	                      </button>
 	                    </div>
                     
@@ -14674,10 +14926,126 @@ function ProjectDashboard({
                           </table>
                         </div>
                       </div>
-                    )}
+	                    )}
 
-                    {/* --- Gallery View --- */}
-	                    {taskView === 'gallery' && (
+	                    {/* --- Board View --- */}
+	                    {taskView === 'board' && (
+	                      <div className="overflow-x-auto pb-1">
+	                        <div className="min-w-[980px] grid grid-cols-4 gap-4">
+	                          {TASK_STATUSES.map((status) => {
+	                            const columnTasks = Array.isArray(tasksByStatus?.[status]) ? tasksByStatus[status] : [];
+	                            const isDropActive = dragOverStatus === status;
+	                            const statusToneClass =
+	                              status === 'Done'
+	                                ? 'bg-green-50 text-green-700 border-green-200'
+	                                : status === 'In Progress'
+	                                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+	                                  : status === 'Review'
+	                                    ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+	                                    : 'bg-gray-50 text-gray-700 border-gray-200';
+	                            return (
+		                              <section
+		                                key={`board-column-${status}`}
+		                                className="rounded-xl border border-gray-200 bg-white p-3"
+		                              >
+	                                <div className="flex items-center justify-between gap-2">
+	                                  <h4 className="text-sm font-semibold text-gray-800">{status}</h4>
+	                                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${statusToneClass}`}>
+	                                    {columnTasks.length}
+	                                  </span>
+	                                </div>
+	                                <div
+	                                  onDragOver={(event) => {
+	                                    event.preventDefault();
+	                                    setDragOverStatus(status);
+	                                    if (event.dataTransfer) {
+	                                      event.dataTransfer.dropEffect = 'move';
+	                                    }
+	                                  }}
+	                                  onDragLeave={() => setDragOverStatus((prev) => (prev === status ? '' : prev))}
+	                                  onDrop={(event) => handleTaskDropToStatus(status, event)}
+		                                  className={`mt-3 min-h-[360px] rounded-lg border border-dashed p-2 space-y-2 transition-colors ${
+		                                    isDropActive
+		                                      ? 'border-blue-300 bg-blue-50/60'
+		                                      : 'border-gray-200 bg-white'
+		                                  }`}
+		                                >
+	                                  {columnTasks.length === 0 ? (
+	                                    <div className="h-full min-h-[320px] flex items-center justify-center text-xs text-gray-400">
+	                                      ลากงานมาวางที่นี่
+	                                    </div>
+	                                  ) : (
+	                                    columnTasks.map((task) => {
+	                                      const taskAssignees = getTaskAssignees(task);
+	                                      const extraAssigneeCount = Math.max(0, taskAssignees.length - 3);
+	                                      return (
+	                                        <article
+	                                          key={task.id}
+	                                          draggable
+	                                          onDragStart={(event) => handleTaskDragStart(task.id, event)}
+	                                          onDragEnd={handleTaskDragEnd}
+	                                          onClick={() => openTaskDetail(task)}
+		                                          className={`rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition hover:shadow-md cursor-grab active:cursor-grabbing ${
+		                                            String(task.id || '').trim() === draggingTaskId
+		                                              ? 'ring-2 ring-blue-200 border-blue-300 shadow-md'
+		                                              : ''
+		                                          }`}
+		                                        >
+	                                          <div className="flex items-start justify-between gap-2">
+	                                            <h5 className="text-sm font-semibold text-gray-800 leading-snug line-clamp-2">
+	                                              {task.title}
+	                                            </h5>
+	                                            <span className="text-[10px] text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded shrink-0">
+	                                              {task.department || 'Unassigned'}
+	                                            </span>
+	                                          </div>
+	                                          <p className="mt-2 text-[11px] text-gray-500 flex items-center gap-1.5">
+	                                            <Clock className="w-3.5 h-3.5" />
+	                                            <span>{task.endDate || '-'}</span>
+	                                            {String(task.endTime || '').trim() ? (
+	                                              <span className="bg-gray-100 border border-gray-200 px-1 rounded">
+	                                                {task.endTime}
+	                                              </span>
+	                                            ) : null}
+	                                          </p>
+	                                          <div className="mt-3 flex items-center justify-between gap-2">
+	                                            <div className="flex -space-x-2">
+	                                              {taskAssignees.slice(0, 3).map((assignee, index) => (
+	                                                <span
+	                                                  key={`board-assignee-${task.id}-${assignee.id || assignee.name}-${index}`}
+	                                                >
+	                                                  <UserAvatar
+	                                                    user={assignee}
+	                                                    sizeClass="w-7 h-7"
+	                                                    textClass="text-[10px]"
+	                                                    ringClass="ring-2 ring-white shadow-sm"
+	                                                  />
+	                                                </span>
+	                                              ))}
+	                                              {extraAssigneeCount > 0 && (
+	                                                <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-gray-100 border border-gray-200 text-[10px] font-semibold text-gray-600 ring-2 ring-white shadow-sm">
+	                                                  +{extraAssigneeCount}
+	                                                </span>
+	                                              )}
+	                                            </div>
+	                                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusToneClass}`}>
+	                                              {normalizeTaskStatus(task.status)}
+	                                            </span>
+	                                          </div>
+	                                        </article>
+	                                      );
+	                                    })
+	                                  )}
+	                                </div>
+	                              </section>
+	                            );
+	                          })}
+	                        </div>
+	                      </div>
+	                    )}
+
+	                    {/* --- Gallery View --- */}
+		                    {taskView === 'gallery' && (
 	                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
 	                        {filteredTasks.map(task => {
 	                          const taskAssignees = getTaskAssignees(task);
@@ -15871,23 +16239,26 @@ function ProjectDashboard({
 	      )}
 
 	      {/* Slide-over Task Detail/Edit Pane */}
-      <TaskDetailPane 
-        isOpen={isPaneOpen} 
-        onClose={() => setIsPaneOpen(false)} 
-	        task={paneTask} 
-	        onSave={(data) => { onSaveTask(data); setIsPaneOpen(false); }}
-	        onDelete={async (id) => {
+	      <TaskDetailPane 
+	        isOpen={isPaneOpen} 
+	        onClose={() => setIsPaneOpen(false)} 
+		        task={paneTask} 
+		        onSave={(data) => { onSaveTask(data); setIsPaneOpen(false); }}
+		        onPatchTask={handlePatchTask}
+		        onDelete={async (id) => {
             const deleted = await onDeleteTask(id);
             if (deleted !== false) {
               setIsPaneOpen(false);
             }
           }}
-	        currentUserId={currentUser.id}
-	        teamMembers={teamMembers}
-	        TASK_STATUSES={TASK_STATUSES}
-	        DEPARTMENTS={DEPARTMENTS}
+		        currentUserId={currentUser.id}
+		        currentUserProfile={currentUser}
+		        isProjectHost={isProjectHost}
+		        teamMembers={teamMembers}
+		        TASK_STATUSES={TASK_STATUSES}
+		        DEPARTMENTS={DEPARTMENTS}
           departmentColors={projectDepartmentColors}
-      />
+	      />
 
       {isLineReminderGuidePopupOpen && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
@@ -16193,8 +16564,11 @@ function TaskDetailPane({
   onClose,
   task,
   onSave,
+  onPatchTask = null,
   onDelete,
   currentUserId = '',
+  currentUserProfile = null,
+  isProjectHost = false,
   teamMembers,
   TASK_STATUSES,
   DEPARTMENTS = [],
@@ -16216,6 +16590,11 @@ function TaskDetailPane({
   const [hasStartTime, setHasStartTime] = useState(false);
   const [endTime, setEndTime] = useState('');
   const [description, setDescription] = useState('');
+  const attachmentFileInputRef = useRef(null);
+  const [newCommentText, setNewCommentText] = useState('');
+  const [replyTargetCommentId, setReplyTargetCommentId] = useState('');
+  const [attachmentUploadIssues, setAttachmentUploadIssues] = useState([]);
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const resolveDepartmentForAssignees = (memberIds, fallback = 'Unassigned') =>
     resolveTaskDepartmentFromAssignees(memberIds, teamMembers, fallback);
   const getAssigneeById = (memberId) =>
@@ -16274,6 +16653,93 @@ function TaskDetailPane({
       ),
     [assigneeIds, teamMembers]
   );
+  const currentTaskComments = useMemo(
+    () => normalizeTaskCommentEntries(task?.comments),
+    [task?.comments]
+  );
+  const currentTaskAttachments = useMemo(
+    () => normalizeTaskAttachmentEntries(task?.attachments),
+    [task?.attachments]
+  );
+  const topLevelTaskComments = useMemo(
+    () =>
+      currentTaskComments.filter(
+        (comment) => !String(comment?.parentId || '').trim()
+      ),
+    [currentTaskComments]
+  );
+  const taskCommentRepliesByParentId = useMemo(() => {
+    const grouped = {};
+    currentTaskComments.forEach((comment) => {
+      const parentId = String(comment?.parentId || '').trim();
+      if (!parentId) return;
+      if (!grouped[parentId]) grouped[parentId] = [];
+      grouped[parentId].push(comment);
+    });
+    Object.keys(grouped).forEach((parentId) => {
+      grouped[parentId].sort((left, right) => {
+        const leftMs = Number(new Date(left.createdAt).getTime()) || 0;
+        const rightMs = Number(new Date(right.createdAt).getTime()) || 0;
+        if (leftMs !== rightMs) return leftMs - rightMs;
+        return String(left.id || '').localeCompare(String(right.id || ''), undefined, {
+          sensitivity: 'base',
+        });
+      });
+    });
+    return grouped;
+  }, [currentTaskComments]);
+  const taskCommentsById = useMemo(
+    () =>
+      new Map(
+        currentTaskComments.map((comment) => [String(comment?.id || '').trim(), comment])
+      ),
+    [currentTaskComments]
+  );
+  const currentTaskActor = useMemo(() => {
+    const currentUserFromTeam =
+      teamMembers.find(
+        (member) => String(member.id || '').trim() === String(currentUserId || '').trim()
+      ) || null;
+    if (currentUserFromTeam) return currentUserFromTeam;
+    const fallbackName =
+      String(currentUserProfile?.username || currentUserProfile?.name || '').trim() || 'Member';
+    return {
+      id: String(currentUserId || currentUserProfile?.id || '').trim(),
+      userId: String(currentUserId || currentUserProfile?.id || '').trim(),
+      username: String(currentUserProfile?.username || '').trim().toLowerCase(),
+      name: fallbackName,
+      email: String(currentUserProfile?.email || '').trim().toLowerCase(),
+      initials: getInitials(fallbackName),
+      color: 'bg-blue-500',
+      avatarUrl: String(currentUserProfile?.avatarUrl || '').trim(),
+      position: '',
+      role: '',
+      department: 'Unassigned',
+    };
+  }, [teamMembers, currentUserId, currentUserProfile]);
+  const currentActorUserId = String(
+    currentTaskActor?.userId || currentTaskActor?.id || currentUserId || currentUserProfile?.id || ''
+  ).trim();
+  const currentActorUsername = String(
+    currentTaskActor?.username || currentTaskActor?.name || currentUserProfile?.username || ''
+  )
+    .trim()
+    .toLowerCase();
+  const currentActorEmail = String(currentTaskActor?.email || currentUserProfile?.email || '')
+    .trim()
+    .toLowerCase();
+  const patchCurrentTask = useCallback(
+    (patchInput) => {
+      if (!task?.id || typeof onPatchTask !== 'function') return;
+      const patch =
+        patchInput && typeof patchInput === 'object' && !Array.isArray(patchInput)
+          ? patchInput
+          : {};
+      if (Object.keys(patch).length === 0) return;
+      onPatchTask(task.id, patch);
+    },
+    [task?.id, onPatchTask]
+  );
   const getDepartmentBadgeStyle = (departmentName) => {
     const safeDepartment = String(departmentName || '').trim() || 'Unassigned';
     if (safeDepartment.toLowerCase() === 'unassigned') {
@@ -16299,6 +16765,313 @@ function TaskDetailPane({
         return current.filter((id) => id !== normalizedId);
       }
       return [...current, normalizedId];
+    });
+  };
+  const handleSelectReplyTarget = (commentIdInput) => {
+    const commentId = String(commentIdInput || '').trim();
+    if (!commentId) {
+      setReplyTargetCommentId('');
+      return;
+    }
+    if (!taskCommentsById.has(commentId)) return;
+    setReplyTargetCommentId(commentId);
+  };
+  const clearReplyTarget = () => setReplyTargetCommentId('');
+  const activeReplyTargetComment =
+    replyTargetCommentId && taskCommentsById.has(replyTargetCommentId)
+      ? taskCommentsById.get(replyTargetCommentId)
+      : null;
+  const collectTaskCommentRecipients = (mode, replyTargetCommentInput = null) => {
+    const recipients = [];
+    if (mode === 'reply') {
+      const replyTarget = replyTargetCommentInput || null;
+      if (!replyTarget) return recipients;
+      const replyTargetUserId = String(replyTarget?.userId || '').trim();
+      const replyTargetUsername = String(replyTarget?.username || '').trim().toLowerCase();
+      const replyTargetEmail = String(replyTarget?.userEmail || '').trim().toLowerCase();
+      const matchedMember =
+        teamMembers.find(
+          (member) =>
+            (replyTargetUserId &&
+              String(member?.userId || member?.id || '')
+                .trim()
+                .toLowerCase() === replyTargetUserId.toLowerCase()) ||
+            (replyTargetUsername &&
+              String(member?.username || member?.name || '').trim().toLowerCase() ===
+                replyTargetUsername)
+        ) || null;
+      const resolvedUserId = String(matchedMember?.userId || matchedMember?.id || replyTargetUserId).trim();
+      const resolvedUsername = String(
+        matchedMember?.username || matchedMember?.name || replyTargetUsername
+      )
+        .trim()
+        .toLowerCase();
+      const resolvedEmail = String(matchedMember?.email || replyTargetEmail).trim().toLowerCase();
+      recipients.push({
+        userId: resolvedUserId,
+        username: resolvedUsername,
+        email: resolvedEmail,
+      });
+      return recipients;
+    }
+
+    const assigneeIds = normalizeTaskAssigneeIds(task);
+    assigneeIds.forEach((assigneeId) => {
+      const assignee = getAssigneeById(assigneeId);
+      if (!assignee) return;
+      recipients.push({
+        userId: String(assignee?.userId || assignee?.id || '').trim(),
+        username: String(assignee?.username || assignee?.name || '').trim().toLowerCase(),
+        email: String(assignee?.email || '').trim().toLowerCase(),
+      });
+    });
+    return recipients;
+  };
+  const sendTaskCommentEmailNotification = async ({
+    mode,
+    commentText,
+    commentId,
+    parentId = '',
+    replyToCommentId = '',
+    replyToUserId = '',
+    replyToUsername = '',
+    recipients = [],
+  }) => {
+    if (!AUTH_API_BASE_URL || !task?.id) return;
+    const payload = {
+      mode: String(mode || '').trim().toLowerCase() === 'reply' ? 'reply' : 'comment',
+      projectId: String(task?.projectId || '').trim(),
+      taskId: String(task?.id || '').trim(),
+      taskTitle: String(task?.title || title || '').trim() || 'Untitled task',
+      commentId: String(commentId || '').trim(),
+      parentId: String(parentId || '').trim(),
+      replyToCommentId: String(replyToCommentId || '').trim(),
+      replyToUserId: String(replyToUserId || '').trim(),
+      replyToUsername: String(replyToUsername || '').trim().toLowerCase(),
+      commentText: String(commentText || '').trim(),
+      actor: {
+        userId: currentActorUserId,
+        username: currentActorUsername,
+        email: currentActorEmail,
+      },
+      recipients: (Array.isArray(recipients) ? recipients : [])
+        .map((recipient) => ({
+          userId: String(recipient?.userId || '').trim(),
+          username: String(recipient?.username || '').trim().toLowerCase(),
+          email: String(recipient?.email || '').trim().toLowerCase(),
+        }))
+        .filter((recipient) => recipient.userId || recipient.username || recipient.email),
+    };
+    try {
+      await requestCloudDataApi('/task-comments/notify', {
+        method: 'POST',
+        body: payload,
+      });
+    } catch (error) {
+      void popup.alert({
+        title: 'Email notification failed',
+        message: error?.message || 'Could not send task comment notification email.',
+      });
+    }
+  };
+  const handleTaskCommentSubmit = () => {
+    const message = String(newCommentText || '').trim();
+    if (!message) return;
+    if (!task?.id) return;
+    const nowIso = new Date().toISOString();
+    const commentId = generateId();
+    const targetComment = activeReplyTargetComment || null;
+    const normalizedTargetParentId = String(targetComment?.parentId || '').trim();
+    const nextParentId = targetComment
+      ? normalizedTargetParentId || String(targetComment?.id || '').trim()
+      : '';
+    const nextReplyToCommentId = targetComment ? String(targetComment?.id || '').trim() : '';
+    const nextReplyToUserId = targetComment ? String(targetComment?.userId || '').trim() : '';
+    const nextReplyToUsername = targetComment
+      ? String(targetComment?.username || '').trim().toLowerCase()
+      : '';
+    const commentItem = {
+      id: commentId,
+      userId: currentActorUserId,
+      username: currentActorUsername || String(currentTaskActor?.name || 'member').trim().toLowerCase(),
+      userEmail: currentActorEmail,
+      avatarUrl: String(currentTaskActor?.avatarUrl || currentUserProfile?.avatarUrl || '').trim(),
+      parentId: nextParentId,
+      replyToCommentId: nextReplyToCommentId,
+      replyToUserId: nextReplyToUserId,
+      replyToUsername: nextReplyToUsername,
+      text: message.slice(0, TASK_COMMENT_MAX_LENGTH),
+      createdAt: nowIso,
+    };
+    const nextComments = normalizeTaskCommentEntries([...currentTaskComments, commentItem]);
+    patchCurrentTask({
+      comments: nextComments,
+    });
+    setNewCommentText('');
+    clearReplyTarget();
+    const notificationMode = nextParentId ? 'reply' : 'comment';
+    const recipients = collectTaskCommentRecipients(notificationMode, targetComment);
+    void sendTaskCommentEmailNotification({
+      mode: notificationMode,
+      commentText: commentItem.text,
+      commentId,
+      parentId: nextParentId,
+      replyToCommentId: nextReplyToCommentId,
+      replyToUserId: nextReplyToUserId,
+      replyToUsername: nextReplyToUsername,
+      recipients,
+    });
+  };
+  const handleTaskCommentKeyDown = (event) => {
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    event.preventDefault();
+    handleTaskCommentSubmit();
+  };
+  const handleDeleteTaskComment = async (commentIdInput) => {
+    const commentId = String(commentIdInput || '').trim();
+    if (!commentId) return;
+    const targetComment = taskCommentsById.get(commentId) || null;
+    if (!targetComment) return;
+    const ownerUserId = String(targetComment?.userId || '').trim();
+    const ownerUsername = String(targetComment?.username || '').trim().toLowerCase();
+    const isCommentOwner =
+      (ownerUserId && currentActorUserId && ownerUserId === currentActorUserId) ||
+      (ownerUsername && currentActorUsername && ownerUsername === currentActorUsername);
+    if (!isProjectHost && !isCommentOwner) {
+      void popup.alert({
+        title: 'Permission denied',
+        message: 'คุณสามารถลบได้เฉพาะความคิดเห็นของตนเอง',
+      });
+      return;
+    }
+    const shouldDelete = await popup.confirm({
+      title: 'Delete comment',
+      message: 'ลบความคิดเห็นนี้?',
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!shouldDelete) return;
+    const idsToDelete = buildTaskCommentDescendantIdSet(currentTaskComments, commentId);
+    patchCurrentTask({
+      comments: currentTaskComments.filter(
+        (comment) => !idsToDelete.has(String(comment.id || '').trim())
+      ),
+    });
+    if (idsToDelete.has(replyTargetCommentId)) {
+      clearReplyTarget();
+    }
+  };
+  const handleTaskAttachmentFiles = async (fileListInput) => {
+    const fileList = Array.from(fileListInput || []).filter(Boolean);
+    if (!fileList.length || !task?.id) return;
+    const nextUploadIssues = [];
+    const existingCount = currentTaskAttachments.length;
+    if (existingCount >= TASK_ATTACHMENT_MAX_FILES) {
+      await popup.alert({
+        title: 'Attachment limit',
+        message: `แนบไฟล์ได้สูงสุด ${TASK_ATTACHMENT_MAX_FILES} ไฟล์ต่อ Task`,
+      });
+      return;
+    }
+    const allowedFileCount = Math.max(0, TASK_ATTACHMENT_MAX_FILES - existingCount);
+    const selectedFiles = fileList.slice(0, allowedFileCount);
+    const messages = [];
+    if (selectedFiles.length < fileList.length) {
+      messages.push(`เกินจำนวนไฟล์ที่กำหนด ระบบเลือกให้ ${selectedFiles.length} ไฟล์แรก`);
+    }
+    const nextEntries = [];
+    setIsUploadingAttachment(true);
+    try {
+      for (const file of selectedFiles) {
+        const size = Number(file?.size || 0);
+        if (!Number.isFinite(size) || size <= 0) {
+          messages.push(`ไม่สามารถอ่านไฟล์ ${String(file?.name || 'unnamed file')}`);
+          continue;
+        }
+        if (size > TASK_ATTACHMENT_MAX_BYTES) {
+          nextUploadIssues.push({
+            id: generateId(),
+            name: String(file?.name || 'unnamed file'),
+            mimeType: String(file?.type || '').trim().toLowerCase(),
+            size,
+            errorType: 'oversize',
+          });
+          messages.push(`${String(file?.name || 'unnamed file')} มีขนาดเกิน 100 MB`);
+          continue;
+        }
+        try {
+          const dataUrl = await readFileAsDataUrl(file);
+          nextEntries.push(
+            normalizeTaskAttachmentEntry({
+              id: generateId(),
+              name: String(file?.name || 'attachment').slice(0, 180),
+              size,
+              mimeType: String(file?.type || '').trim(),
+              dataUrl,
+              uploadedById: String(currentTaskActor?.id || currentUserId || '').trim(),
+              uploadedByUsername: String(
+                currentTaskActor?.name || currentTaskActor?.username || currentUserProfile?.username || ''
+              ).trim(),
+              uploadedByAvatarUrl: String(
+                currentTaskActor?.avatarUrl || currentUserProfile?.avatarUrl || ''
+              ).trim(),
+              createdAt: new Date().toISOString(),
+            })
+          );
+        } catch (error) {
+          messages.push(`อ่านไฟล์ ${String(file?.name || 'unnamed file')} ไม่สำเร็จ`);
+        }
+      }
+    } finally {
+      setIsUploadingAttachment(false);
+    }
+    setAttachmentUploadIssues(nextUploadIssues);
+    const normalizedEntries = nextEntries.filter(Boolean);
+    if (normalizedEntries.length > 0) {
+      patchCurrentTask({
+        attachments: normalizeTaskAttachmentEntries([
+          ...currentTaskAttachments,
+          ...normalizedEntries,
+        ]),
+      });
+    }
+    if (messages.length > 0) {
+      await popup.alert({
+        title: 'บางไฟล์ไม่ได้ถูกแนบ',
+        message: messages.join('\n'),
+      });
+    }
+  };
+  const dismissAttachmentUploadIssue = (issueIdInput) => {
+    const issueId = String(issueIdInput || '').trim();
+    if (!issueId) return;
+    setAttachmentUploadIssues((prev) =>
+      (Array.isArray(prev) ? prev : []).filter(
+        (issue) => String(issue?.id || '').trim() !== issueId
+      )
+    );
+  };
+  const handleAttachmentPickerChange = (event) => {
+    const files = event.target?.files;
+    void handleTaskAttachmentFiles(files);
+    if (event.target) {
+      event.target.value = '';
+    }
+  };
+  const handleDeleteTaskAttachment = async (attachmentIdInput) => {
+    const attachmentId = String(attachmentIdInput || '').trim();
+    if (!attachmentId) return;
+    const shouldDelete = await popup.confirm({
+      title: 'Delete attachment',
+      message: 'ลบไฟล์แนบนี้?',
+      confirmText: 'Delete',
+      tone: 'danger',
+    });
+    if (!shouldDelete) return;
+    patchCurrentTask({
+      attachments: currentTaskAttachments.filter(
+        (attachment) => String(attachment.id || '').trim() !== attachmentId
+      ),
     });
   };
 
@@ -16357,6 +17130,21 @@ function TaskDetailPane({
       setIsAssigneePickerOpen(false);
     }
   }, [task, isOpen, teamMembers, currentUserId]);
+  useEffect(() => {
+    if (!isOpen) {
+      setNewCommentText('');
+      setReplyTargetCommentId('');
+      setAttachmentUploadIssues([]);
+      setIsUploadingAttachment(false);
+      return;
+    }
+    setNewCommentText('');
+    setReplyTargetCommentId('');
+    setAttachmentUploadIssues([]);
+    if (attachmentFileInputRef.current) {
+      attachmentFileInputRef.current.value = '';
+    }
+  }, [isOpen, task?.id]);
   useEffect(() => {
     if (!isOpen) return;
     const linkedDepartment = resolveDepartmentForAssignees(assigneeIds, department);
@@ -16694,19 +17482,335 @@ function TaskDetailPane({
                 </div>
               </div>
 
-              <div className="mt-4 border-t pt-6 border-gray-100">
-                <h4 className="text-sm font-semibold text-gray-800 mb-3">คำอธิบาย</h4>
-                {description ? (
-                  <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    {description}
-                  </p>
-                ) : (
-                  <p className="text-sm text-gray-400 italic">ไม่มีคำอธิบายเพิ่มเติม</p>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+			              <div className="mt-4 pt-2">
+			                <h4 className="text-sm font-semibold text-gray-800 mb-3">คำอธิบาย</h4>
+			                {description ? (
+			                  <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100">
+			                    {description}
+			                  </p>
+		                ) : (
+			                  <p className="text-sm text-gray-400 italic">ไม่มีคำอธิบายเพิ่มเติม</p>
+			                )}
+			              </div>
+
+			              <div className="border-t pt-6 border-gray-100 space-y-3">
+			                <div className="flex items-center justify-between gap-2">
+			                  <h4 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
+			                    <Paperclip className="w-4 h-4 text-gray-500" />
+			                    ไฟล์แนบงาน ({currentTaskAttachments.length}/{TASK_ATTACHMENT_MAX_FILES})
+			                  </h4>
+			                  <button
+			                    type="button"
+			                    onClick={() => attachmentFileInputRef.current?.click()}
+			                    className="h-7 w-7 inline-flex items-center justify-center rounded-md text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors"
+			                    title="เพิ่มไฟล์"
+			                  >
+			                    {isUploadingAttachment ? (
+			                      <Loader2 className="w-4 h-4 animate-spin" />
+			                    ) : (
+			                      <Plus className="w-4 h-4" />
+			                    )}
+			                  </button>
+			                </div>
+			                <input
+			                  ref={attachmentFileInputRef}
+			                  type="file"
+			                  multiple
+			                  className="hidden"
+			                  onChange={handleAttachmentPickerChange}
+			                />
+			                {(currentTaskAttachments.length > 0 || attachmentUploadIssues.length > 0) && (
+			                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+			                    {currentTaskAttachments.map((attachment) => {
+			                      const mimeType = String(attachment.mimeType || '').toLowerCase();
+			                      const isImage = mimeType.startsWith('image/');
+			                      const isVideo = mimeType.startsWith('video/');
+			                      return (
+			                        <div
+			                          key={attachment.id}
+			                          className="group rounded-lg border border-gray-200 bg-white overflow-hidden"
+			                        >
+			                          <a
+			                            href={attachment.dataUrl}
+			                            download={attachment.name}
+			                            target="_blank"
+			                            rel="noreferrer"
+			                            className="block"
+			                          >
+			                            {isImage ? (
+			                              <img
+			                                src={attachment.dataUrl}
+			                                alt={attachment.name || 'attachment'}
+			                                className="h-24 w-full object-cover bg-gray-50"
+			                              />
+			                            ) : isVideo ? (
+			                              <video
+			                                src={attachment.dataUrl}
+			                                controls
+			                                className="h-24 w-full object-cover bg-gray-50"
+			                              />
+			                            ) : (
+			                              <div className="h-24 w-full bg-gray-50 text-gray-400 flex flex-col items-center justify-center gap-1.5 px-2">
+			                                <Paperclip className="w-5 h-5" />
+			                                <span className="text-[10px] font-medium truncate max-w-full">
+			                                  {attachment.name}
+			                                </span>
+			                              </div>
+			                            )}
+			                          </a>
+			                          <div className="px-2 py-1.5 border-t border-gray-100">
+			                            <a
+			                              href={attachment.dataUrl}
+			                              download={attachment.name}
+			                              target="_blank"
+			                              rel="noreferrer"
+			                              className="text-[11px] font-medium text-blue-700 hover:underline block truncate"
+			                            >
+			                              {attachment.name}
+			                            </a>
+			                            <p className="text-[10px] text-gray-500 truncate">
+			                              {formatTaskAttachmentSize(attachment.size)}
+			                            </p>
+			                            <div className="mt-1 flex justify-end">
+			                              <button
+			                                type="button"
+			                                onClick={() => {
+			                                  void handleDeleteTaskAttachment(attachment.id);
+			                                }}
+			                                className="p-1 text-gray-400 hover:text-red-600"
+			                                title="Delete attachment"
+			                              >
+			                                <Trash2 className="w-3.5 h-3.5" />
+			                              </button>
+			                            </div>
+			                          </div>
+			                        </div>
+			                      );
+			                    })}
+			                    {attachmentUploadIssues.map((issue) => (
+			                      <div
+			                        key={issue.id}
+			                        className="rounded-lg border border-red-300 bg-red-50 overflow-hidden"
+			                      >
+			                        <div className="h-24 w-full bg-red-50 text-red-400 flex flex-col items-center justify-center gap-1.5 px-2">
+			                          <Paperclip className="w-5 h-5" />
+			                          <span className="text-[10px] font-medium truncate max-w-full">
+			                            {issue.name}
+			                          </span>
+			                        </div>
+			                        <div className="px-2 py-1.5 border-t border-red-200">
+			                          <p className="text-[11px] font-medium text-red-700 truncate">{issue.name}</p>
+			                          <p className="text-[10px] text-red-600 truncate">
+			                            {formatTaskAttachmentSize(issue.size)}
+			                          </p>
+			                          <div className="mt-1 flex items-center justify-between">
+			                            <span className="text-[10px] text-red-600">ไฟล์ใหญ่เกิน 100MB</span>
+			                            <button
+			                              type="button"
+			                              onClick={() => dismissAttachmentUploadIssue(issue.id)}
+			                              className="p-1 text-red-400 hover:text-red-700"
+			                              title="Dismiss"
+			                            >
+			                              <X className="w-3.5 h-3.5" />
+			                            </button>
+			                          </div>
+			                        </div>
+			                      </div>
+			                    ))}
+			                  </div>
+			                )}
+			              </div>
+
+			              <div className="border-t pt-6 border-gray-100 space-y-2.5">
+			                <div className="flex items-center gap-2">
+			                  <h4 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
+			                    <MessageSquare className="w-4 h-4 text-gray-500" />
+	                    ความคิดเห็น ({currentTaskComments.length})
+	                  </h4>
+	                </div>
+	                {topLevelTaskComments.length > 0 && (
+	                  <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+	                    {topLevelTaskComments.map((comment) => {
+	                      const commentUserId = String(comment?.userId || '').trim();
+	                      const commentUsername = String(comment?.username || '').trim().toLowerCase();
+	                      const canDeleteComment =
+	                        isProjectHost ||
+	                        (commentUserId && currentActorUserId && commentUserId === currentActorUserId) ||
+	                        (commentUsername &&
+	                          currentActorUsername &&
+	                          commentUsername === currentActorUsername);
+	                      const replies = Array.isArray(taskCommentRepliesByParentId[comment.id])
+	                        ? taskCommentRepliesByParentId[comment.id]
+	                        : [];
+	                      return (
+	                      <div
+	                        key={comment.id}
+	                        className="group flex items-start gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2.5"
+	                      >
+	                        <UserAvatar
+	                          user={{
+	                            id: comment.userId,
+	                            name: comment.username || 'Member',
+	                            initials: getInitials(comment.username || 'M'),
+	                            avatarUrl: comment.avatarUrl,
+	                          }}
+	                          sizeClass="w-7 h-7"
+	                          textClass="text-[10px]"
+	                          ringClass="ring-1 ring-white shadow-sm"
+	                        />
+	                        <div className="min-w-0 flex-1">
+	                          <div className="flex items-center justify-between gap-2">
+	                            <p className="text-xs font-semibold text-gray-700 truncate">
+	                              {comment.username || 'Member'}
+	                            </p>
+	                            <p className="text-[10px] text-gray-400 shrink-0">
+	                              {formatSupportTicketDateTime(comment.createdAt)}
+	                            </p>
+	                          </div>
+	                          <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed break-words mt-0.5">
+	                            {comment.text}
+	                          </p>
+	                          <div className="mt-1 flex items-center gap-1.5">
+	                            <button
+	                              type="button"
+	                              onClick={() => handleSelectReplyTarget(comment.id)}
+	                              className="text-[11px] text-gray-400 hover:text-blue-600"
+	                            >
+	                              ตอบกลับ
+	                            </button>
+	                          </div>
+	                          {replies.length > 0 && (
+	                            <div className="mt-2 space-y-1.5 border-l border-gray-200 pl-2.5">
+	                              {replies.map((reply) => {
+	                                const replyUserId = String(reply?.userId || '').trim();
+	                                const replyUsername = String(reply?.username || '').trim().toLowerCase();
+	                                const canDeleteReply =
+	                                  isProjectHost ||
+	                                  (replyUserId &&
+	                                    currentActorUserId &&
+	                                    replyUserId === currentActorUserId) ||
+	                                  (replyUsername &&
+	                                    currentActorUsername &&
+	                                    replyUsername === currentActorUsername);
+	                                return (
+	                                  <div
+	                                    key={reply.id}
+	                                    className="group/reply rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5"
+	                                  >
+	                                    <div className="flex items-start gap-2">
+	                                      <UserAvatar
+	                                        user={{
+	                                          id: reply.userId,
+	                                          name: reply.username || 'Member',
+	                                          initials: getInitials(reply.username || 'M'),
+	                                          avatarUrl: reply.avatarUrl,
+	                                        }}
+	                                        sizeClass="w-5 h-5"
+	                                        textClass="text-[9px]"
+	                                        ringClass="ring-1 ring-white"
+	                                      />
+	                                      <div className="min-w-0 flex-1">
+	                                        <div className="flex items-center justify-between gap-2">
+	                                          <p className="text-[11px] font-semibold text-gray-700 truncate">
+	                                            {reply.username || 'Member'}
+	                                          </p>
+	                                          <p className="text-[10px] text-gray-400 shrink-0">
+	                                            {formatSupportTicketDateTime(reply.createdAt)}
+	                                          </p>
+	                                        </div>
+	                                        <p className="text-xs text-gray-700 whitespace-pre-wrap break-words leading-relaxed">
+	                                          {reply.replyToUsername ? (
+	                                            <span className="text-gray-500">ตอบกลับ @{reply.replyToUsername}: </span>
+	                                          ) : null}
+	                                          {reply.text}
+	                                        </p>
+	                                        <div className="mt-1 flex items-center gap-1.5">
+	                                          <button
+	                                            type="button"
+	                                            onClick={() => handleSelectReplyTarget(reply.id)}
+	                                            className="text-[10px] text-gray-400 hover:text-blue-600"
+	                                          >
+	                                            ตอบกลับ
+	                                          </button>
+	                                          {canDeleteReply && (
+	                                            <button
+	                                              type="button"
+	                                              onClick={() => {
+	                                                void handleDeleteTaskComment(reply.id);
+	                                              }}
+	                                              className="text-[10px] text-gray-400 hover:text-red-600"
+	                                            >
+	                                              ลบ
+	                                            </button>
+	                                          )}
+	                                        </div>
+	                                      </div>
+	                                    </div>
+	                                  </div>
+	                                );
+	                              })}
+	                            </div>
+	                          )}
+	                        </div>
+	                        {canDeleteComment && (
+	                          <button
+	                            type="button"
+	                            onClick={() => {
+	                              void handleDeleteTaskComment(comment.id);
+	                            }}
+	                            className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity"
+	                            title="Delete comment"
+	                          >
+	                            <Trash2 className="w-3.5 h-3.5" />
+	                          </button>
+	                        )}
+	                      </div>
+	                      );
+	                    })}
+	                  </div>
+	                )}
+	                {activeReplyTargetComment && (
+	                  <div className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] text-blue-700">
+	                    <span className="truncate">
+	                      กำลังตอบกลับ @{activeReplyTargetComment.username || 'member'}
+	                    </span>
+	                    <button
+	                      type="button"
+	                      onClick={clearReplyTarget}
+	                      className="text-blue-400 hover:text-blue-700"
+	                      title="Cancel reply"
+	                    >
+	                      <X className="w-3 h-3" />
+	                    </button>
+	                  </div>
+	                )}
+	                <div className="rounded-lg border border-gray-200 bg-white p-1.5 flex items-center gap-1.5">
+	                  <input
+	                    type="text"
+	                    value={newCommentText}
+	                    onChange={(event) => setNewCommentText(event.target.value)}
+	                    onKeyDown={handleTaskCommentKeyDown}
+	                    maxLength={TASK_COMMENT_MAX_LENGTH}
+	                    placeholder={
+	                      activeReplyTargetComment
+	                        ? `ตอบกลับ @${activeReplyTargetComment.username || 'member'}...`
+	                        : 'พิมพ์ความคิดเห็น...'
+	                    }
+	                    className="flex-1 min-w-0 rounded-md border-0 bg-transparent px-2 py-1.5 text-sm text-gray-700 outline-none focus:ring-0"
+	                  />
+	                  <button
+	                    type="button"
+	                    onClick={handleTaskCommentSubmit}
+	                    disabled={!String(newCommentText || '').trim()}
+	                    className="px-3 py-1.5 rounded-md bg-blue-600 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 shrink-0"
+	                  >
+	                    ส่ง
+	                  </button>
+	                </div>
+	              </div>
+		            </div>
+		          )}
+		        </div>
 
         {isEditing && isAssigneePickerOpen && (
           <div className="absolute inset-0 z-[5] bg-white/80 backdrop-blur-[1px] p-3 md:p-4">

@@ -101,6 +101,14 @@ const SUPPORT_TICKET_MAX_MESSAGE_LENGTH = Math.max(
   200,
   Number(process.env.SUPPORT_TICKET_MAX_MESSAGE_LENGTH || 4000)
 );
+const TASK_COMMENT_NOTIFY_MAX_RECIPIENTS = Math.max(
+  1,
+  Math.min(30, Number(process.env.TASK_COMMENT_NOTIFY_MAX_RECIPIENTS || 20))
+);
+const TASK_COMMENT_NOTIFY_MAX_TEXT_LENGTH = Math.max(
+  120,
+  Number(process.env.TASK_COMMENT_NOTIFY_MAX_TEXT_LENGTH || 2000)
+);
 const DEFAULT_LINE_REMINDER_HOUR = Math.min(
   23,
   Math.max(0, Number(process.env.LINE_REMINDER_DEFAULT_HOUR || 9))
@@ -1995,6 +2003,105 @@ const sendOtpEmail = async (email, code) => {
     </div>`,
   });
 };
+const normalizeTaskCommentNotifyMode = (valueInput) =>
+  String(valueInput || '').trim().toLowerCase() === 'reply' ? 'reply' : 'comment';
+const normalizeTaskCommentNotifyRecipientList = (recipientsInput) =>
+  (Array.isArray(recipientsInput) ? recipientsInput : [])
+    .map((recipientInput) => {
+      const recipient =
+        recipientInput && typeof recipientInput === 'object' && !Array.isArray(recipientInput)
+          ? recipientInput
+          : {};
+      return {
+        userId: sanitizeUserId(recipient.userId),
+        username: sanitizeUsername(recipient.username),
+        email: sanitizeEmail(recipient.email),
+      };
+    })
+    .filter((recipient) => recipient.userId || recipient.username || recipient.email)
+    .slice(0, TASK_COMMENT_NOTIFY_MAX_RECIPIENTS);
+const resolveTaskCommentNotifyRecipientRecord = async (recipientInput) => {
+  const recipient =
+    recipientInput && typeof recipientInput === 'object' && !Array.isArray(recipientInput)
+      ? recipientInput
+      : {};
+  const recipientUserId = sanitizeUserId(recipient.userId);
+  const recipientUsername = sanitizeUsername(recipient.username);
+  const recipientEmail = sanitizeEmail(recipient.email);
+
+  if (recipientUserId) {
+    const userById = await getAuthUserRecord(recipientUserId);
+    if (userById) {
+      return {
+        id: sanitizeUserId(userById.id),
+        username: sanitizeUsername(userById.username),
+        email: sanitizeEmail(userById.email),
+      };
+    }
+  }
+  if (recipientEmail) {
+    const userByEmail = await getUserByEmail(recipientEmail);
+    if (userByEmail) {
+      return {
+        id: sanitizeUserId(userByEmail.id),
+        username: sanitizeUsername(userByEmail.username),
+        email: sanitizeEmail(userByEmail.email),
+      };
+    }
+  }
+  if (recipientUsername) {
+    const userByUsername = await getUserByUsername(recipientUsername);
+    if (userByUsername) {
+      return {
+        id: sanitizeUserId(userByUsername.id),
+        username: sanitizeUsername(userByUsername.username),
+        email: sanitizeEmail(userByUsername.email),
+      };
+    }
+  }
+  return null;
+};
+const sendTaskCommentNotificationEmail = async ({
+  toEmail,
+  toUsername = '',
+  actorUsername = '',
+  taskTitle = '',
+  commentText = '',
+  mode = 'comment',
+}) => {
+  const safeToEmail = sanitizeEmail(toEmail);
+  if (!safeToEmail) return;
+  const safeToUsername = sanitizeUsername(toUsername) || safeToEmail;
+  const safeActorUsername = sanitizeUsername(actorUsername) || 'member';
+  const safeTaskTitle = String(taskTitle || '').trim() || 'Untitled task';
+  const safeCommentText = String(commentText || '')
+    .trim()
+    .slice(0, TASK_COMMENT_NOTIFY_MAX_TEXT_LENGTH);
+  const isReply = normalizeTaskCommentNotifyMode(mode) === 'reply';
+  const subject = isReply
+    ? `[PM Calendar] Reply on task: ${safeTaskTitle}`
+    : `[PM Calendar] New comment on task: ${safeTaskTitle}`;
+  const headline = isReply ? 'You have a new reply on a task comment.' : 'You have a new task comment.';
+  await mailer.sendMail({
+    from: process.env.OTP_FROM_EMAIL,
+    to: safeToEmail,
+    subject,
+    text: [
+      headline,
+      `Task: ${safeTaskTitle}`,
+      `From: ${safeActorUsername}`,
+      '',
+      safeCommentText || '-',
+    ].join('\n'),
+    html: `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">
+      <p style="margin:0 0 10px 0;font-size:14px">${headline}</p>
+      <p style="margin:0 0 6px 0"><strong>Task:</strong> ${safeTaskTitle}</p>
+      <p style="margin:0 0 6px 0"><strong>To:</strong> ${safeToUsername}</p>
+      <p style="margin:0 0 12px 0"><strong>From:</strong> ${safeActorUsername}</p>
+      <div style="padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;background:#f9fafb;white-space:pre-wrap">${safeCommentText || '-'}</div>
+    </div>`,
+  });
+};
 
 const validateOtp = async (email, otp) => {
   const doc = await otpRef.doc(otpDocId(email)).get();
@@ -3861,6 +3968,111 @@ app.patch('/support/tickets/:ticketId/status', requireAuth, requireSupportAdmin,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to update ticket status.' });
+  }
+});
+
+app.post('/task-comments/notify', requireAuth, async (req, res) => {
+  try {
+    const authUserId = sanitizeUserId(req.authUser?.sub);
+    if (!authUserId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const userRecord = await getAuthUserRecord(authUserId);
+    if (!userRecord) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const notifyMode = normalizeTaskCommentNotifyMode(req.body?.mode);
+    const projectId = String(req.body?.projectId || '').trim();
+    const taskId = String(req.body?.taskId || '').trim();
+    const taskTitle = String(req.body?.taskTitle || '').trim();
+    const commentText = String(req.body?.commentText || '')
+      .trim()
+      .slice(0, TASK_COMMENT_NOTIFY_MAX_TEXT_LENGTH);
+    if (!projectId || !taskId) {
+      return res.status(400).json({ message: 'projectId and taskId are required.' });
+    }
+    if (!commentText) {
+      return res.status(400).json({ message: 'commentText is required.' });
+    }
+
+    const rawRecipients = normalizeTaskCommentNotifyRecipientList(req.body?.recipients);
+    if (rawRecipients.length === 0) {
+      return res.status(400).json({ message: 'At least one recipient is required.' });
+    }
+
+    const resolvedRecipients = [];
+    for (const rawRecipient of rawRecipients) {
+      const resolvedRecipient = await resolveTaskCommentNotifyRecipientRecord(rawRecipient);
+      if (!resolvedRecipient) continue;
+      if (!resolvedRecipient.email) continue;
+      if (
+        resolvedRecipient.id &&
+        resolvedRecipient.id === authUserId
+      ) {
+        continue;
+      }
+      if (
+        resolvedRecipient.email &&
+        sanitizeEmail(resolvedRecipient.email) === sanitizeEmail(userRecord.email)
+      ) {
+        continue;
+      }
+      resolvedRecipients.push(resolvedRecipient);
+    }
+
+    const uniqueRecipientMap = new Map();
+    resolvedRecipients.forEach((recipient) => {
+      const email = sanitizeEmail(recipient.email);
+      if (!email || uniqueRecipientMap.has(email)) return;
+      uniqueRecipientMap.set(email, recipient);
+    });
+    let finalRecipients = Array.from(uniqueRecipientMap.values());
+    if (notifyMode === 'reply' && finalRecipients.length > 1) {
+      finalRecipients = [finalRecipients[0]];
+    }
+    if (finalRecipients.length === 0) {
+      return res.json({
+        message: 'No eligible recipients.',
+        mode: notifyMode,
+        sentCount: 0,
+        failedCount: 0,
+      });
+    }
+
+    const actorUsername = sanitizeUsername(userRecord.username || req.authUser?.username);
+    const failedRecipients = [];
+    let sentCount = 0;
+    for (const recipient of finalRecipients) {
+      try {
+        await sendTaskCommentNotificationEmail({
+          toEmail: recipient.email,
+          toUsername: recipient.username,
+          actorUsername,
+          taskTitle,
+          commentText,
+          mode: notifyMode,
+        });
+        sentCount += 1;
+      } catch (error) {
+        failedRecipients.push({
+          email: recipient.email,
+          reason: error?.message || 'send_failed',
+        });
+      }
+    }
+
+    return res.json({
+      message:
+        sentCount > 0
+          ? 'Task comment email notifications sent.'
+          : 'Task comment email notification failed.',
+      mode: notifyMode,
+      sentCount,
+      failedCount: failedRecipients.length,
+      failedRecipients,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to send task comment notifications.' });
   }
 });
 
