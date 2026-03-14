@@ -1460,6 +1460,9 @@ const normalizeTaskAssigneeIds = (taskInput) => {
   }
   return Array.from(new Set(normalizedIds));
 };
+const getTaskParentId = (taskInput) =>
+  String(taskInput?.parentTaskId || '').trim();
+const isSubtaskRecord = (taskInput) => Boolean(getTaskParentId(taskInput));
 const normalizeTaskCommentEntry = (commentInput) => {
   const comment =
     commentInput && typeof commentInput === 'object' && !Array.isArray(commentInput)
@@ -2346,14 +2349,24 @@ const LINE_REMINDER_TIMEZONE_OPTIONS = [
   'Asia/Singapore',
   'UTC',
 ];
+const LINE_REMINDER_DAYS_BEFORE_OPTIONS = [7, 3, 1];
 const DEFAULT_LINE_REMINDER_PROJECT_CONFIG = {
   enabled: false,
   groupId: '',
   timezone: 'Asia/Bangkok',
   reminderHour: 9,
+  reminderDaysBefore: [1],
   updatedAt: null,
   lastTestedAt: null,
   lastOpenTaskDigestAt: null,
+};
+const normalizeLineReminderDaysBefore = (valueInput) => {
+  const source = Array.isArray(valueInput) ? valueInput : [];
+  const normalized = source
+    .map((value) => Number.parseInt(String(value || '').trim(), 10))
+    .filter((value) => LINE_REMINDER_DAYS_BEFORE_OPTIONS.includes(value));
+  const deduped = Array.from(new Set(normalized)).sort((left, right) => right - left);
+  return deduped.length > 0 ? deduped : [...DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderDaysBefore];
 };
 const normalizeLineReminderProjectConfig = (configInput) => {
   const config = configInput && typeof configInput === 'object' && !Array.isArray(configInput)
@@ -2371,6 +2384,7 @@ const normalizeLineReminderProjectConfig = (configInput) => {
     groupId: String(config.groupId || '').trim(),
     timezone: timezoneRaw || DEFAULT_LINE_REMINDER_PROJECT_CONFIG.timezone,
     reminderHour,
+    reminderDaysBefore: normalizeLineReminderDaysBefore(config.reminderDaysBefore),
     updatedAt: config.updatedAt ? String(config.updatedAt) : null,
     lastTestedAt: config.lastTestedAt ? String(config.lastTestedAt) : null,
     lastOpenTaskDigestAt: config.lastOpenTaskDigestAt ? String(config.lastOpenTaskDigestAt) : null,
@@ -12745,6 +12759,9 @@ function ProjectDashboard({
   const [lineReminderHourInput, setLineReminderHourInput] = useState(
     String(DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour)
   );
+  const [lineReminderDaysBeforeInput, setLineReminderDaysBeforeInput] = useState(
+    [...DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderDaysBefore]
+  );
   const [lineReminderEnabledInput, setLineReminderEnabledInput] = useState(false);
   const [lineReminderConfigError, setLineReminderConfigError] = useState('');
   const [isLineReminderConfigLoading, setIsLineReminderConfigLoading] = useState(false);
@@ -12863,11 +12880,15 @@ function ProjectDashboard({
           : DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour
       )
     );
+    setLineReminderDaysBeforeInput(
+      normalizeLineReminderDaysBefore(lineReminderConfig.reminderDaysBefore)
+    );
   }, [
     lineReminderConfig.enabled,
     lineReminderConfig.groupId,
     lineReminderConfig.timezone,
     lineReminderConfig.reminderHour,
+    lineReminderConfig.reminderDaysBefore,
   ]);
 
   useEffect(() => {
@@ -13471,6 +13492,7 @@ function ProjectDashboard({
     const reminderHour = Number.isInteger(reminderHourRaw)
       ? Math.min(23, Math.max(0, reminderHourRaw))
       : DEFAULT_LINE_REMINDER_PROJECT_CONFIG.reminderHour;
+    const reminderDaysBefore = normalizeLineReminderDaysBefore(lineReminderDaysBeforeInput);
     const timezone = String(lineReminderTimezoneInput || '').trim() || DEFAULT_LINE_REMINDER_PROJECT_CONFIG.timezone;
     const groupId = String(lineReminderGroupIdInput || '').trim();
     const enabled = Boolean(lineReminderEnabledInput);
@@ -13494,6 +13516,7 @@ function ProjectDashboard({
           groupId,
           timezone,
           reminderHour,
+          reminderDaysBefore,
         },
       });
       const normalized = normalizeLineReminderProjectConfig(result?.config);
@@ -14051,7 +14074,38 @@ function ProjectDashboard({
       ));
   const isTaskFilterActive =
     statusFilter.length > 0 || deptFilter.length > 0 || hasCustomizedAssigneeFilter;
-  const filteredTasks = events.filter(ev => {
+  const projectTasks = useMemo(
+    () =>
+      (Array.isArray(events) ? events : []).filter((ev) => {
+        const normalizedRecordType = String(ev.recordType || '').trim().toLowerCase();
+        const isTaskRecordValue =
+          normalizedRecordType === 'task' ||
+          (!normalizedRecordType &&
+            (Array.isArray(ev.assigneeIds) ||
+              typeof ev.hasExplicitStartDate === 'boolean' ||
+              typeof ev.hasExplicitStartTime === 'boolean'));
+        if (!isTaskRecordValue) return false;
+        return String(ev?.projectId || '').trim() === String(project?.id || '').trim();
+      }),
+    [events, project?.id]
+  );
+  const taskById = useMemo(
+    () =>
+      new Map(
+        projectTasks.map((task) => [String(task?.id || '').trim(), task])
+      ),
+    [projectTasks]
+  );
+  const subtaskCountByParentId = useMemo(() => {
+    const counter = new Map();
+    projectTasks.forEach((task) => {
+      const parentId = getTaskParentId(task);
+      if (!parentId) return;
+      counter.set(parentId, (counter.get(parentId) || 0) + 1);
+    });
+    return counter;
+  }, [projectTasks]);
+  const filteredTasks = projectTasks.filter((ev) => {
     const normalizedRecordType = String(ev.recordType || '').trim().toLowerCase();
     const isTaskRecord =
       normalizedRecordType === 'task' ||
@@ -14210,6 +14264,35 @@ function ProjectDashboard({
 
   const openAddTask = () => {
     setPaneTask(null);
+    setIsPaneOpen(true);
+  };
+  const openAddSubtask = (parentTaskInput) => {
+    const parentTask = parentTaskInput && typeof parentTaskInput === 'object' ? parentTaskInput : null;
+    const parentTaskId = String(parentTask?.id || '').trim();
+    if (!parentTaskId) return;
+    const parentTaskTitle = String(parentTask?.title || '').trim() || 'Untitled task';
+    setPaneTask({
+      id: '',
+      projectId: String(project?.id || '').trim(),
+      recordType: 'task',
+      title: '',
+      description: '',
+      status: 'To Do',
+      startDate: '',
+      startTime: '',
+      endDate: String(parentTask?.endDate || '').trim(),
+      endTime: String(parentTask?.endTime || '').trim(),
+      hasExplicitStartDate: false,
+      hasExplicitStartTime: false,
+      assigneeIds: normalizeTaskAssigneeIds(parentTask),
+      assigneeId: normalizeTaskAssigneeIds(parentTask)[0] || '',
+      parentTaskId,
+      parentTaskTitle,
+      isSubtask: true,
+      attachments: [],
+      comments: [],
+      __isTaskDraft: true,
+    });
     setIsPaneOpen(true);
   };
   const handleDeleteProjectLogEntry = async (entryId) => {
@@ -14856,12 +14939,27 @@ function ProjectDashboard({
                               </tr>
                             </thead>
 	                            <tbody className="divide-y divide-gray-100">
-	                              {filteredTasks.map(task => {
-	                                const taskAssignees = getTaskAssignees(task);
-	                                const extraAssigneeCount = Math.max(0, taskAssignees.length - 2);
-	                                return (
-	                                  <tr key={task.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openTaskDetail(task)}>
-	                                    <td className="px-5 py-4 font-medium text-gray-800">{task.title}</td>
+		                              {filteredTasks.map(task => {
+		                                const taskAssignees = getTaskAssignees(task);
+		                                const extraAssigneeCount = Math.max(0, taskAssignees.length - 2);
+                                    const parentTaskId = getTaskParentId(task);
+                                    const parentTask = parentTaskId ? taskById.get(parentTaskId) : null;
+                                    const parentTaskTitle =
+                                      String(task?.parentTaskTitle || '').trim() ||
+                                      String(parentTask?.title || '').trim();
+                                    const subtaskCount = Number(subtaskCountByParentId.get(String(task?.id || '').trim()) || 0);
+		                                return (
+		                                  <tr key={task.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openTaskDetail(task)}>
+		                                    <td className="px-5 py-4">
+                                        <div className="min-w-0">
+                                          <p className="font-medium text-gray-800 truncate">{task.title}</p>
+                                          {parentTaskTitle ? (
+                                            <p className="text-[11px] text-blue-600 truncate">Subtask of: {parentTaskTitle}</p>
+                                          ) : subtaskCount > 0 ? (
+                                            <p className="text-[11px] text-gray-500 truncate">{subtaskCount} subtasks</p>
+                                          ) : null}
+                                        </div>
+                                      </td>
 	                                    <td className="px-5 py-4">
 		                                      <div className="flex items-center gap-2.5 min-w-0">
 		                                        <div className="flex -space-x-2 shrink-0">
@@ -14975,11 +15073,17 @@ function ProjectDashboard({
 	                                      ลากงานมาวางที่นี่
 	                                    </div>
 	                                  ) : (
-	                                    columnTasks.map((task) => {
-	                                      const taskAssignees = getTaskAssignees(task);
-	                                      const extraAssigneeCount = Math.max(0, taskAssignees.length - 3);
-	                                      return (
-	                                        <article
+		                                    columnTasks.map((task) => {
+		                                      const taskAssignees = getTaskAssignees(task);
+		                                      const extraAssigneeCount = Math.max(0, taskAssignees.length - 3);
+                                      const parentTaskId = getTaskParentId(task);
+                                      const parentTask = parentTaskId ? taskById.get(parentTaskId) : null;
+                                      const parentTaskTitle =
+                                        String(task?.parentTaskTitle || '').trim() ||
+                                        String(parentTask?.title || '').trim();
+                                      const subtaskCount = Number(subtaskCountByParentId.get(String(task?.id || '').trim()) || 0);
+		                                      return (
+		                                        <article
 	                                          key={task.id}
 	                                          draggable
 	                                          onDragStart={(event) => handleTaskDragStart(task.id, event)}
@@ -14991,14 +15095,21 @@ function ProjectDashboard({
 		                                              : ''
 		                                          }`}
 		                                        >
-	                                          <div className="flex items-start justify-between gap-2">
-	                                            <h5 className="text-sm font-semibold text-gray-800 leading-snug line-clamp-2">
-	                                              {task.title}
-	                                            </h5>
-	                                            <span className="text-[10px] text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded shrink-0">
-	                                              {task.department || 'Unassigned'}
-	                                            </span>
-	                                          </div>
+		                                          <div className="flex items-start justify-between gap-2">
+		                                            <div className="min-w-0 flex-1">
+                                              <h5 className="text-sm font-semibold text-gray-800 leading-snug line-clamp-2">
+		                                                {task.title}
+		                                              </h5>
+                                              {parentTaskTitle ? (
+                                                <p className="mt-1 text-[10px] text-blue-600 truncate">Subtask of: {parentTaskTitle}</p>
+                                              ) : subtaskCount > 0 ? (
+                                                <p className="mt-1 text-[10px] text-gray-500 truncate">{subtaskCount} subtasks</p>
+                                              ) : null}
+                                            </div>
+		                                            <span className="text-[10px] text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded shrink-0">
+		                                              {task.department || 'Unassigned'}
+		                                            </span>
+		                                          </div>
 	                                          <p className="mt-2 text-[11px] text-gray-500 flex items-center gap-1.5">
 	                                            <Clock className="w-3.5 h-3.5" />
 	                                            <span>{task.endDate || '-'}</span>
@@ -15047,12 +15158,18 @@ function ProjectDashboard({
 	                    {/* --- Gallery View --- */}
 		                    {taskView === 'gallery' && (
 	                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-	                        {filteredTasks.map(task => {
-	                          const taskAssignees = getTaskAssignees(task);
-	                          const primaryAssignee = taskAssignees[0] || getAssignee('');
-	                          const extraAssigneeCount = Math.max(0, taskAssignees.length - 1);
-	                          return (
-	                            <div key={task.id} className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col group cursor-pointer" onClick={() => openTaskDetail(task)}>
+		                        {filteredTasks.map(task => {
+		                          const taskAssignees = getTaskAssignees(task);
+		                          const primaryAssignee = taskAssignees[0] || getAssignee('');
+		                          const extraAssigneeCount = Math.max(0, taskAssignees.length - 1);
+                            const parentTaskId = getTaskParentId(task);
+                            const parentTask = parentTaskId ? taskById.get(parentTaskId) : null;
+                            const parentTaskTitle =
+                              String(task?.parentTaskTitle || '').trim() ||
+                              String(parentTask?.title || '').trim();
+                            const subtaskCount = Number(subtaskCountByParentId.get(String(task?.id || '').trim()) || 0);
+		                          return (
+		                            <div key={task.id} className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col group cursor-pointer" onClick={() => openTaskDetail(task)}>
                               <div className="flex justify-between items-start mb-4">
                                 <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-[11px] font-medium border border-gray-200 truncate max-w-[100px]">{task.department || 'Unassigned'}</span>
                                 <div className="relative" onClick={(e) => e.stopPropagation()}>
@@ -15071,8 +15188,15 @@ function ProjectDashboard({
                                   <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none opacity-60" />
                                 </div>
                               </div>
-                              <h4 className="font-semibold text-gray-800 mb-2 leading-tight group-hover:text-blue-600 transition-colors">{task.title}</h4>
-                              <p className="text-xs text-gray-500 mb-5 flex items-center gap-1.5">
+		                              <h4 className="font-semibold text-gray-800 mb-1 leading-tight group-hover:text-blue-600 transition-colors">{task.title}</h4>
+                                  {parentTaskTitle ? (
+                                    <p className="text-[11px] text-blue-600 mb-2 truncate">Subtask of: {parentTaskTitle}</p>
+                                  ) : subtaskCount > 0 ? (
+                                    <p className="text-[11px] text-gray-500 mb-2 truncate">{subtaskCount} subtasks</p>
+                                  ) : (
+                                    <div className="mb-2" />
+                                  )}
+		                              <p className="text-xs text-gray-500 mb-5 flex items-center gap-1.5">
                                 <Clock className="w-3.5 h-3.5" /> {task.endDate}
                                 {String(task.endTime || '').trim() ? (
                                   <span className="bg-gray-100 px-1.5 rounded">{task.endTime}</span>
@@ -15641,7 +15765,7 @@ function ProjectDashboard({
                       <div>
                         <h3 className="text-base font-semibold text-gray-800">LINE Reminder (Host only)</h3>
                         <p className="text-xs text-gray-500 mt-0.5">
-                          Send task reminder to LINE group 1 day before due date.
+                          Send task reminder to LINE group before due date (7 / 3 / 1 days).
                         </p>
                       </div>
                       <button
@@ -15715,6 +15839,43 @@ function ProjectDashboard({
                               </option>
                             ))}
                           </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide block">
+                            แจ้งเตือนล่วงหน้า
+                          </label>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {LINE_REMINDER_DAYS_BEFORE_OPTIONS.map((dayCount) => {
+                              const checked = lineReminderDaysBeforeInput.includes(dayCount);
+                              return (
+                                <label
+                                  key={`line-reminder-days-before-${dayCount}`}
+                                  className={`inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                                    checked
+                                      ? 'border-blue-200 bg-blue-50 text-blue-700'
+                                      : 'border-gray-200 bg-white text-gray-600'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(event) => {
+                                      const isChecked = event.target.checked;
+                                      setLineReminderDaysBeforeInput((prev) => {
+                                        const current = normalizeLineReminderDaysBefore(prev);
+                                        const next = isChecked
+                                          ? [...current, dayCount]
+                                          : current.filter((value) => value !== dayCount);
+                                        return normalizeLineReminderDaysBefore(next);
+                                      });
+                                    }}
+                                    className="rounded border-gray-300"
+                                  />
+                                  ก่อนครบกำหนด {dayCount} วัน
+                                </label>
+                              );
+                            })}
+                          </div>
                         </div>
 
                         {lineReminderConfigError && (
@@ -16239,13 +16400,14 @@ function ProjectDashboard({
 	      )}
 
 	      {/* Slide-over Task Detail/Edit Pane */}
-	      <TaskDetailPane 
-	        isOpen={isPaneOpen} 
-	        onClose={() => setIsPaneOpen(false)} 
-		        task={paneTask} 
-		        onSave={(data) => { onSaveTask(data); setIsPaneOpen(false); }}
-		        onPatchTask={handlePatchTask}
-		        onDelete={async (id) => {
+		      <TaskDetailPane 
+		        isOpen={isPaneOpen} 
+		        onClose={() => setIsPaneOpen(false)} 
+			        task={paneTask} 
+			        onSave={(data) => { onSaveTask(data); setIsPaneOpen(false); }}
+			        onPatchTask={handlePatchTask}
+              onCreateSubtask={openAddSubtask}
+			        onDelete={async (id) => {
             const deleted = await onDeleteTask(id);
             if (deleted !== false) {
               setIsPaneOpen(false);
@@ -16277,15 +16439,16 @@ function ProjectDashboard({
               <p className="text-xs text-gray-500">
                 ทำครั้งเดียวต่อโปรเจกต์ (เฉพาะ Host)
               </p>
-              <ol className="list-decimal pl-5 space-y-1.5">
+	              <ol className="list-decimal pl-5 space-y-1.5">
                 <li>เข้า LINE Developers แล้วเปิด Messaging API channel ของบอท</li>
                 <li>เชิญ LINE OA (บอท) เข้า LINE กลุ่มงาน</li>
                 <li>ใส่ Group ID ในฟอร์มนี้ และกด Save settings</li>
                 <li>ระบบจะใช้ Channel Access Token กลางที่ตั้งไว้บนเซิร์ฟเวอร์อัตโนมัติ</li>
                 <li>กด ปุ่มประกาศข้อความ เพื่อทดสอบส่งข้อความเข้ากลุ่ม</li>
-                <li>กด ปุ่มแจ้งเตือน Task ทั้งหมด เพื่อส่งสรุปงานค้างทั้งหมดในโปรเจกต์</li>
-                <li>ตั้ง Cloud Scheduler ให้เรียก endpoint งานเตือนทุกชั่วโมง</li>
-              </ol>
+	                <li>กด ปุ่มแจ้งเตือน Task ทั้งหมด เพื่อส่งสรุปงานค้างทั้งหมดในโปรเจกต์</li>
+	                <li>เลือกแจ้งเตือนล่วงหน้า 7/3/1 วัน ได้หลายตัวเลือก แล้วกด Save settings</li>
+	                <li>ตั้ง Cloud Scheduler ให้เรียก endpoint งานเตือนทุกชั่วโมง</li>
+	              </ol>
               <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
                 Endpoint สำหรับ Scheduler: <code>/internal/jobs/line/remind-due-tomorrow</code><br />
                 Header ที่ต้องส่ง: <code>x-cron-secret</code> = <code>LINE_REMINDER_CRON_SECRET</code>
@@ -16565,6 +16728,7 @@ function TaskDetailPane({
   task,
   onSave,
   onPatchTask = null,
+  onCreateSubtask = null,
   onDelete,
   currentUserId = '',
   currentUserProfile = null,
@@ -16593,8 +16757,11 @@ function TaskDetailPane({
   const attachmentFileInputRef = useRef(null);
   const [newCommentText, setNewCommentText] = useState('');
   const [replyTargetCommentId, setReplyTargetCommentId] = useState('');
+  const [replyDraftText, setReplyDraftText] = useState('');
+  const [taskAttachments, setTaskAttachments] = useState([]);
   const [attachmentUploadIssues, setAttachmentUploadIssues] = useState([]);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [hasShownTaskCommentNotifyWarning, setHasShownTaskCommentNotifyWarning] = useState(false);
   const resolveDepartmentForAssignees = (memberIds, fallback = 'Unassigned') =>
     resolveTaskDepartmentFromAssignees(memberIds, teamMembers, fallback);
   const getAssigneeById = (memberId) =>
@@ -16657,10 +16824,9 @@ function TaskDetailPane({
     () => normalizeTaskCommentEntries(task?.comments),
     [task?.comments]
   );
-  const currentTaskAttachments = useMemo(
-    () => normalizeTaskAttachmentEntries(task?.attachments),
-    [task?.attachments]
-  );
+  const isExistingTask = Boolean(String(task?.id || '').trim());
+  const parentTaskId = getTaskParentId(task);
+  const parentTaskTitle = String(task?.parentTaskTitle || '').trim();
   const topLevelTaskComments = useMemo(
     () =>
       currentTaskComments.filter(
@@ -16771,16 +16937,34 @@ function TaskDetailPane({
     const commentId = String(commentIdInput || '').trim();
     if (!commentId) {
       setReplyTargetCommentId('');
+      setReplyDraftText('');
       return;
     }
     if (!taskCommentsById.has(commentId)) return;
+    if (commentId === replyTargetCommentId) {
+      setReplyTargetCommentId('');
+      setReplyDraftText('');
+      return;
+    }
     setReplyTargetCommentId(commentId);
+    setReplyDraftText('');
   };
-  const clearReplyTarget = () => setReplyTargetCommentId('');
-  const activeReplyTargetComment =
-    replyTargetCommentId && taskCommentsById.has(replyTargetCommentId)
-      ? taskCommentsById.get(replyTargetCommentId)
-      : null;
+  const clearReplyTarget = () => {
+    setReplyTargetCommentId('');
+    setReplyDraftText('');
+  };
+  const isSameTaskCommentAuthor = (commentInput = null) => {
+    const comment = commentInput || null;
+    if (!comment) return false;
+    const targetUserId = String(comment?.userId || '').trim();
+    const targetUsername = String(comment?.username || '').trim().toLowerCase();
+    const targetUserEmail = String(comment?.userEmail || '').trim().toLowerCase();
+    return (
+      (targetUserId && currentActorUserId && targetUserId === currentActorUserId) ||
+      (targetUsername && currentActorUsername && targetUsername === currentActorUsername) ||
+      (targetUserEmail && currentActorEmail && targetUserEmail === currentActorEmail)
+    );
+  };
   const collectTaskCommentRecipients = (mode, replyTargetCommentInput = null) => {
     const recipients = [];
     if (mode === 'reply') {
@@ -16868,19 +17052,39 @@ function TaskDetailPane({
         body: payload,
       });
     } catch (error) {
+      const status = Number(error?.status || 0);
+      const message = String(error?.message || '').trim();
+      const isNetworkOrCompatError =
+        /failed to fetch/i.test(message) || status === 404 || status === 0;
+      if (isNetworkOrCompatError) {
+        if (!hasShownTaskCommentNotifyWarning) {
+          setHasShownTaskCommentNotifyWarning(true);
+          void popup.alert({
+            title: 'Email notification unavailable',
+            message:
+              'บันทึกความคิดเห็นสำเร็จแล้ว แต่ระบบอีเมลแจ้งเตือนยังไม่พร้อมชั่วคราว',
+          });
+        }
+        return;
+      }
       void popup.alert({
         title: 'Email notification failed',
-        message: error?.message || 'Could not send task comment notification email.',
+        message: message || 'Could not send task comment notification email.',
       });
     }
   };
-  const handleTaskCommentSubmit = () => {
-    const message = String(newCommentText || '').trim();
+  const handleTaskCommentSubmit = ({ targetCommentId = '' } = {}) => {
+    const normalizedTargetCommentId = String(targetCommentId || '').trim();
+    const isReplyFlow = Boolean(normalizedTargetCommentId);
+    const message = String(isReplyFlow ? replyDraftText : newCommentText).trim();
     if (!message) return;
     if (!task?.id) return;
     const nowIso = new Date().toISOString();
     const commentId = generateId();
-    const targetComment = activeReplyTargetComment || null;
+    const targetComment =
+      normalizedTargetCommentId && taskCommentsById.has(normalizedTargetCommentId)
+        ? taskCommentsById.get(normalizedTargetCommentId)
+        : null;
     const normalizedTargetParentId = String(targetComment?.parentId || '').trim();
     const nextParentId = targetComment
       ? normalizedTargetParentId || String(targetComment?.id || '').trim()
@@ -16907,25 +17111,67 @@ function TaskDetailPane({
     patchCurrentTask({
       comments: nextComments,
     });
-    setNewCommentText('');
-    clearReplyTarget();
+    if (isReplyFlow) {
+      setReplyDraftText('');
+      setReplyTargetCommentId('');
+    } else {
+      setNewCommentText('');
+    }
     const notificationMode = nextParentId ? 'reply' : 'comment';
-    const recipients = collectTaskCommentRecipients(notificationMode, targetComment);
-    void sendTaskCommentEmailNotification({
-      mode: notificationMode,
-      commentText: commentItem.text,
-      commentId,
-      parentId: nextParentId,
-      replyToCommentId: nextReplyToCommentId,
-      replyToUserId: nextReplyToUserId,
-      replyToUsername: nextReplyToUsername,
-      recipients,
-    });
+    const isReplyToSelf = notificationMode === 'reply' && isSameTaskCommentAuthor(targetComment);
+    if (!isReplyToSelf) {
+      const recipients = collectTaskCommentRecipients(notificationMode, targetComment);
+      void sendTaskCommentEmailNotification({
+        mode: notificationMode,
+        commentText: commentItem.text,
+        commentId,
+        parentId: nextParentId,
+        replyToCommentId: nextReplyToCommentId,
+        replyToUserId: nextReplyToUserId,
+        replyToUsername: nextReplyToUsername,
+        recipients,
+      });
+    }
   };
-  const handleTaskCommentKeyDown = (event) => {
+  const handleTaskCommentKeyDown = (event, targetCommentId = '') => {
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
-    handleTaskCommentSubmit();
+    handleTaskCommentSubmit({ targetCommentId });
+  };
+  const renderInlineReplyComposer = (targetCommentInput) => {
+    const targetComment = targetCommentInput || null;
+    const targetId = String(targetComment?.id || '').trim();
+    if (!targetId || replyTargetCommentId !== targetId) return null;
+    return (
+      <div className="mt-1.5 rounded-md border border-blue-100 bg-blue-50/50 p-1.5">
+        <div className="flex items-center gap-1.5">
+          <input
+            type="text"
+            value={replyDraftText}
+            onChange={(event) => setReplyDraftText(event.target.value)}
+            onKeyDown={(event) => handleTaskCommentKeyDown(event, targetId)}
+            maxLength={TASK_COMMENT_MAX_LENGTH}
+            placeholder={`ตอบกลับ @${targetComment.username || 'member'}...`}
+            className="flex-1 min-w-0 rounded-md border border-blue-200 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:ring-1 focus:ring-blue-300"
+          />
+          <button
+            type="button"
+            onClick={() => handleTaskCommentSubmit({ targetCommentId: targetId })}
+            disabled={!String(replyDraftText || '').trim()}
+            className="px-2.5 py-1.5 rounded-md bg-blue-600 text-white text-[11px] font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 shrink-0"
+          >
+            ส่ง
+          </button>
+          <button
+            type="button"
+            onClick={clearReplyTarget}
+            className="px-2 py-1.5 rounded-md border border-gray-200 bg-white text-[11px] text-gray-500 hover:bg-gray-50 shrink-0"
+          >
+            ยกเลิก
+          </button>
+        </div>
+      </div>
+    );
   };
   const handleDeleteTaskComment = async (commentIdInput) => {
     const commentId = String(commentIdInput || '').trim();
@@ -16963,9 +17209,9 @@ function TaskDetailPane({
   };
   const handleTaskAttachmentFiles = async (fileListInput) => {
     const fileList = Array.from(fileListInput || []).filter(Boolean);
-    if (!fileList.length || !task?.id) return;
+    if (!fileList.length) return;
     const nextUploadIssues = [];
-    const existingCount = currentTaskAttachments.length;
+    const existingCount = taskAttachments.length;
     if (existingCount >= TASK_ATTACHMENT_MAX_FILES) {
       await popup.alert({
         title: 'Attachment limit',
@@ -17028,12 +17274,16 @@ function TaskDetailPane({
     setAttachmentUploadIssues(nextUploadIssues);
     const normalizedEntries = nextEntries.filter(Boolean);
     if (normalizedEntries.length > 0) {
-      patchCurrentTask({
-        attachments: normalizeTaskAttachmentEntries([
-          ...currentTaskAttachments,
-          ...normalizedEntries,
-        ]),
-      });
+      const nextAttachments = normalizeTaskAttachmentEntries([
+        ...taskAttachments,
+        ...normalizedEntries,
+      ]);
+      setTaskAttachments(nextAttachments);
+      if (isExistingTask) {
+        patchCurrentTask({
+          attachments: nextAttachments,
+        });
+      }
     }
     if (messages.length > 0) {
       await popup.alert({
@@ -17068,18 +17318,152 @@ function TaskDetailPane({
       tone: 'danger',
     });
     if (!shouldDelete) return;
-    patchCurrentTask({
-      attachments: currentTaskAttachments.filter(
-        (attachment) => String(attachment.id || '').trim() !== attachmentId
-      ),
-    });
+    const nextAttachments = taskAttachments.filter(
+      (attachment) => String(attachment.id || '').trim() !== attachmentId
+    );
+    setTaskAttachments(nextAttachments);
+    if (isExistingTask) {
+      patchCurrentTask({
+        attachments: nextAttachments,
+      });
+    }
   };
+  const renderTaskAttachmentSection = ({ className = 'border-t pt-6 border-gray-100 space-y-3' } = {}) => (
+    <div className={className}>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
+          <Paperclip className="w-4 h-4 text-gray-500" />
+          ไฟล์แนบงาน ({taskAttachments.length}/{TASK_ATTACHMENT_MAX_FILES})
+        </h4>
+        <button
+          type="button"
+          onClick={() => attachmentFileInputRef.current?.click()}
+          className="h-7 w-7 inline-flex items-center justify-center rounded-md text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors"
+          title="เพิ่มไฟล์"
+        >
+          {isUploadingAttachment ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Plus className="w-4 h-4" />
+          )}
+        </button>
+      </div>
+      <input
+        ref={attachmentFileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleAttachmentPickerChange}
+      />
+      {(taskAttachments.length > 0 || attachmentUploadIssues.length > 0) && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          {taskAttachments.map((attachment) => {
+            const mimeType = String(attachment.mimeType || '').toLowerCase();
+            const isImage = mimeType.startsWith('image/');
+            const isVideo = mimeType.startsWith('video/');
+            return (
+              <div
+                key={attachment.id}
+                className="group rounded-lg border border-gray-200 bg-white overflow-hidden"
+              >
+                <a
+                  href={attachment.dataUrl}
+                  download={attachment.name}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block"
+                >
+                  {isImage ? (
+                    <img
+                      src={attachment.dataUrl}
+                      alt={attachment.name || 'attachment'}
+                      className="h-24 w-full object-cover bg-gray-50"
+                    />
+                  ) : isVideo ? (
+                    <video
+                      src={attachment.dataUrl}
+                      controls
+                      className="h-24 w-full object-cover bg-gray-50"
+                    />
+                  ) : (
+                    <div className="h-24 w-full bg-gray-50 text-gray-400 flex flex-col items-center justify-center gap-1.5 px-2">
+                      <Paperclip className="w-5 h-5" />
+                      <span className="text-[10px] font-medium truncate max-w-full">
+                        {attachment.name}
+                      </span>
+                    </div>
+                  )}
+                </a>
+                <div className="px-2 py-1.5 border-t border-gray-100">
+                  <a
+                    href={attachment.dataUrl}
+                    download={attachment.name}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[11px] font-medium text-blue-700 hover:underline block truncate"
+                  >
+                    {attachment.name}
+                  </a>
+                  <p className="text-[10px] text-gray-500 truncate">
+                    {formatTaskAttachmentSize(attachment.size)}
+                  </p>
+                  <div className="mt-1 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleDeleteTaskAttachment(attachment.id);
+                      }}
+                      className="p-1 text-gray-400 hover:text-red-600"
+                      title="Delete attachment"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {attachmentUploadIssues.map((issue) => (
+            <div
+              key={issue.id}
+              className="rounded-lg border border-red-300 bg-red-50 overflow-hidden"
+            >
+              <div className="h-24 w-full bg-red-50 text-red-400 flex flex-col items-center justify-center gap-1.5 px-2">
+                <Paperclip className="w-5 h-5" />
+                <span className="text-[10px] font-medium truncate max-w-full">
+                  {issue.name}
+                </span>
+              </div>
+              <div className="px-2 py-1.5 border-t border-red-200">
+                <p className="text-[11px] font-medium text-red-700 truncate">{issue.name}</p>
+                <p className="text-[10px] text-red-600 truncate">
+                  {formatTaskAttachmentSize(issue.size)}
+                </p>
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-[10px] text-red-600">ไฟล์ใหญ่เกิน 100MB</span>
+                  <button
+                    type="button"
+                    onClick={() => dismissAttachmentUploadIssue(issue.id)}
+                    className="p-1 text-red-400 hover:text-red-700"
+                    title="Dismiss"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   // Update form when task changes or panel opens
   useEffect(() => {
     if (isOpen) {
+      const hasTaskId = Boolean(String(task?.id || '').trim());
       if (task) {
-        setIsEditing(false); // Default to view mode if opening existing task
+        setIsEditing(!hasTaskId);
         const mappedAssigneeIds = normalizeTaskAssigneeIds(task);
         const mappedDepartment = resolveDepartmentForAssignees(
           mappedAssigneeIds,
@@ -17106,8 +17490,9 @@ function TaskDetailPane({
         setStartTime(hasTaskStartTime ? taskStartTime : '');
         setEndTime(String(task.endTime || '').trim());
         setDescription(task.description || '');
+        setTaskAttachments(normalizeTaskAttachmentEntries(task.attachments));
       } else {
-        setIsEditing(true); // Force edit mode for new task
+        setIsEditing(true);
         const now = new Date();
         const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         const preferredMember =
@@ -17126,6 +17511,7 @@ function TaskDetailPane({
         setStartTime('');
         setEndTime('');
         setDescription('');
+        setTaskAttachments([]);
       }
       setIsAssigneePickerOpen(false);
     }
@@ -17134,13 +17520,18 @@ function TaskDetailPane({
     if (!isOpen) {
       setNewCommentText('');
       setReplyTargetCommentId('');
+      setReplyDraftText('');
+      setTaskAttachments([]);
       setAttachmentUploadIssues([]);
       setIsUploadingAttachment(false);
+      setHasShownTaskCommentNotifyWarning(false);
       return;
     }
     setNewCommentText('');
     setReplyTargetCommentId('');
+    setReplyDraftText('');
     setAttachmentUploadIssues([]);
+    setHasShownTaskCommentNotifyWarning(false);
     if (attachmentFileInputRef.current) {
       attachmentFileInputRef.current.value = '';
     }
@@ -17183,6 +17574,10 @@ function TaskDetailPane({
       hasExplicitStartDate: Boolean(hasStartDate && String(startDate || '').trim()),
       hasExplicitStartTime: Boolean(hasStartTime && String(startTime || '').trim()),
       description,
+      attachments: normalizeTaskAttachmentEntries(taskAttachments),
+      parentTaskId,
+      parentTaskTitle,
+      isSubtask: Boolean(parentTaskId),
     });
   };
 
@@ -17205,24 +17600,37 @@ function TaskDetailPane({
       >
         <div className="pointer-events-auto h-[100dvh] max-h-[100dvh] w-[min(540px,100vw)] max-w-full bg-white shadow-2xl transition-transform duration-300 flex flex-col border-l border-slate-200 rounded-none overflow-hidden relative">
         
-        {/* Header Options */}
-        <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/50">
-          <div className="flex items-center gap-2">
-            {!isEditing && task && (
-              <button 
-                onClick={() => onSave({ ...task, status: 'Done' })}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${task.status === 'Done' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
-              >
-                <CheckCircle className="w-4 h-4" /> {task.status === 'Done' ? 'Completed' : 'Mark Complete'}
-              </button>
-            )}
-            {isEditing && <span className="font-bold text-gray-700">{task ? 'แก้ไข Task' : 'สร้าง Task ใหม่'}</span>}
-          </div>
-          <div className="flex items-center gap-2">
-            {!isEditing && (
-              <>
-                <button onClick={() => setIsEditing(true)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="แก้ไข">
-                  <Edit2 className="w-4 h-4" />
+	        {/* Header Options */}
+	        <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50/50">
+	          <div className="flex items-center gap-2">
+	            {!isEditing && isExistingTask && (
+	              <button 
+	                onClick={() => onSave({ ...task, status: 'Done' })}
+	                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${task.status === 'Done' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+	              >
+	                <CheckCircle className="w-4 h-4" /> {task.status === 'Done' ? 'Completed' : 'Mark Complete'}
+	              </button>
+	            )}
+              {!isEditing && isExistingTask && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof onCreateSubtask === 'function') {
+                      onCreateSubtask(task);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                >
+                  <Plus className="w-4 h-4" /> สร้าง Subtask
+                </button>
+              )}
+	            {isEditing && <span className="font-bold text-gray-700">{isExistingTask ? 'แก้ไข Task' : 'สร้าง Task ใหม่'}</span>}
+	          </div>
+	          <div className="flex items-center gap-2">
+	            {!isEditing && isExistingTask && (
+	              <>
+	                <button onClick={() => setIsEditing(true)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="แก้ไข">
+	                  <Edit2 className="w-4 h-4" />
                 </button>
                 <button 
                   onClick={async () => {
@@ -17232,10 +17640,10 @@ function TaskDetailPane({
                       confirmText: 'Delete',
                       tone: 'danger',
                     });
-                    if (shouldDelete) onDelete(task.id);
-                  }} 
-                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="ลบ"
-                >
+	                    if (shouldDelete) onDelete(task.id);
+	                  }} 
+	                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="ลบ"
+	                >
                   <Trash2 className="w-4 h-4" />
                 </button>
               </>
@@ -17263,8 +17671,16 @@ function TaskDetailPane({
                 />
               </div>
 
-              <div className="grid grid-cols-[120px_1fr] items-center gap-y-5 gap-x-2 text-sm">
-                <div className="text-gray-500 flex items-center gap-2"><Users className="w-4 h-4" /> ผู้รับผิดชอบ</div>
+	              <div className="grid grid-cols-[120px_1fr] items-center gap-y-5 gap-x-2 text-sm">
+                {parentTaskId ? (
+                  <>
+                    <div className="text-gray-500 flex items-center gap-2"><Layers className="w-4 h-4" /> Task หลัก</div>
+                    <div className="text-sm font-medium text-blue-700">
+                      {parentTaskTitle || parentTaskId}
+                    </div>
+                  </>
+                ) : null}
+	                <div className="text-gray-500 flex items-center gap-2"><Users className="w-4 h-4" /> ผู้รับผิดชอบ</div>
                 <div className="space-y-2">
                   <button
                     type="button"
@@ -17402,16 +17818,17 @@ function TaskDetailPane({
                 </div>
               </div>
 
-              <div className="mt-2 border-t pt-5 border-gray-100">
-                <div className="text-gray-500 flex items-center gap-2 mb-3 text-sm"><AlignLeft className="w-4 h-4" /> คำอธิบาย (Description)</div>
-                <textarea 
-                  placeholder="เพิ่มคำอธิบายรายละเอียดงาน..."
+	              <div className="mt-2 border-t pt-5 border-gray-100">
+	                <div className="text-gray-500 flex items-center gap-2 mb-3 text-sm"><AlignLeft className="w-4 h-4" /> คำอธิบาย (Description)</div>
+	                <textarea 
+	                  placeholder="เพิ่มคำอธิบายรายละเอียดงาน..."
                   value={description}
                   onChange={e => setDescription(e.target.value)}
-                  className="w-full border-gray-300 border rounded-lg p-3 bg-gray-50 min-h-[150px] outline-none focus:ring-2 focus:ring-blue-500 resize-y text-sm"
-                ></textarea>
-              </div>
-            </form>
+	                  className="w-full border-gray-300 border rounded-lg p-3 bg-gray-50 min-h-[150px] outline-none focus:ring-2 focus:ring-blue-500 resize-y text-sm"
+	                ></textarea>
+	              </div>
+                {renderTaskAttachmentSection({ className: 'border-t pt-5 border-gray-100 space-y-3' })}
+	            </form>
           ) : (
             // --- View Mode ---
             <div className="p-6 flex flex-col gap-6">
@@ -17419,8 +17836,14 @@ function TaskDetailPane({
                 <h2 className="text-2xl font-bold text-gray-800 mb-4">{title}</h2>
               </div>
 
-              <div className="grid grid-cols-[130px_1fr] items-center gap-y-6 text-sm">
-                <div className="text-gray-500">ผู้รับผิดชอบ</div>
+	              <div className="grid grid-cols-[130px_1fr] items-center gap-y-6 text-sm">
+                {parentTaskId ? (
+                  <>
+                    <div className="text-gray-500">Task หลัก</div>
+                    <div className="text-blue-700 font-medium">{parentTaskTitle || parentTaskId}</div>
+                  </>
+                ) : null}
+	                <div className="text-gray-500">ผู้รับผิดชอบ</div>
                                 <div className="flex flex-wrap items-center gap-2.5">
 	                  {currentAssignees.map((assignee, index) => (
 	                    <div
@@ -17493,135 +17916,9 @@ function TaskDetailPane({
 			                )}
 			              </div>
 
-			              <div className="border-t pt-6 border-gray-100 space-y-3">
-			                <div className="flex items-center justify-between gap-2">
-			                  <h4 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
-			                    <Paperclip className="w-4 h-4 text-gray-500" />
-			                    ไฟล์แนบงาน ({currentTaskAttachments.length}/{TASK_ATTACHMENT_MAX_FILES})
-			                  </h4>
-			                  <button
-			                    type="button"
-			                    onClick={() => attachmentFileInputRef.current?.click()}
-			                    className="h-7 w-7 inline-flex items-center justify-center rounded-md text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors"
-			                    title="เพิ่มไฟล์"
-			                  >
-			                    {isUploadingAttachment ? (
-			                      <Loader2 className="w-4 h-4 animate-spin" />
-			                    ) : (
-			                      <Plus className="w-4 h-4" />
-			                    )}
-			                  </button>
-			                </div>
-			                <input
-			                  ref={attachmentFileInputRef}
-			                  type="file"
-			                  multiple
-			                  className="hidden"
-			                  onChange={handleAttachmentPickerChange}
-			                />
-			                {(currentTaskAttachments.length > 0 || attachmentUploadIssues.length > 0) && (
-			                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-			                    {currentTaskAttachments.map((attachment) => {
-			                      const mimeType = String(attachment.mimeType || '').toLowerCase();
-			                      const isImage = mimeType.startsWith('image/');
-			                      const isVideo = mimeType.startsWith('video/');
-			                      return (
-			                        <div
-			                          key={attachment.id}
-			                          className="group rounded-lg border border-gray-200 bg-white overflow-hidden"
-			                        >
-			                          <a
-			                            href={attachment.dataUrl}
-			                            download={attachment.name}
-			                            target="_blank"
-			                            rel="noreferrer"
-			                            className="block"
-			                          >
-			                            {isImage ? (
-			                              <img
-			                                src={attachment.dataUrl}
-			                                alt={attachment.name || 'attachment'}
-			                                className="h-24 w-full object-cover bg-gray-50"
-			                              />
-			                            ) : isVideo ? (
-			                              <video
-			                                src={attachment.dataUrl}
-			                                controls
-			                                className="h-24 w-full object-cover bg-gray-50"
-			                              />
-			                            ) : (
-			                              <div className="h-24 w-full bg-gray-50 text-gray-400 flex flex-col items-center justify-center gap-1.5 px-2">
-			                                <Paperclip className="w-5 h-5" />
-			                                <span className="text-[10px] font-medium truncate max-w-full">
-			                                  {attachment.name}
-			                                </span>
-			                              </div>
-			                            )}
-			                          </a>
-			                          <div className="px-2 py-1.5 border-t border-gray-100">
-			                            <a
-			                              href={attachment.dataUrl}
-			                              download={attachment.name}
-			                              target="_blank"
-			                              rel="noreferrer"
-			                              className="text-[11px] font-medium text-blue-700 hover:underline block truncate"
-			                            >
-			                              {attachment.name}
-			                            </a>
-			                            <p className="text-[10px] text-gray-500 truncate">
-			                              {formatTaskAttachmentSize(attachment.size)}
-			                            </p>
-			                            <div className="mt-1 flex justify-end">
-			                              <button
-			                                type="button"
-			                                onClick={() => {
-			                                  void handleDeleteTaskAttachment(attachment.id);
-			                                }}
-			                                className="p-1 text-gray-400 hover:text-red-600"
-			                                title="Delete attachment"
-			                              >
-			                                <Trash2 className="w-3.5 h-3.5" />
-			                              </button>
-			                            </div>
-			                          </div>
-			                        </div>
-			                      );
-			                    })}
-			                    {attachmentUploadIssues.map((issue) => (
-			                      <div
-			                        key={issue.id}
-			                        className="rounded-lg border border-red-300 bg-red-50 overflow-hidden"
-			                      >
-			                        <div className="h-24 w-full bg-red-50 text-red-400 flex flex-col items-center justify-center gap-1.5 px-2">
-			                          <Paperclip className="w-5 h-5" />
-			                          <span className="text-[10px] font-medium truncate max-w-full">
-			                            {issue.name}
-			                          </span>
-			                        </div>
-			                        <div className="px-2 py-1.5 border-t border-red-200">
-			                          <p className="text-[11px] font-medium text-red-700 truncate">{issue.name}</p>
-			                          <p className="text-[10px] text-red-600 truncate">
-			                            {formatTaskAttachmentSize(issue.size)}
-			                          </p>
-			                          <div className="mt-1 flex items-center justify-between">
-			                            <span className="text-[10px] text-red-600">ไฟล์ใหญ่เกิน 100MB</span>
-			                            <button
-			                              type="button"
-			                              onClick={() => dismissAttachmentUploadIssue(issue.id)}
-			                              className="p-1 text-red-400 hover:text-red-700"
-			                              title="Dismiss"
-			                            >
-			                              <X className="w-3.5 h-3.5" />
-			                            </button>
-			                          </div>
-			                        </div>
-			                      </div>
-			                    ))}
-			                  </div>
-			                )}
-			              </div>
+				              {renderTaskAttachmentSection()}
 
-			              <div className="border-t pt-6 border-gray-100 space-y-2.5">
+				              <div className="border-t pt-6 border-gray-100 space-y-2.5">
 			                <div className="flex items-center gap-2">
 			                  <h4 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
 			                    <MessageSquare className="w-4 h-4 text-gray-500" />
@@ -17670,18 +17967,19 @@ function TaskDetailPane({
 	                          <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed break-words mt-0.5">
 	                            {comment.text}
 	                          </p>
-	                          <div className="mt-1 flex items-center gap-1.5">
-	                            <button
-	                              type="button"
-	                              onClick={() => handleSelectReplyTarget(comment.id)}
-	                              className="text-[11px] text-gray-400 hover:text-blue-600"
-	                            >
-	                              ตอบกลับ
-	                            </button>
-	                          </div>
-	                          {replies.length > 0 && (
-	                            <div className="mt-2 space-y-1.5 border-l border-gray-200 pl-2.5">
-	                              {replies.map((reply) => {
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleSelectReplyTarget(comment.id)}
+                              className="text-[11px] text-gray-400 hover:text-blue-600"
+                            >
+                              ตอบกลับ
+                            </button>
+                          </div>
+                          {renderInlineReplyComposer(comment)}
+                          {replies.length > 0 && (
+                            <div className="mt-2 space-y-1.5 border-l border-gray-200 pl-2.5">
+                              {replies.map((reply) => {
 	                                const replyUserId = String(reply?.userId || '').trim();
 	                                const replyUsername = String(reply?.username || '').trim().toLowerCase();
 	                                const canDeleteReply =
@@ -17724,11 +18022,11 @@ function TaskDetailPane({
 	                                          ) : null}
 	                                          {reply.text}
 	                                        </p>
-	                                        <div className="mt-1 flex items-center gap-1.5">
-	                                          <button
-	                                            type="button"
-	                                            onClick={() => handleSelectReplyTarget(reply.id)}
-	                                            className="text-[10px] text-gray-400 hover:text-blue-600"
+                                        <div className="mt-1 flex items-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleSelectReplyTarget(reply.id)}
+                                            className="text-[10px] text-gray-400 hover:text-blue-600"
 	                                          >
 	                                            ตอบกลับ
 	                                          </button>
@@ -17740,13 +18038,14 @@ function TaskDetailPane({
 	                                              }}
 	                                              className="text-[10px] text-gray-400 hover:text-red-600"
 	                                            >
-	                                              ลบ
-	                                            </button>
-	                                          )}
-	                                        </div>
-	                                      </div>
-	                                    </div>
-	                                  </div>
+                                              ลบ
+                                            </button>
+                                          )}
+                                        </div>
+                                        {renderInlineReplyComposer(reply)}
+                                      </div>
+                                    </div>
+                                  </div>
 	                                );
 	                              })}
 	                            </div>
@@ -17769,41 +18068,22 @@ function TaskDetailPane({
 	                    })}
 	                  </div>
 	                )}
-	                {activeReplyTargetComment && (
-	                  <div className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] text-blue-700">
-	                    <span className="truncate">
-	                      กำลังตอบกลับ @{activeReplyTargetComment.username || 'member'}
-	                    </span>
-	                    <button
-	                      type="button"
-	                      onClick={clearReplyTarget}
-	                      className="text-blue-400 hover:text-blue-700"
-	                      title="Cancel reply"
-	                    >
-	                      <X className="w-3 h-3" />
-	                    </button>
-	                  </div>
-	                )}
-	                <div className="rounded-lg border border-gray-200 bg-white p-1.5 flex items-center gap-1.5">
-	                  <input
-	                    type="text"
-	                    value={newCommentText}
-	                    onChange={(event) => setNewCommentText(event.target.value)}
-	                    onKeyDown={handleTaskCommentKeyDown}
-	                    maxLength={TASK_COMMENT_MAX_LENGTH}
-	                    placeholder={
-	                      activeReplyTargetComment
-	                        ? `ตอบกลับ @${activeReplyTargetComment.username || 'member'}...`
-	                        : 'พิมพ์ความคิดเห็น...'
-	                    }
-	                    className="flex-1 min-w-0 rounded-md border-0 bg-transparent px-2 py-1.5 text-sm text-gray-700 outline-none focus:ring-0"
-	                  />
-	                  <button
-	                    type="button"
-	                    onClick={handleTaskCommentSubmit}
-	                    disabled={!String(newCommentText || '').trim()}
-	                    className="px-3 py-1.5 rounded-md bg-blue-600 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 shrink-0"
-	                  >
+                <div className="rounded-lg border border-gray-200 bg-white p-1.5 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={newCommentText}
+                    onChange={(event) => setNewCommentText(event.target.value)}
+                    onKeyDown={(event) => handleTaskCommentKeyDown(event)}
+                    maxLength={TASK_COMMENT_MAX_LENGTH}
+                    placeholder="พิมพ์ความคิดเห็น..."
+                    className="flex-1 min-w-0 rounded-md border-0 bg-transparent px-2 py-1.5 text-sm text-gray-700 outline-none focus:ring-0"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleTaskCommentSubmit()}
+                    disabled={!String(newCommentText || '').trim()}
+                    className="px-3 py-1.5 rounded-md bg-blue-600 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 shrink-0"
+                  >
 	                    ส่ง
 	                  </button>
 	                </div>
@@ -17898,21 +18178,21 @@ function TaskDetailPane({
         )}
 
         {/* Footer Actions (Only show when editing) */}
-        {isEditing && (
-          <div className="p-4 border-t bg-white flex justify-end gap-3 shrink-0">
-            {task && (
-              <button 
-                type="button" 
-                onClick={() => setIsEditing(false)}
-                className="text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-lg font-medium transition-colors"
-              >
-                ยกเลิก
-              </button>
-            )}
-            {!task && (
-              <button 
-                type="button" 
-                onClick={onClose}
+	        {isEditing && (
+	          <div className="p-4 border-t bg-white flex justify-end gap-3 shrink-0">
+	            {isExistingTask && (
+	              <button 
+	                type="button" 
+	                onClick={() => setIsEditing(false)}
+	                className="text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-lg font-medium transition-colors"
+	              >
+	                ยกเลิก
+	              </button>
+	            )}
+	            {!isExistingTask && (
+	              <button 
+	                type="button" 
+	                onClick={onClose}
                 className="text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-lg font-medium transition-colors"
               >
                 ปิด

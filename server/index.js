@@ -113,6 +113,8 @@ const DEFAULT_LINE_REMINDER_HOUR = Math.min(
   23,
   Math.max(0, Number(process.env.LINE_REMINDER_DEFAULT_HOUR || 9))
 );
+const LINE_REMINDER_DAYS_BEFORE_OPTIONS = [7, 3, 1];
+const DEFAULT_LINE_REMINDER_DAYS_BEFORE = [1];
 const LINE_CHANNEL_SECRET = String(process.env.LINE_CHANNEL_SECRET || '').trim();
 const LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN = String(
   process.env.LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || process.env.LINE_CHANNEL_ACCESS_TOKEN || ''
@@ -301,6 +303,14 @@ const normalizeLineReminderHour = (hourInput) => {
   if (!Number.isInteger(parsed)) return DEFAULT_LINE_REMINDER_HOUR;
   return Math.min(23, Math.max(0, parsed));
 };
+const normalizeLineReminderDaysBefore = (valueInput) => {
+  const source = Array.isArray(valueInput) ? valueInput : [];
+  const normalized = source
+    .map((value) => Number.parseInt(String(value ?? '').trim(), 10))
+    .filter((value) => LINE_REMINDER_DAYS_BEFORE_OPTIONS.includes(value));
+  const deduped = Array.from(new Set(normalized)).sort((left, right) => right - left);
+  return deduped.length > 0 ? deduped : [...DEFAULT_LINE_REMINDER_DAYS_BEFORE];
+};
 
 const lineReminderDocIdFor = (userIdInput, projectIdInput) =>
   crypto
@@ -308,13 +318,13 @@ const lineReminderDocIdFor = (userIdInput, projectIdInput) =>
     .update(`${sanitizeUserId(userIdInput)}|${String(projectIdInput || '').trim()}`)
     .digest('hex');
 
-const lineReminderLogDocIdFor = (userIdInput, projectIdInput, targetDateInput) =>
+const lineReminderLogDocIdFor = (userIdInput, projectIdInput, targetDateInput, daysBeforeInput = 1) =>
   crypto
     .createHash('sha256')
     .update(
       `${sanitizeUserId(userIdInput)}|${String(projectIdInput || '').trim()}|${String(
         targetDateInput || ''
-      ).trim()}`
+      ).trim()}|${Math.max(1, Number.parseInt(String(daysBeforeInput || 1), 10) || 1)}`
     )
     .digest('hex');
 
@@ -558,6 +568,7 @@ const normalizeLineReminderConfigRecord = (recordInput, options = {}) => {
     groupId: String(record.groupId || '').trim(),
     timezone: normalizeLineReminderTimezone(record.timezone),
     reminderHour: normalizeLineReminderHour(record.reminderHour),
+    reminderDaysBefore: normalizeLineReminderDaysBefore(record.reminderDaysBefore),
     updatedAt: String(record.updatedAt || '').trim() || null,
     createdAt: String(record.createdAt || '').trim() || null,
     lastTestedAt: String(record.lastTestedAt || '').trim() || null,
@@ -578,6 +589,7 @@ const toLineReminderPublicResponse = (recordInput) => {
     groupId: normalized.groupId,
     timezone: normalized.timezone,
     reminderHour: normalized.reminderHour,
+    reminderDaysBefore: normalized.reminderDaysBefore,
     updatedAt: normalized.updatedAt,
     lastTestedAt: normalized.lastTestedAt,
     lastOpenTaskDigestAt: normalized.lastOpenTaskDigestAt,
@@ -645,6 +657,60 @@ const isCompletedTaskRecord = (taskInput) => {
   const task = taskInput && typeof taskInput === 'object' ? taskInput : {};
   const status = String(task.status || '').trim().toLowerCase();
   return status === 'done' || status === 'completed' || task.completed === true;
+};
+const getTaskParentId = (taskInput) => String(taskInput?.parentTaskId || '').trim();
+const isSubtaskTaskRecord = (taskInput) => Boolean(getTaskParentId(taskInput));
+const enrichTasksWithParentTitles = (tasksInput, allTasksInput) => {
+  const tasks = Array.isArray(tasksInput) ? tasksInput : [];
+  const allTasks = Array.isArray(allTasksInput) ? allTasksInput : tasks;
+  const taskById = new Map();
+  allTasks.forEach((task) => {
+    const taskId = String(task?.id || '').trim();
+    if (!taskId) return;
+    taskById.set(taskId, task);
+  });
+  return tasks.map((task) => {
+    const parentTaskId = getTaskParentId(task);
+    if (!parentTaskId) return task;
+    const parentTask = taskById.get(parentTaskId);
+    const parentTaskTitle =
+      String(task?.parentTaskTitle || '').trim() ||
+      String(parentTask?.title || '').trim();
+    return {
+      ...task,
+      parentTaskId,
+      parentTaskTitle,
+      isSubtask: true,
+    };
+  });
+};
+const selectLineReminderTasksForNotification = (candidateTasksInput, allOpenTasksInput) => {
+  const candidateTasks = enrichTasksWithParentTitles(candidateTasksInput, allOpenTasksInput);
+  const allOpenTasks = enrichTasksWithParentTitles(allOpenTasksInput, allOpenTasksInput);
+  const parentIdsWithOpenSubtasks = new Set();
+  allOpenTasks.forEach((task) => {
+    const parentTaskId = getTaskParentId(task);
+    if (parentTaskId) parentIdsWithOpenSubtasks.add(parentTaskId);
+  });
+  const filtered = candidateTasks.filter((task) => {
+    if (isSubtaskTaskRecord(task)) return true;
+    const taskId = String(task?.id || '').trim();
+    if (!taskId) return false;
+    return !parentIdsWithOpenSubtasks.has(taskId);
+  });
+  return filtered.sort((left, right) => {
+    const leftDate = String(left?.endDate || left?.startDate || '').trim();
+    const rightDate = String(right?.endDate || right?.startDate || '').trim();
+    if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+    const leftParent = String(left?.parentTaskTitle || '').trim();
+    const rightParent = String(right?.parentTaskTitle || '').trim();
+    if (leftParent !== rightParent) {
+      return leftParent.localeCompare(rightParent, undefined, { sensitivity: 'base' });
+    }
+    const leftTitle = String(left?.title || '').trim();
+    const rightTitle = String(right?.title || '').trim();
+    return leftTitle.localeCompare(rightTitle, undefined, { sensitivity: 'base' });
+  });
 };
 
 const normalizeTaskAssigneeIds = (taskInput) => {
@@ -860,6 +926,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
   const displayedTasks = tasks.slice(0, maxItems);
   const rows = displayedTasks.map((task, index) => {
     const title = clampLineText(task?.title || 'Untitled task', 90);
+    const parentTaskTitle = clampLineText(task?.parentTaskTitle || '', 90);
     const dueDate = String(task?.endDate || task?.startDate || '').trim();
     const statusTone = resolveTaskStatusTone(task?.status || 'To Do');
     const deadlineSummary = buildDeadlineSummaryLabel(dueDate, timezone);
@@ -985,6 +1052,17 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
           color: '#334155',
           wrap: true,
         },
+        ...(parentTaskTitle
+          ? [
+              {
+                type: 'text',
+                text: clampLineText(`Task ใหญ่: ${parentTaskTitle}`, 180),
+                size: 'xs',
+                color: '#64748b',
+                wrap: true,
+              },
+            ]
+          : []),
         {
           type: 'box',
           layout: 'horizontal',
@@ -1216,6 +1294,7 @@ const buildLineOpenTasksDigestMessage = ({
 const buildLineReminderMessage = ({
   projectName,
   targetDate,
+  daysBefore = 1,
   tasks,
   teamMembersById,
   departmentColorMap,
@@ -1223,6 +1302,7 @@ const buildLineReminderMessage = ({
 }) => {
   const safeProjectName = String(projectName || '').trim() || 'Project';
   const safeDate = String(targetDate || '').trim();
+  const safeDaysBefore = Math.max(1, Number.parseInt(String(daysBefore || 1), 10) || 1);
   const taskList = Array.isArray(tasks) ? tasks : [];
   const taskRows = buildLineTaskRowsForFlex(taskList, {
     maxItems: 6,
@@ -1237,12 +1317,12 @@ const buildLineReminderMessage = ({
       : `Total ${taskRows.totalCount} tasks`;
   return buildLineCardFlexMessage({
     headerLabel: safeProjectName,
-    altText: `[PM Calendar] Due tomorrow ${safeProjectName} (${taskRows.totalCount})`,
-    title: 'Tasks Due Tomorrow',
+    altText: `[PM Calendar] Due in ${safeDaysBefore} day(s) ${safeProjectName} (${taskRows.totalCount})`,
+    title: `Tasks Due in ${safeDaysBefore} day${safeDaysBefore > 1 ? 's' : ''}`,
     subtitle,
     accentColor: '#f59e0b',
-    statLabel: 'Due Date',
-    statValue: safeDate || '-',
+    statLabel: 'Reminder',
+    statValue: `${safeDaysBefore} day${safeDaysBefore > 1 ? 's' : ''} before`,
     rows: taskRows.rows,
     footerNote,
   });
@@ -2150,6 +2230,7 @@ app.get('/health', (_req, res) => {
     lineReminderPushConfigured: Boolean(LINE_REMINDER_CHANNEL_ACCESS_TOKEN),
     lineReminderDefaultTimezone: normalizeLineReminderTimezone(DEFAULT_LINE_REMINDER_TIMEZONE),
     lineReminderDefaultHour: DEFAULT_LINE_REMINDER_HOUR,
+    lineReminderDefaultDaysBefore: DEFAULT_LINE_REMINDER_DAYS_BEFORE,
     lineWebhookConfigured: Boolean(LINE_CHANNEL_SECRET),
     lineWebhookReplyConfigured: Boolean(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN),
     rootAdminConfigured: Boolean(ROOT_ADMIN_EMAIL),
@@ -4306,6 +4387,7 @@ app.get('/line/reminder/config', requireAuth, async (req, res) => {
           groupId: '',
           timezone: DEFAULT_LINE_REMINDER_TIMEZONE,
           reminderHour: DEFAULT_LINE_REMINDER_HOUR,
+          reminderDaysBefore: DEFAULT_LINE_REMINDER_DAYS_BEFORE,
         });
 
     return res.json({ config });
@@ -4349,6 +4431,7 @@ app.put('/line/reminder/config', requireAuth, async (req, res) => {
     const nextGroupId = String(req.body?.groupId || '').trim();
     const nextTimezone = normalizeLineReminderTimezone(req.body?.timezone);
     const nextReminderHour = normalizeLineReminderHour(req.body?.reminderHour);
+    const nextReminderDaysBefore = normalizeLineReminderDaysBefore(req.body?.reminderDaysBefore);
 
     if (nextEnabled && !LINE_REMINDER_CHANNEL_ACCESS_TOKEN) {
       return res.status(503).json({
@@ -4370,10 +4453,12 @@ app.put('/line/reminder/config', requireAuth, async (req, res) => {
       groupId: nextGroupId,
       timezone: nextTimezone,
       reminderHour: nextReminderHour,
+      reminderDaysBefore: nextReminderDaysBefore,
       channelAccessToken: '',
       createdAt: String(existingConfig.createdAt || '').trim() || nowIso,
       updatedAt: nowIso,
       lastTestedAt: String(existingConfig.lastTestedAt || '').trim() || null,
+      lastOpenTaskDigestAt: String(existingConfig.lastOpenTaskDigestAt || '').trim() || null,
     };
 
     await docRef.set(nextConfig, { merge: true });
@@ -4499,20 +4584,13 @@ app.post('/line/reminder/notify-open-tasks', requireAuth, async (req, res) => {
     }
 
     const ownerEvents = Array.isArray(ownership.payload?.events) ? ownership.payload.events : [];
-    const openTasks = ownerEvents
+    const allOpenProjectTasks = ownerEvents
       .filter((event) => {
         if (!isTaskRecord(event)) return false;
         if (String(event?.projectId || '').trim() !== projectId) return false;
         return !isCompletedTaskRecord(event);
-      })
-      .sort((left, right) => {
-        const leftDate = String(left?.endDate || left?.startDate || '').trim();
-        const rightDate = String(right?.endDate || right?.startDate || '').trim();
-        if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
-        const leftTitle = String(left?.title || '').trim();
-        const rightTitle = String(right?.title || '').trim();
-        return leftTitle.localeCompare(rightTitle, undefined, { sensitivity: 'base' });
       });
+    const openTasks = selectLineReminderTasksForNotification(allOpenProjectTasks, allOpenProjectTasks);
 
     if (openTasks.length === 0) {
       return res.json({
@@ -4626,11 +4704,11 @@ app.post('/internal/jobs/line/remind-due-tomorrow', async (req, res) => {
       }
 
       const todayByTimezone = getIsoDateInTimeZone(now, timezone);
-      const targetDate = shiftIsoDateByDays(todayByTimezone, 1);
-      if (!targetDate) {
+      if (!todayByTimezone) {
         stats.failed += 1;
         continue;
       }
+      const selectedReminderDays = normalizeLineReminderDaysBefore(config.reminderDaysBefore);
 
       const ownership = await loadOwnedProjectById({
         userId,
@@ -4643,101 +4721,124 @@ app.post('/internal/jobs/line/remind-due-tomorrow', async (req, res) => {
       }
 
       const ownerEvents = Array.isArray(ownership.payload?.events) ? ownership.payload.events : [];
-      const dueTasks = ownerEvents.filter((event) => {
+      const allOpenProjectTasks = ownerEvents.filter((event) => {
         if (!isTaskRecord(event)) return false;
         if (String(event?.projectId || '').trim() !== projectId) return false;
-        if (String(event?.endDate || '').trim() !== targetDate) return false;
-        const status = String(event?.status || '').trim().toLowerCase();
-        if (status === 'done' || status === 'completed') return false;
-        return true;
+        return !isCompletedTaskRecord(event);
       });
 
-      if (dueTasks.length === 0) {
+      if (allOpenProjectTasks.length === 0) {
         stats.skippedNoTask += 1;
         continue;
       }
 
-      const logDocRef = lineReminderLogRef.doc(lineReminderLogDocIdFor(userId, projectId, targetDate));
-      const shouldSend = await firestore.runTransaction(async (transaction) => {
-        const existingLogDoc = await transaction.get(logDocRef);
-        const logStatus = String(existingLogDoc.data()?.status || '').trim().toLowerCase();
-        if (existingLogDoc.exists && logStatus === 'sent') {
-          return false;
+      const teamMembers = Array.isArray(ownership.project?.teamMembers) ? ownership.project.teamMembers : [];
+      const teamMembersById = new Map();
+      teamMembers.forEach((member) => {
+        const memberId = String(member?.id || '').trim();
+        if (!memberId) return;
+        const memberName = String(member?.name || member?.username || '').trim() || memberId;
+        const memberAvatarUrl = String(member?.avatarUrl || '').trim();
+        const memberDepartment = String(member?.department || '').trim();
+        teamMembersById.set(memberId, {
+          id: memberId,
+          name: memberName,
+          avatarUrl: memberAvatarUrl,
+          department: memberDepartment,
+        });
+      });
+
+      for (const daysBefore of selectedReminderDays) {
+        const targetDate = shiftIsoDateByDays(todayByTimezone, daysBefore);
+        if (!targetDate) {
+          stats.failed += 1;
+          continue;
+        }
+        const dueCandidateTasks = allOpenProjectTasks.filter(
+          (event) => String(event?.endDate || '').trim() === targetDate
+        );
+        const dueTasks = selectLineReminderTasksForNotification(
+          dueCandidateTasks,
+          allOpenProjectTasks
+        );
+        if (dueTasks.length === 0) {
+          stats.skippedNoTask += 1;
+          continue;
         }
 
-        transaction.set(
-          logDocRef,
-          {
-            userId,
-            projectId,
+        const logDocRef = lineReminderLogRef.doc(
+          lineReminderLogDocIdFor(userId, projectId, targetDate, daysBefore)
+        );
+        const shouldSend = await firestore.runTransaction(async (transaction) => {
+          const existingLogDoc = await transaction.get(logDocRef);
+          const logStatus = String(existingLogDoc.data()?.status || '').trim().toLowerCase();
+          if (existingLogDoc.exists && logStatus === 'sent') {
+            return false;
+          }
+
+          transaction.set(
+            logDocRef,
+            {
+              userId,
+              projectId,
+              targetDate,
+              timezone,
+              reminderHour,
+              reminderDaysBefore: daysBefore,
+              status: 'sending',
+              taskCount: dueTasks.length,
+              updatedAt: now.toISOString(),
+              createdAt:
+                String(existingLogDoc.data()?.createdAt || '').trim() || now.toISOString(),
+            },
+            { merge: true }
+          );
+          return true;
+        });
+        if (!shouldSend) {
+          stats.skippedAlreadySent += 1;
+          continue;
+        }
+
+        try {
+          const message = buildLineReminderMessage({
+            projectName: ownership.project?.name || projectId,
             targetDate,
-            timezone,
-            reminderHour,
-            status: 'sending',
-            taskCount: dueTasks.length,
-            updatedAt: now.toISOString(),
-            createdAt:
-              String(existingLogDoc.data()?.createdAt || '').trim() || now.toISOString(),
-          },
-          { merge: true }
-        );
-        return true;
-      });
-      if (!shouldSend) {
-        stats.skippedAlreadySent += 1;
-        continue;
-      }
-
-      try {
-        const teamMembers = Array.isArray(ownership.project?.teamMembers) ? ownership.project.teamMembers : [];
-        const teamMembersById = new Map();
-        teamMembers.forEach((member) => {
-          const memberId = String(member?.id || '').trim();
-          if (!memberId) return;
-          const memberName = String(member?.name || member?.username || '').trim() || memberId;
-          const memberAvatarUrl = String(member?.avatarUrl || '').trim();
-          const memberDepartment = String(member?.department || '').trim();
-          teamMembersById.set(memberId, {
-            id: memberId,
-            name: memberName,
-            avatarUrl: memberAvatarUrl,
-            department: memberDepartment,
+            daysBefore,
+            tasks: dueTasks,
+            teamMembersById,
+            departmentColorMap: ownership.project?.departmentColors,
+            timezone: timezone,
           });
-        });
-        const message = buildLineReminderMessage({
-          projectName: ownership.project?.name || projectId,
-          targetDate,
-          tasks: dueTasks,
-          teamMembersById,
-          departmentColorMap: ownership.project?.departmentColors,
-          timezone: timezone,
-        });
-        await sendLinePushMessage({
-          channelAccessToken: config.channelAccessToken,
-          to: config.groupId,
-          messages: [message],
-        });
+          await sendLinePushMessage({
+            channelAccessToken: config.channelAccessToken,
+            to: config.groupId,
+            messages: [message],
+          });
 
-        await logDocRef.set(
-          {
-            status: 'sent',
-            sentAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            taskCount: dueTasks.length,
-          },
-          { merge: true }
-        );
-        stats.sent += 1;
-      } catch (error) {
-        await logDocRef.set(
-          {
-            status: 'failed',
-            errorMessage: String(error.message || '').slice(0, 400),
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-        stats.failed += 1;
+          await logDocRef.set(
+            {
+              status: 'sent',
+              sentAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              reminderDaysBefore: daysBefore,
+              taskCount: dueTasks.length,
+            },
+            { merge: true }
+          );
+          stats.sent += 1;
+        } catch (error) {
+          await logDocRef.set(
+            {
+              status: 'failed',
+              reminderDaysBefore: daysBefore,
+              errorMessage: String(error.message || '').slice(0, 400),
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+          stats.failed += 1;
+        }
       }
     }
 
