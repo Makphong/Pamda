@@ -16982,18 +16982,20 @@ function ProjectDashboard({
 			        onSave={(data) => { onSaveTask(data); setIsPaneOpen(false); }}
 			        onPatchTask={handlePatchTask}
               onCreateSubtask={openAddSubtask}
+              onOpenTask={openTaskDetail}
 			        onDelete={async (id) => {
             const deleted = await onDeleteTask(id);
             if (deleted !== false) {
               setIsPaneOpen(false);
             }
           }}
-		        currentUserId={currentUser.id}
-		        currentUserProfile={currentUser}
-		        isProjectHost={isProjectHost}
-		        teamMembers={teamMembers}
-		        TASK_STATUSES={TASK_STATUSES}
-		        DEPARTMENTS={DEPARTMENTS}
+			        currentUserId={currentUser.id}
+			        currentUserProfile={currentUser}
+			        isProjectHost={isProjectHost}
+              projectTasks={projectTasks}
+			        teamMembers={teamMembers}
+			        TASK_STATUSES={TASK_STATUSES}
+			        DEPARTMENTS={DEPARTMENTS}
           departmentColors={projectDepartmentColors}
 	      />
 
@@ -17304,10 +17306,12 @@ function TaskDetailPane({
   onSave,
   onPatchTask = null,
   onCreateSubtask = null,
+  onOpenTask = null,
   onDelete,
   currentUserId = '',
   currentUserProfile = null,
   isProjectHost = false,
+  projectTasks = [],
   teamMembers,
   TASK_STATUSES,
   DEPARTMENTS = [],
@@ -17315,6 +17319,12 @@ function TaskDetailPane({
 }) {
   const popup = usePopup();
   const [isEditing, setIsEditing] = useState(false);
+  const normalizeTaskStatusLocal = (valueInput) => {
+    const normalizedValue = String(valueInput || '').trim();
+    return Array.isArray(TASK_STATUSES) && TASK_STATUSES.includes(normalizedValue)
+      ? normalizedValue
+      : 'To Do';
+  };
 
   // Form states
   const [title, setTitle] = useState('');
@@ -17400,8 +17410,26 @@ function TaskDetailPane({
     [task?.comments]
   );
   const isExistingTask = Boolean(String(task?.id || '').trim());
+  const currentTaskId = String(task?.id || '').trim();
   const parentTaskId = getTaskParentId(task);
   const parentTaskTitle = String(task?.parentTaskTitle || '').trim();
+  const childSubtasks = useMemo(() => {
+    if (!currentTaskId) return [];
+    return (Array.isArray(projectTasks) ? projectTasks : [])
+      .filter((candidateTask) => getTaskParentId(candidateTask) === currentTaskId)
+      .sort((leftTask, rightTask) => {
+        const leftDate = String(leftTask?.endDate || '').trim();
+        const rightDate = String(rightTask?.endDate || '').trim();
+        if (leftDate && rightDate && leftDate !== rightDate) {
+          return leftDate.localeCompare(rightDate, undefined, { sensitivity: 'base' });
+        }
+        if (leftDate && !rightDate) return -1;
+        if (!leftDate && rightDate) return 1;
+        return String(leftTask?.title || '').localeCompare(String(rightTask?.title || ''), undefined, {
+          sensitivity: 'base',
+        });
+      });
+  }, [projectTasks, currentTaskId]);
   const topLevelTaskComments = useMemo(
     () =>
       currentTaskComments.filter(
@@ -17497,6 +17525,14 @@ function TaskDetailPane({
       color: colorHex,
     };
   };
+  const getTaskStatusBadgeClass = (statusInput) =>
+    normalizeTaskStatusLocal(statusInput) === 'Done'
+      ? 'bg-green-50 text-green-700 border-green-200'
+      : normalizeTaskStatusLocal(statusInput) === 'In Progress'
+        ? 'bg-blue-50 text-blue-700 border-blue-200'
+        : normalizeTaskStatusLocal(statusInput) === 'Review'
+          ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+          : 'bg-gray-50 text-gray-700 border-gray-200';
   const toggleAssigneeSelection = (memberId) => {
     const normalizedId = String(memberId || '').trim();
     if (!normalizedId) return;
@@ -18411,7 +18447,7 @@ function TaskDetailPane({
                 <h2 className="text-2xl font-bold text-gray-800 mb-4">{title}</h2>
               </div>
 
-	              <div className="grid grid-cols-[130px_1fr] items-center gap-y-6 text-sm">
+		              <div className="grid grid-cols-[130px_1fr] items-center gap-y-6 text-sm">
                 {parentTaskId ? (
                   <>
                     <div className="text-gray-500">Task หลัก</div>
@@ -18465,23 +18501,72 @@ function TaskDetailPane({
                 </div>
 
                 <div className="text-gray-500">ฝ่าย (Department)</div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {relatedDepartments.map((departmentName) => (
-                      <span
+	                <div>
+	                  <div className="flex flex-wrap items-center gap-1.5">
+	                    {relatedDepartments.map((departmentName) => (
+	                      <span
                         key={`task-related-view-dept-${departmentName}`}
                         className="px-2.5 py-1 rounded-md text-xs font-semibold border"
                         style={getDepartmentBadgeStyle(departmentName)}
                       >
                         {departmentName}
                       </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
+	                    ))}
+	                  </div>
+	                </div>
+	              </div>
 
-			              <div className="mt-4 pt-2">
-			                <h4 className="text-sm font-semibold text-gray-800 mb-3">คำอธิบาย</h4>
+                {!parentTaskId && isExistingTask && childSubtasks.length > 0 && (
+                  <div className="mt-2 pt-1">
+                    <h4 className="text-sm font-semibold text-gray-800 mb-2">
+                      Subtasks ({childSubtasks.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {childSubtasks.map((subtask, subtaskIndex) => {
+                        const subtaskAssignees = normalizeTaskAssigneeIds(subtask)
+                          .map((assigneeId) => getAssigneeById(assigneeId))
+                          .filter(Boolean);
+                        const subtaskAssigneeText =
+                          subtaskAssignees.length > 0
+                            ? subtaskAssignees.map((assignee) => assignee.name).join(', ')
+                            : 'Unassigned';
+                        return (
+                          <button
+                            key={`task-pane-subtask-${String(subtask?.id || '').trim() || String(subtask?.title || '').trim() || subtaskIndex}`}
+                            type="button"
+                            onClick={() => {
+                              if (typeof onOpenTask === 'function') {
+                                onOpenTask(subtask);
+                              }
+                            }}
+                            className="w-full text-left rounded-lg border border-gray-200 bg-gray-50 hover:bg-white hover:border-blue-200 transition-colors px-3 py-2"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-sm font-medium text-gray-800 truncate">
+                                {String(subtask?.title || '').trim() || 'Untitled subtask'}
+                              </p>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border shrink-0 ${getTaskStatusBadgeClass(subtask?.status)}`}
+                              >
+                                {normalizeTaskStatusLocal(subtask?.status)}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500">
+                              <Clock className="w-3.5 h-3.5" />
+                              <span>{String(subtask?.endDate || '').trim() || '-'}</span>
+                            </div>
+                            <p className="mt-1 text-[11px] text-gray-500 truncate">
+                              {subtaskAssigneeText}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+				              <div className="mt-4 pt-2">
+				                <h4 className="text-sm font-semibold text-gray-800 mb-3">คำอธิบาย</h4>
 			                {description ? (
 			                  <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100">
 			                    {description}
