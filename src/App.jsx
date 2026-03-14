@@ -768,6 +768,7 @@ const SUPPORT_TICKET_MAX_ATTACHMENTS = 3;
 const SUPPORT_TICKET_MAX_ATTACHMENT_BYTES = 220000;
 const SUPPORT_TICKET_MAX_MESSAGE_LENGTH = 4000;
 const TASK_COMMENT_MAX_LENGTH = 2000;
+const TASK_TODO_MAX_LENGTH = 240;
 const TASK_ATTACHMENT_MAX_FILES = 6;
 const TASK_ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
 const PROFILE_ADMIN_ACTIVE_RANGE_OPTIONS = [
@@ -1463,6 +1464,43 @@ const normalizeTaskAssigneeIds = (taskInput) => {
 const getTaskParentId = (taskInput) =>
   String(taskInput?.parentTaskId || '').trim();
 const isSubtaskRecord = (taskInput) => Boolean(getTaskParentId(taskInput));
+const normalizeTaskTodoEntry = (todoInput) => {
+  const todo =
+    todoInput && typeof todoInput === 'object' && !Array.isArray(todoInput)
+      ? todoInput
+      : {};
+  const text = String(todo.text || '').trim().slice(0, TASK_TODO_MAX_LENGTH);
+  if (!text) return null;
+  const createdAtRaw = String(todo.createdAt || '').trim();
+  const updatedAtRaw = String(todo.updatedAt || '').trim();
+  const createdAt =
+    createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime())
+      ? createdAtRaw
+      : new Date().toISOString();
+  const updatedAt =
+    updatedAtRaw && !Number.isNaN(new Date(updatedAtRaw).getTime())
+      ? updatedAtRaw
+      : createdAt;
+  return {
+    id: String(todo.id || generateId()).trim() || generateId(),
+    text,
+    checked: Boolean(todo.checked),
+    createdAt,
+    updatedAt,
+  };
+};
+const normalizeTaskTodoEntries = (todosInput) => {
+  const seenIds = new Set();
+  return (Array.isArray(todosInput) ? todosInput : [])
+    .map((todo) => normalizeTaskTodoEntry(todo))
+    .filter((todo) => {
+      if (!todo) return false;
+      const todoId = String(todo.id || '').trim();
+      if (!todoId || seenIds.has(todoId)) return false;
+      seenIds.add(todoId);
+      return true;
+    });
+};
 const normalizeTaskCommentEntry = (commentInput) => {
   const comment =
     commentInput && typeof commentInput === 'object' && !Array.isArray(commentInput)
@@ -8829,6 +8867,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       typeof taskData === 'object' &&
       !Array.isArray(taskData) &&
       Object.prototype.hasOwnProperty.call(taskData, 'attachments');
+    const hasTaskTodosField =
+      taskData &&
+      typeof taskData === 'object' &&
+      !Array.isArray(taskData) &&
+      Object.prototype.hasOwnProperty.call(taskData, 'taskTodos');
     const normalizedTaskData = {
       ...(taskData && typeof taskData === 'object' ? taskData : {}),
       assigneeIds: normalizedAssigneeIds,
@@ -8842,6 +8885,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     }
     if (hasAttachmentsField) {
       normalizedTaskData.attachments = normalizeTaskAttachmentEntries(taskData.attachments);
+    }
+    if (hasTaskTodosField) {
+      normalizedTaskData.taskTodos = normalizeTaskTodoEntries(taskData.taskTodos);
     }
     const isUpdate = Boolean(taskData?.id);
     const localTaskId = isUpdate ? String(taskData.id || '').trim() : generateId();
@@ -9164,7 +9210,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   };
 
   const handleEventClick = (event, e) => {
-    e.stopPropagation(); // Prevent triggering day click
+    if (e?.stopPropagation) {
+      e.stopPropagation(); // Prevent triggering day click
+    }
     if (event?.source === 'google') {
       void (async () => {
         const shouldDelete = await popup.confirm({
@@ -13676,10 +13724,28 @@ function ProjectDashboard({
       ? normalizedValue
       : DEFAULT_TASK_TIME_FILTER;
   };
+  const normalizeTaskDisplayFilterMode = (value) =>
+    String(value || '').trim() === 'standalone_and_subtask' ? 'standalone_and_subtask' : 'all';
   const normalizeTaskStatus = (value) => {
     const status = String(value || '').trim();
     return TASK_STATUSES.includes(status) ? status : 'To Do';
   };
+  const normalizeTaskStatusFilters = (valueInput) =>
+    Array.from(
+      new Set(
+        (Array.isArray(valueInput) ? valueInput : [])
+          .map((value) => String(value || '').trim())
+          .filter((value) => TASK_STATUSES.includes(value))
+      )
+    );
+  const normalizeTaskDepartmentFilters = (valueInput) =>
+    Array.from(
+      new Set(
+        (Array.isArray(valueInput) ? valueInput : [])
+          .map((value) => String(value || '').trim())
+          .filter(Boolean)
+      )
+    );
   const DEPARTMENTS = useMemo(
     () =>
       normalizeDepartments([
@@ -13938,6 +14004,7 @@ function ProjectDashboard({
 
     onUpdateProject(project.id, {
       notesPreferences: {
+        ...currentNotesPreferences,
         section: noteSection,
         selectedDepartment: selectedDepartmentNoteId,
         selectedMemberId: selectedMemberNoteId,
@@ -14063,14 +14130,121 @@ function ProjectDashboard({
   const [activeProjectLogMenuEntryId, setActiveProjectLogMenuEntryId] = useState('');
   const [draggingTaskId, setDraggingTaskId] = useState('');
   const [dragOverStatus, setDragOverStatus] = useState('');
+  const hasHydratedTaskFiltersRef = useRef(false);
   
   // Slide-over Pane State
   const [paneTask, setPaneTask] = useState(null);
   const [isPaneOpen, setIsPaneOpen] = useState(false);
-  
   useEffect(() => {
-    setAssigneeFilterIds(defaultTaskAssigneeFilterIds);
-  }, [project.id, defaultTaskAssigneeFilterIds]);
+    hasHydratedTaskFiltersRef.current = false;
+  }, [project.id, currentUser.id]);
+  useEffect(() => {
+    const nextNotesPreferences = resolveAccountScopedNotesPreferences(project.notesPreferences, {
+      currentUserId: currentUser.id,
+      projectOwnerId: project.ownerId,
+    });
+    const nextStatusFilter = normalizeTaskStatusFilters(nextNotesPreferences.taskStatusFilter);
+    const nextDeptFilter = normalizeTaskDepartmentFilters(nextNotesPreferences.taskDepartmentFilter);
+    const hasStoredAssigneeFilter = Object.prototype.hasOwnProperty.call(
+      nextNotesPreferences,
+      'taskAssigneeFilterIds'
+    );
+    const storedAssigneeFilterIds = normalizeTaskAssigneeIds({
+      assigneeIds: nextNotesPreferences.taskAssigneeFilterIds,
+    });
+    const nextAssigneeFilterIds = hasStoredAssigneeFilter
+      ? storedAssigneeFilterIds
+      : defaultTaskAssigneeFilterIds;
+    const nextTaskDisplayFilterMode = normalizeTaskDisplayFilterMode(
+      nextNotesPreferences.taskDisplayFilterMode
+    );
+    const nextTaskTimeFilter = normalizeTaskTimeFilter(nextNotesPreferences.taskTimeFilter);
+    const nextWorkloadRange = normalizeWorkloadRange(nextNotesPreferences.workloadRange);
+
+    setStatusFilter((prev) => (arePinnedIdListsEqual(prev, nextStatusFilter) ? prev : nextStatusFilter));
+    setDeptFilter((prev) => (arePinnedIdListsEqual(prev, nextDeptFilter) ? prev : nextDeptFilter));
+    setAssigneeFilterIds((prev) =>
+      arePinnedIdListsEqual(normalizeTaskAssigneeIds({ assigneeIds: prev }), nextAssigneeFilterIds)
+        ? prev
+        : nextAssigneeFilterIds
+    );
+    setTaskDisplayFilterMode((prev) =>
+      normalizeTaskDisplayFilterMode(prev) === nextTaskDisplayFilterMode
+        ? prev
+        : nextTaskDisplayFilterMode
+    );
+    setTaskTimeFilter((prev) =>
+      normalizeTaskTimeFilter(prev) === nextTaskTimeFilter ? prev : nextTaskTimeFilter
+    );
+    setWorkloadRange((prev) =>
+      normalizeWorkloadRange(prev) === nextWorkloadRange ? prev : nextWorkloadRange
+    );
+    hasHydratedTaskFiltersRef.current = true;
+  }, [
+    project.id,
+    project.notesPreferences,
+    project.ownerId,
+    currentUser.id,
+    defaultTaskAssigneeFilterIds,
+  ]);
+  useEffect(() => {
+    if (!hasHydratedTaskFiltersRef.current) return;
+    const currentNotesPreferences = resolveAccountScopedNotesPreferences(project.notesPreferences, {
+      currentUserId: currentUser.id,
+      projectOwnerId: project.ownerId,
+    });
+    const nextStatusFilter = normalizeTaskStatusFilters(statusFilter);
+    const nextDeptFilter = normalizeTaskDepartmentFilters(deptFilter);
+    const nextAssigneeFilterIds = normalizeTaskAssigneeIds({ assigneeIds: assigneeFilterIds });
+    const nextTaskDisplayFilterMode = normalizeTaskDisplayFilterMode(taskDisplayFilterMode);
+    const nextTaskTimeFilter = normalizeTaskTimeFilter(taskTimeFilter);
+    const nextWorkloadRange = normalizeWorkloadRange(workloadRange);
+
+    const currentStatusFilter = normalizeTaskStatusFilters(currentNotesPreferences.taskStatusFilter);
+    const currentDeptFilter = normalizeTaskDepartmentFilters(currentNotesPreferences.taskDepartmentFilter);
+    const currentAssigneeFilterIds = normalizeTaskAssigneeIds({
+      assigneeIds: currentNotesPreferences.taskAssigneeFilterIds,
+    });
+    const currentTaskDisplayFilterMode = normalizeTaskDisplayFilterMode(
+      currentNotesPreferences.taskDisplayFilterMode
+    );
+    const currentTaskTimeFilter = normalizeTaskTimeFilter(currentNotesPreferences.taskTimeFilter);
+    const currentWorkloadRange = normalizeWorkloadRange(currentNotesPreferences.workloadRange);
+
+    const hasChanges =
+      !arePinnedIdListsEqual(currentStatusFilter, nextStatusFilter) ||
+      !arePinnedIdListsEqual(currentDeptFilter, nextDeptFilter) ||
+      !arePinnedIdListsEqual(currentAssigneeFilterIds, nextAssigneeFilterIds) ||
+      currentTaskDisplayFilterMode !== nextTaskDisplayFilterMode ||
+      currentTaskTimeFilter !== nextTaskTimeFilter ||
+      currentWorkloadRange !== nextWorkloadRange;
+    if (!hasChanges) return;
+
+    onUpdateProject(project.id, {
+      notesPreferences: {
+        ...currentNotesPreferences,
+        taskStatusFilter: nextStatusFilter,
+        taskDepartmentFilter: nextDeptFilter,
+        taskAssigneeFilterIds: nextAssigneeFilterIds,
+        taskDisplayFilterMode: nextTaskDisplayFilterMode,
+        taskTimeFilter: nextTaskTimeFilter,
+        workloadRange: nextWorkloadRange,
+        userId: currentUser.id,
+      },
+    });
+  }, [
+    statusFilter,
+    deptFilter,
+    assigneeFilterIds,
+    taskDisplayFilterMode,
+    taskTimeFilter,
+    workloadRange,
+    project.id,
+    project.notesPreferences,
+    project.ownerId,
+    currentUser.id,
+    onUpdateProject,
+  ]);
   useEffect(() => {
     if (!isPaneOpen) return;
     const paneTaskId = String(paneTask?.id || '').trim();
@@ -14103,15 +14277,12 @@ function ProjectDashboard({
       ));
   const isTaskDisplayFilterActive = taskDisplayFilterMode !== 'all';
   const isTaskTimeFilterActive = normalizeTaskTimeFilter(taskTimeFilter) !== DEFAULT_TASK_TIME_FILTER;
-  const isWorkloadRangeFilterActive =
-    normalizeWorkloadRange(workloadRange) !== DEFAULT_WORKLOAD_RANGE;
-  const isTaskFilterActive =
+  const isTaskFilterPopupActive =
     statusFilter.length > 0 ||
     deptFilter.length > 0 ||
     hasCustomizedAssigneeFilter ||
     isTaskDisplayFilterActive ||
-    isTaskTimeFilterActive ||
-    isWorkloadRangeFilterActive;
+    isTaskTimeFilterActive;
   const projectTasks = useMemo(
     () =>
       (Array.isArray(events) ? events : []).filter((ev) => {
@@ -14303,6 +14474,7 @@ function ProjectDashboard({
         monthLabel: fallbackDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
       };
     }
+    // Use the primary month by day count inside the week.
     const monthCounts = new Map();
     let primaryMonthKey = `${safeWeekStart.getFullYear()}-${safeWeekStart.getMonth()}`;
     let primaryMonthCount = 0;
@@ -14486,6 +14658,7 @@ function ProjectDashboard({
     }));
     const rowByMemberId = new Map(rows.map((row) => [String(row.member?.id || '').trim(), row]));
     workloadTasksWithMeta.forEach((entry) => {
+      const shouldCountTask = normalizeTaskStatus(entry?.task?.status) !== 'Done';
       const assigneeIds = normalizeTaskAssigneeIds(entry.task);
       assigneeIds.forEach((assigneeId) => {
         const row = rowByMemberId.get(String(assigneeId || '').trim());
@@ -14494,7 +14667,9 @@ function ProjectDashboard({
           row.tasksByWeek[entry.weekKey] = [];
         }
         row.tasksByWeek[entry.weekKey].push(entry.task);
-        row.taskCount += 1;
+        if (shouldCountTask) {
+          row.taskCount += 1;
+        }
       });
     });
     return rows;
@@ -14606,6 +14781,9 @@ function ProjectDashboard({
       if (Object.prototype.hasOwnProperty.call(patch, 'attachments')) {
         patch.attachments = normalizeTaskAttachmentEntries(patch.attachments);
       }
+      if (Object.prototype.hasOwnProperty.call(patch, 'taskTodos')) {
+        patch.taskTodos = normalizeTaskTodoEntries(patch.taskTodos);
+      }
       if (Object.keys(patch).length === 0) return;
       onUpdateEvent(taskId, patch);
       setPaneTask((prevTask) => {
@@ -14656,6 +14834,7 @@ function ProjectDashboard({
       isSubtask: true,
       attachments: [],
       comments: [],
+      taskTodos: [],
       __isTaskDraft: true,
     });
     setIsPaneOpen(true);
@@ -15139,9 +15318,9 @@ function ProjectDashboard({
 	                    >
                       <Filter className="w-4 h-4 text-gray-500" />
                       <span>ฟิลเตอร์</span>
-                      {isTaskFilterActive && (
-                        <span className="absolute top-1.5 right-1.5 md:static md:ml-1 w-2 h-2 rounded-full bg-blue-500"></span>
-                      )}
+	                      {isTaskFilterPopupActive && (
+	                        <span className="absolute top-1.5 right-1.5 md:static md:ml-1 w-2 h-2 rounded-full bg-blue-500"></span>
+	                      )}
                     </button>
                     
 	                    {/* Filter Popup */}
@@ -15293,34 +15472,35 @@ function ProjectDashboard({
 			                                setAssigneeFilterIds([]);
                                   setTaskDisplayFilterMode('all');
                                   setTaskTimeFilter(DEFAULT_TASK_TIME_FILTER);
-                                  setWorkloadRange(DEFAULT_WORKLOAD_RANGE);
-			                              }}
-                              className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={!isTaskFilterActive}
-                            >
-                              ล้างฟิลเตอร์ทั้งหมด
-                            </button>
+				                              }}
+	                              className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+	                              disabled={!isTaskFilterPopupActive}
+	                            >
+	                              ล้างฟิลเตอร์ทั้งหมด
+	                            </button>
                           </div>
 	                        </div>
 	                      </div>
 	                    )}
 	                  </div>
-                    <div className="relative shrink-0">
-                      <select
-                        value={normalizeWorkloadRange(workloadRange)}
-                        onChange={(event) => setWorkloadRange(normalizeWorkloadRange(event.target.value))}
-                        className="h-10 md:h-auto appearance-none bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 md:px-3.5 py-2 rounded-lg text-xs md:text-sm font-medium pr-8 shadow-sm outline-none"
-                        title="Work load range"
-                      >
-                        {WORKLOAD_RANGE_OPTIONS.map((option) => (
-                          <option key={`workload-range-outside-${option.id}`} value={option.id}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                    </div>
-                  </div>
+                    {taskView === 'workload' && (
+	                      <div className="relative shrink-0">
+	                        <select
+	                          value={normalizeWorkloadRange(workloadRange)}
+	                          onChange={(event) => setWorkloadRange(normalizeWorkloadRange(event.target.value))}
+	                          className="h-10 w-[110px] md:h-auto md:w-[116px] appearance-none bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 md:px-3.5 py-2 rounded-lg text-xs md:text-sm font-medium pr-8 shadow-sm outline-none"
+	                          title="Work load range"
+	                        >
+	                          {WORKLOAD_RANGE_OPTIONS.map((option) => (
+	                            <option key={`workload-range-outside-${option.id}`} value={option.id}>
+	                              {option.label}
+	                            </option>
+	                          ))}
+	                        </select>
+	                        <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+	                      </div>
+                    )}
+	                  </div>
                   
 		                  <div className="flex items-center gap-2 md:gap-3 shrink-0 md:ml-auto">
 			                    <div className="flex items-center bg-white border border-gray-200 rounded-lg p-1 shadow-sm shrink-0">
@@ -15518,17 +15698,18 @@ function ProjectDashboard({
 	                                      ลากงานมาวางที่นี่
 	                                    </div>
 	                                  ) : (
-		                                    columnTasks.map((task) => {
-		                                      const taskAssignees = getTaskAssignees(task);
-		                                      const extraAssigneeCount = Math.max(0, taskAssignees.length - 3);
+                                    columnTasks.map((task) => {
+                                      const taskAssignees = getTaskAssignees(task);
+                                      const extraAssigneeCount = Math.max(0, taskAssignees.length - 3);
                                       const parentTaskId = getTaskParentId(task);
                                       const parentTask = parentTaskId ? taskById.get(parentTaskId) : null;
                                       const parentTaskTitle =
                                         String(task?.parentTaskTitle || '').trim() ||
                                         String(parentTask?.title || '').trim();
                                       const subtaskCount = Number(subtaskCountByParentId.get(String(task?.id || '').trim()) || 0);
-		                                      return (
-		                                        <article
+                                      const taskCommentCount = normalizeTaskCommentEntries(task?.comments).length;
+                                      return (
+                                        <article
 	                                          key={task.id}
 	                                          draggable
 	                                          onDragStart={(event) => handleTaskDragStart(task.id, event)}
@@ -15564,9 +15745,9 @@ function ProjectDashboard({
 	                                              </span>
 	                                            ) : null}
 	                                          </p>
-	                                          <div className="mt-3 flex items-center justify-between gap-2">
-	                                            <div className="flex -space-x-2">
-	                                              {taskAssignees.slice(0, 3).map((assignee, index) => (
+                                          <div className="mt-3 flex items-center justify-between gap-2">
+                                            <div className="flex -space-x-2">
+                                              {taskAssignees.slice(0, 3).map((assignee, index) => (
 	                                                <span
 	                                                  key={`board-assignee-${task.id}-${assignee.id || assignee.name}-${index}`}
 	                                                >
@@ -15581,16 +15762,22 @@ function ProjectDashboard({
 	                                              {extraAssigneeCount > 0 && (
 	                                                <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-gray-100 border border-gray-200 text-[10px] font-semibold text-gray-600 ring-2 ring-white shadow-sm">
 	                                                  +{extraAssigneeCount}
-	                                                </span>
-	                                              )}
-	                                            </div>
-	                                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusToneClass}`}>
-	                                              {normalizeTaskStatus(task.status)}
-	                                            </span>
-	                                          </div>
-	                                        </article>
-	                                      );
-	                                    })
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="flex items-center gap-1.5 shrink-0">
+                                              <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                                                <MessageSquare className="w-3 h-3" />
+                                                {taskCommentCount}
+                                              </span>
+                                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusToneClass}`}>
+                                                {normalizeTaskStatus(task.status)}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        </article>
+                                      );
+                                    })
 	                                  )}
 	                                </div>
 	                              </section>
@@ -15610,26 +15797,33 @@ function ProjectDashboard({
 	                          <table className="w-full min-w-[980px] border-separate border-spacing-0 text-sm">
 	                            <thead>
 		                              <tr>
-		                                <th
-		                                  rowSpan={2}
-		                                  className="sticky left-0 z-10 bg-white border-r border-b border-gray-200 px-3 py-3 text-center align-middle w-[168px] min-w-[168px] max-w-[168px]"
-		                                >
-		                                  <span className="block text-xs font-semibold uppercase tracking-wider text-gray-500 text-center">
-		                                    Team Members
-		                                  </span>
-	                                </th>
+			                                <th
+			                                  rowSpan={2}
+			                                  className="sticky left-0 z-10 bg-white border-r border-b border-gray-200 px-3 py-3 text-center align-middle w-[168px] min-w-[168px] max-w-[168px]"
+			                                >
+			                                  <span className="block text-xs font-semibold uppercase tracking-wider text-gray-500 text-center">
+			                                    Team Members
+			                                  </span>
+		                                </th>
                                 <th
                                   colSpan={Math.max(1, workloadWeekColumns.length)}
-                                  className="border-b border-gray-200 bg-gray-50/70 p-0"
+                                  className="border-b border-gray-200 bg-gray-50/70 p-0 h-11"
                                 >
-                                  <div className="flex w-full">
-                                    {(Array.isArray(workloadMonthHeader.segments)
+                                  <div className="flex w-full h-11">
+                                    {(Array.isArray(workloadMonthHeader.segments) &&
+                                    workloadMonthHeader.segments.length > 0
                                       ? workloadMonthHeader.segments
-                                      : []
+                                      : [
+                                          {
+                                            key: 'workload-month-fallback',
+                                            label: '-',
+                                            daySpan: Math.max(1, Number(workloadMonthHeader.totalDays || 1)),
+                                          },
+                                        ]
                                     ).map((segment, segmentIndex, segmentArray) => (
                                       <div
                                         key={`workload-month-segment-${segment.key}-${segmentIndex}`}
-                                        className={`py-2 text-center text-sm font-semibold text-gray-700 ${
+                                        className={`h-full px-1 inline-flex items-center justify-center text-center text-sm font-semibold text-gray-700 whitespace-nowrap overflow-hidden text-ellipsis ${
                                           segmentIndex < segmentArray.length - 1
                                             ? 'border-r border-r-gray-300'
                                             : ''
@@ -15643,7 +15837,7 @@ function ProjectDashboard({
                                     ))}
                                   </div>
                                 </th>
-	                              </tr>
+			                              </tr>
 	                              <tr>
 	                                {workloadWeekColumns.map((column) => (
 	                                  <th
@@ -15735,70 +15929,86 @@ function ProjectDashboard({
 	                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
 		                        {filteredTasks.map(task => {
 		                          const taskAssignees = getTaskAssignees(task);
-		                          const primaryAssignee = taskAssignees[0] || getAssignee('');
-		                          const extraAssigneeCount = Math.max(0, taskAssignees.length - 1);
+		                          const extraAssigneeCount = Math.max(0, taskAssignees.length - 3);
                             const parentTaskId = getTaskParentId(task);
                             const parentTask = parentTaskId ? taskById.get(parentTaskId) : null;
                             const parentTaskTitle =
                               String(task?.parentTaskTitle || '').trim() ||
                               String(parentTask?.title || '').trim();
                             const subtaskCount = Number(subtaskCountByParentId.get(String(task?.id || '').trim()) || 0);
+                            const taskCommentCount = normalizeTaskCommentEntries(task?.comments).length;
+                            const normalizedTaskStatus = normalizeTaskStatus(task.status);
+                            const taskStatusToneClass =
+                              normalizedTaskStatus === 'Done'
+                                ? 'bg-green-50 text-green-700 border-green-200'
+                                : normalizedTaskStatus === 'In Progress'
+                                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                  : normalizedTaskStatus === 'Review'
+                                    ? 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                                    : 'bg-gray-50 text-gray-700 border-gray-200';
 		                          return (
-		                            <div key={task.id} className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col group cursor-pointer" onClick={() => openTaskDetail(task)}>
-                              <div className="flex justify-between items-start mb-4">
-                                <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-[11px] font-medium border border-gray-200 truncate max-w-[100px]">{task.department || 'Unassigned'}</span>
-                                <div className="relative" onClick={(e) => e.stopPropagation()}>
-                                  <select
-                                    value={task.status || 'To Do'}
-                                    onChange={(e) => handleStatusChange(task.id, e.target.value)}
-                                    className={`text-[10px] font-bold rounded-full pl-2 pr-6 py-1 outline-none cursor-pointer appearance-none border transition-colors
-                                      ${task.status === 'Done' ? 'bg-green-50 text-green-700 border-green-200' : 
-                                        task.status === 'In Progress' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
-                                        task.status === 'Review' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' : 
-                                        'bg-gray-50 text-gray-700 border-gray-200'}
-                                    `}
-                                  >
-                                    {TASK_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                                  </select>
-                                  <ChevronDown className="w-3 h-3 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none opacity-60" />
-                                </div>
-                              </div>
-		                              <h4 className="font-semibold text-gray-800 mb-1 leading-tight group-hover:text-blue-600 transition-colors">{task.title}</h4>
+		                            <div
+                                key={task.id}
+                                className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm hover:shadow-md transition cursor-pointer"
+                                onClick={() => openTaskDetail(task)}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+		                                <h4 className="text-sm font-semibold text-gray-800 leading-snug line-clamp-2">{task.title}</h4>
                                   {parentTaskTitle ? (
-                                    <p className="text-[11px] text-blue-600 mb-2 truncate">Subtask of: {parentTaskTitle}</p>
+                                      <p className="mt-1 text-[10px] text-blue-600 truncate">Subtask of: {parentTaskTitle}</p>
                                   ) : subtaskCount > 0 ? (
-                                    <p className="text-[11px] text-gray-500 mb-2 truncate">{subtaskCount} subtasks</p>
-                                  ) : (
-                                    <div className="mb-2" />
-                                  )}
-		                              <p className="text-xs text-gray-500 mb-5 flex items-center gap-1.5">
-                                <Clock className="w-3.5 h-3.5" /> {task.endDate}
-                                {String(task.endTime || '').trim() ? (
-                                  <span className="bg-gray-100 px-1.5 rounded">{task.endTime}</span>
-                                ) : null}
-                              </p>
-		                              <div className="flex items-center gap-2.5 mt-auto pt-4 border-t border-gray-100">
-		                                <UserAvatar
-		                                  user={primaryAssignee}
-		                                  sizeClass="w-7 h-7"
-		                                  textClass="text-[10px]"
-		                                  ringClass="ring-1 ring-white shadow-sm"
-		                                />
-		                                <div className="flex-1 overflow-hidden">
-	                                  <span className="text-sm text-gray-700 font-medium block truncate">
-	                                    {primaryAssignee.name}
-	                                    {extraAssigneeCount > 0 ? ` +${extraAssigneeCount}` : ''}
-	                                  </span>
-	                                  <span className="text-[10px] text-gray-400 block truncate">
-	                                    {primaryAssignee.position || primaryAssignee.role || 'Team Member'}
-	                                  </span>
-	                                </div>
-	                              </div>
-	                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                                      <p className="mt-1 text-[10px] text-gray-500 truncate">{subtaskCount} subtasks</p>
+                                    ) : null}
+                                  </div>
+                                  <span className="text-[10px] text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded shrink-0">
+                                    {task.department || 'Unassigned'}
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-[11px] text-gray-500 flex items-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5" />
+                                  <span>{task.endDate || '-'}</span>
+                                  {String(task.endTime || '').trim() ? (
+                                    <span className="bg-gray-100 border border-gray-200 px-1 rounded">
+                                      {task.endTime}
+                                    </span>
+                                  ) : null}
+                                </p>
+                                <div className="mt-3 flex items-center justify-between gap-2">
+                                  <div className="flex -space-x-2">
+                                    {taskAssignees.slice(0, 3).map((assignee, index) => (
+                                      <span
+                                        key={`gallery-assignee-${task.id}-${assignee.id || assignee.name}-${index}`}
+                                      >
+                                        <UserAvatar
+                                          user={assignee}
+                                          sizeClass="w-7 h-7"
+                                          textClass="text-[10px]"
+                                          ringClass="ring-2 ring-white shadow-sm"
+                                        />
+                                      </span>
+                                    ))}
+                                    {extraAssigneeCount > 0 && (
+                                      <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-gray-100 border border-gray-200 text-[10px] font-semibold text-gray-600 ring-2 ring-white shadow-sm">
+                                        +{extraAssigneeCount}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                                      <MessageSquare className="w-3 h-3" />
+                                      {taskCommentCount}
+                                    </span>
+                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${taskStatusToneClass}`}>
+                                      {normalizedTaskStatus}
+                                    </span>
+                                  </div>
+                                </div>
+		                            </div>
+	                          );
+	                        })}
+	                      </div>
+	                    )}
                   </>
                 )}
               </div>
@@ -17339,6 +17549,10 @@ function TaskDetailPane({
   const [hasStartTime, setHasStartTime] = useState(false);
   const [endTime, setEndTime] = useState('');
   const [description, setDescription] = useState('');
+  const [taskTodos, setTaskTodos] = useState([]);
+  const [newTodoText, setNewTodoText] = useState('');
+  const [isTaskTodoComposerOpen, setIsTaskTodoComposerOpen] = useState(false);
+  const taskTodoInputRef = useRef(null);
   const attachmentFileInputRef = useRef(null);
   const [newCommentText, setNewCommentText] = useState('');
   const [replyTargetCommentId, setReplyTargetCommentId] = useState('');
@@ -17508,6 +17722,145 @@ function TaskDetailPane({
       onPatchTask(task.id, patch);
     },
     [task?.id, onPatchTask]
+  );
+  const persistTaskTodos = useCallback(
+    (nextTodosInput) => {
+      const normalizedTodos = normalizeTaskTodoEntries(nextTodosInput);
+      setTaskTodos(normalizedTodos);
+      if (isExistingTask) {
+        patchCurrentTask({
+          taskTodos: normalizedTodos,
+        });
+      }
+      return normalizedTodos;
+    },
+    [isExistingTask, patchCurrentTask]
+  );
+  const handleAddTaskTodo = () => {
+    const todoText = String(newTodoText || '').trim().slice(0, TASK_TODO_MAX_LENGTH);
+    if (!todoText) return;
+    const nowIso = new Date().toISOString();
+    persistTaskTodos([
+      ...taskTodos,
+      {
+        id: generateId(),
+        text: todoText,
+        checked: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      },
+    ]);
+    setNewTodoText('');
+    setIsTaskTodoComposerOpen(false);
+  };
+  const toggleTaskTodoComposer = () => {
+    setIsTaskTodoComposerOpen((prevOpen) => {
+      const nextOpen = !prevOpen;
+      if (!nextOpen) {
+        setNewTodoText('');
+      }
+      return nextOpen;
+    });
+  };
+  const handleTaskTodoKeyDown = (event) => {
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    event.preventDefault();
+    handleAddTaskTodo();
+  };
+  const handleToggleTaskTodo = (todoIdInput) => {
+    const todoId = String(todoIdInput || '').trim();
+    if (!todoId) return;
+    const nowIso = new Date().toISOString();
+    persistTaskTodos(
+      taskTodos.map((todo) =>
+        String(todo?.id || '').trim() === todoId
+          ? {
+              ...todo,
+              checked: !Boolean(todo?.checked),
+              updatedAt: nowIso,
+            }
+          : todo
+      )
+    );
+  };
+  const handleDeleteTaskTodo = (todoIdInput) => {
+    const todoId = String(todoIdInput || '').trim();
+    if (!todoId) return;
+    persistTaskTodos(
+      taskTodos.filter((todo) => String(todo?.id || '').trim() !== todoId)
+    );
+  };
+  const renderTaskTodoSection = ({ className = 'border-t pt-5 border-gray-100 space-y-3' } = {}) => (
+    <div className={className}>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold text-gray-800 inline-flex items-center gap-2">
+          <CheckSquare className="w-4 h-4 text-gray-500" />
+          Todo ({taskTodos.length})
+        </h4>
+        <button
+          type="button"
+          onClick={toggleTaskTodoComposer}
+          className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="เพิ่ม Todo"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+      </div>
+      {isTaskTodoComposerOpen && (
+        <div className="rounded-lg border border-gray-200 bg-white p-1.5 flex items-center gap-1.5">
+          <input
+            ref={taskTodoInputRef}
+            type="text"
+            value={newTodoText}
+            onChange={(event) => setNewTodoText(event.target.value)}
+            onKeyDown={handleTaskTodoKeyDown}
+            maxLength={TASK_TODO_MAX_LENGTH}
+            placeholder="เพิ่ม Todo..."
+            className="flex-1 min-w-0 rounded-md border-0 bg-transparent px-2 py-1.5 text-sm text-gray-700 outline-none focus:ring-0"
+          />
+          <button
+            type="button"
+            onClick={handleAddTaskTodo}
+            disabled={!String(newTodoText || '').trim()}
+            className="px-3 py-1.5 rounded-md bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            ยืนยัน
+          </button>
+        </div>
+      )}
+      {taskTodos.length > 0 && (
+        <div className="space-y-1.5">
+          {taskTodos.map((todo) => (
+            <div
+              key={todo.id}
+              className="group flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-2"
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(todo.checked)}
+                onChange={() => handleToggleTaskTodo(todo.id)}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span
+                className={`min-w-0 flex-1 text-sm ${
+                  todo.checked ? 'text-gray-400 line-through' : 'text-gray-700'
+                }`}
+              >
+                {todo.text}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleDeleteTaskTodo(todo.id)}
+                className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity"
+                title="Delete todo"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
   const getDepartmentBadgeStyle = (departmentName) => {
     const safeDepartment = String(departmentName || '').trim() || 'Unassigned';
@@ -18101,6 +18454,8 @@ function TaskDetailPane({
         setStartTime(hasTaskStartTime ? taskStartTime : '');
         setEndTime(String(task.endTime || '').trim());
         setDescription(task.description || '');
+        setTaskTodos(normalizeTaskTodoEntries(task.taskTodos));
+        setIsTaskTodoComposerOpen(false);
         setTaskAttachments(normalizeTaskAttachmentEntries(task.attachments));
       } else {
         setIsEditing(true);
@@ -18122,6 +18477,8 @@ function TaskDetailPane({
         setStartTime('');
         setEndTime('');
         setDescription('');
+        setTaskTodos([]);
+        setIsTaskTodoComposerOpen(false);
         setTaskAttachments([]);
       }
       setIsAssigneePickerOpen(false);
@@ -18129,15 +18486,20 @@ function TaskDetailPane({
   }, [task, isOpen, teamMembers, currentUserId]);
   useEffect(() => {
     if (!isOpen) {
+      setNewTodoText('');
+      setIsTaskTodoComposerOpen(false);
       setNewCommentText('');
       setReplyTargetCommentId('');
       setReplyDraftText('');
+      setTaskTodos([]);
       setTaskAttachments([]);
       setAttachmentUploadIssues([]);
       setIsUploadingAttachment(false);
       setHasShownTaskCommentNotifyWarning(false);
       return;
     }
+    setNewTodoText('');
+    setIsTaskTodoComposerOpen(false);
     setNewCommentText('');
     setReplyTargetCommentId('');
     setReplyDraftText('');
@@ -18147,6 +18509,13 @@ function TaskDetailPane({
       attachmentFileInputRef.current.value = '';
     }
   }, [isOpen, task?.id]);
+  useEffect(() => {
+    if (!isTaskTodoComposerOpen) return;
+    const rafId = window.requestAnimationFrame(() => {
+      taskTodoInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [isTaskTodoComposerOpen]);
   useEffect(() => {
     if (!isOpen) return;
     const linkedDepartment = resolveDepartmentForAssignees(assigneeIds, department);
@@ -18185,6 +18554,7 @@ function TaskDetailPane({
       hasExplicitStartDate: Boolean(hasStartDate && String(startDate || '').trim()),
       hasExplicitStartTime: Boolean(hasStartTime && String(startTime || '').trim()),
       description,
+      taskTodos: normalizeTaskTodoEntries(taskTodos),
       attachments: normalizeTaskAttachmentEntries(taskAttachments),
       parentTaskId,
       parentTaskTitle,
@@ -18429,17 +18799,18 @@ function TaskDetailPane({
                 </div>
               </div>
 
-	              <div className="mt-2 border-t pt-5 border-gray-100">
-	                <div className="text-gray-500 flex items-center gap-2 mb-3 text-sm"><AlignLeft className="w-4 h-4" /> คำอธิบาย (Description)</div>
-	                <textarea 
+		              <div className="mt-2 border-t pt-5 border-gray-100">
+		                <div className="text-gray-500 flex items-center gap-2 mb-3 text-sm"><AlignLeft className="w-4 h-4" /> คำอธิบาย (Description)</div>
+		                <textarea 
 	                  placeholder="เพิ่มคำอธิบายรายละเอียดงาน..."
                   value={description}
                   onChange={e => setDescription(e.target.value)}
-	                  className="w-full border-gray-300 border rounded-lg p-3 bg-gray-50 min-h-[150px] outline-none focus:ring-2 focus:ring-blue-500 resize-y text-sm"
-	                ></textarea>
-	              </div>
+		                  className="w-full border-gray-300 border rounded-lg p-3 bg-gray-50 min-h-[150px] outline-none focus:ring-2 focus:ring-blue-500 resize-y text-sm"
+		                ></textarea>
+		              </div>
+                {renderTaskTodoSection({ className: 'border-t pt-5 border-gray-100 space-y-3' })}
                 {renderTaskAttachmentSection({ className: 'border-t pt-5 border-gray-100 space-y-3' })}
-	            </form>
+		            </form>
           ) : (
             // --- View Mode ---
             <div className="p-6 flex flex-col gap-6">
@@ -18565,18 +18936,19 @@ function TaskDetailPane({
                   </div>
                 )}
 
-				              <div className="mt-4 pt-2">
-				                <h4 className="text-sm font-semibold text-gray-800 mb-3">คำอธิบาย</h4>
-			                {description ? (
+					              <div className="mt-4 pt-2">
+					                <h4 className="text-sm font-semibold text-gray-800 mb-3">คำอธิบาย</h4>
+				                {description ? (
 			                  <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100">
 			                    {description}
 			                  </p>
-		                ) : (
-			                  <p className="text-sm text-gray-400 italic">ไม่มีคำอธิบายเพิ่มเติม</p>
-			                )}
-			              </div>
+				                ) : (
+				                  <p className="text-sm text-gray-400 italic">ไม่มีคำอธิบายเพิ่มเติม</p>
+				                )}
+				              </div>
 
-				              {renderTaskAttachmentSection()}
+                {renderTaskTodoSection({ className: 'space-y-3' })}
+					              {renderTaskAttachmentSection()}
 
 				              <div className="border-t pt-6 border-gray-100 space-y-2.5">
 			                <div className="flex items-center gap-2">
@@ -30415,6 +30787,24 @@ function MonthGrid({
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
       date.getDate()
     ).padStart(2, '0')}`;
+  const parseLocalDateStr = (value) => {
+    const raw = String(value || '').trim();
+    const matched = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!matched) return null;
+    const yearValue = Number(matched[1]);
+    const monthValue = Number(matched[2]);
+    const dayValue = Number(matched[3]);
+    const parsed = new Date(yearValue, monthValue - 1, dayValue, 0, 0, 0, 0);
+    if (
+      Number.isNaN(parsed.getTime()) ||
+      parsed.getFullYear() !== yearValue ||
+      parsed.getMonth() !== monthValue - 1 ||
+      parsed.getDate() !== dayValue
+    ) {
+      return null;
+    }
+    return parsed;
+  };
   const TIME_PATTERN = /^\d{2}:\d{2}$/;
   const shouldShowEventTime = (event) => {
     if (!event) return false;
@@ -30434,6 +30824,71 @@ function MonthGrid({
 
     return true;
   };
+  const dayQuickPanelRef = useRef(null);
+  const [activeDayQuickPanelDate, setActiveDayQuickPanelDate] = useState('');
+  const dayEventsByDate = useMemo(() => {
+    const mapped = {};
+    (Array.isArray(events) ? events : []).forEach((event) => {
+      const startDate = parseLocalDateStr(event?.startDate);
+      const endDate = parseLocalDateStr(event?.endDate || event?.startDate);
+      if (!startDate || !endDate) return;
+      const rangeStart = startDate <= endDate ? startDate : endDate;
+      const rangeEnd = endDate >= startDate ? endDate : startDate;
+      const cursor = new Date(rangeStart.getTime());
+      let guard = 0;
+      while (cursor <= rangeEnd && guard < 370) {
+        const key = toDateStr(cursor);
+        if (!Array.isArray(mapped[key])) mapped[key] = [];
+        mapped[key].push(event);
+        cursor.setDate(cursor.getDate() + 1);
+        guard += 1;
+      }
+    });
+    Object.keys(mapped).forEach((dateKey) => {
+      mapped[dateKey].sort((left, right) => {
+        const leftHasTime = shouldShowEventTime(left);
+        const rightHasTime = shouldShowEventTime(right);
+        if (leftHasTime !== rightHasTime) {
+          return leftHasTime ? -1 : 1;
+        }
+        const leftStartTime = String(left?.startTime || '').trim();
+        const rightStartTime = String(right?.startTime || '').trim();
+        if (leftStartTime && rightStartTime && leftStartTime !== rightStartTime) {
+          return leftStartTime.localeCompare(rightStartTime, undefined, { sensitivity: 'base' });
+        }
+        return String(left?.title || '').localeCompare(String(right?.title || ''), undefined, {
+          sensitivity: 'base',
+        });
+      });
+    });
+    return mapped;
+  }, [events]);
+  const formatDayQuickPanelDateLabel = (dateStr) => {
+    const parsed = parseLocalDateStr(dateStr);
+    if (!parsed) return dateStr;
+    return parsed.toLocaleDateString('th-TH', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  };
+  useEffect(() => {
+    setActiveDayQuickPanelDate('');
+  }, [year, month, showEventTime, hidePastWeeks]);
+  useEffect(() => {
+    if (!activeDayQuickPanelDate) return undefined;
+    const handlePointerDown = (event) => {
+      if (dayQuickPanelRef.current && dayQuickPanelRef.current.contains(event.target)) return;
+      setActiveDayQuickPanelDate('');
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [activeDayQuickPanelDate]);
 
   // Date calculations
   const firstDay = new Date(year, month, 1).getDay();
@@ -30593,10 +31048,28 @@ function MonthGrid({
             });
           }
 
-          const laneHeight = 22;
-          const rowMinHeight = 96;
-          const maxVisibleLanes = Math.max(1, Math.floor((rowMinHeight - 8) / laneHeight));
-          const visibleWeekSegments = weekSegments.filter((segment) => segment.lane < maxVisibleLanes);
+	          const laneHeight = 22;
+	          const rowMinHeight = 96;
+	          const maxVisibleLanes = 2;
+	          const visibleWeekSegments = weekSegments.filter((segment) => segment.lane < maxVisibleLanes);
+          const isDayQuickPanelOpenInCurrentWeek = Boolean(
+            String(activeDayQuickPanelDate || '').trim() &&
+              week.some(
+                (dayData) => !dayData.empty && dayData.dateStr === String(activeDayQuickPanelDate || '').trim()
+              )
+          );
+          const totalEventCountByDay = Array.from({ length: 7 }, () => 0);
+          const visibleEventCountByDay = Array.from({ length: 7 }, () => 0);
+          weekSegments.forEach((segment) => {
+            for (let dayIndex = segment.startIdx; dayIndex <= segment.endIdx; dayIndex += 1) {
+              totalEventCountByDay[dayIndex] += 1;
+            }
+          });
+          visibleWeekSegments.forEach((segment) => {
+            for (let dayIndex = segment.startIdx; dayIndex <= segment.endIdx; dayIndex += 1) {
+              visibleEventCountByDay[dayIndex] += 1;
+            }
+          });
 
           return (
             <div key={`week-${weekIdx}`} className="relative">
@@ -30607,42 +31080,130 @@ function MonthGrid({
                   const hasPrevEvent = dayIndex > 0 && hasEventByDay[dayIndex - 1];
                   const hasNextEvent = dayIndex < 6 && hasEventByDay[dayIndex + 1];
 
-                  const mergedBorderStyle = hasEvents
-                    ? {
-                        borderTopColor: '#fca5a5',
-                        borderBottomColor: '#fca5a5',
-                        borderLeftColor: hasPrevEvent ? 'transparent' : '#fca5a5',
-                        borderRightColor: hasNextEvent ? 'transparent' : '#fca5a5',
-                      }
-                    : undefined;
+	                  const mergedBorderStyle = hasEvents
+	                    ? {
+	                        borderTopColor: '#fca5a5',
+	                        borderBottomColor: '#fca5a5',
+	                        borderLeftColor: hasPrevEvent ? 'transparent' : '#fca5a5',
+	                        borderRightColor: hasNextEvent ? 'transparent' : '#fca5a5',
+	                      }
+	                    : undefined;
+                  const dayEvents = dayData.empty ? [] : dayEventsByDate[dayData.dateStr] || [];
+                  const isDayQuickPanelOpen =
+                    !dayData.empty && String(activeDayQuickPanelDate || '').trim() === dayData.dateStr;
+                  const hiddenEventCount = Math.max(
+                    0,
+                    Number(totalEventCountByDay?.[dayIndex] || 0) -
+                      Number(visibleEventCountByDay?.[dayIndex] || 0)
+                  );
 
-                  return (
-                    <div
-                      key={dayData.key}
-                      className={`border p-1 group flex flex-col transition-colors ${
+	                  return (
+	                    <div
+	                      key={dayData.key}
+	                      className={`relative border p-1 group flex flex-col transition-colors ${
+	                        dayData.empty
+	                          ? 'bg-gray-50/60 border-gray-100'
+	                          : `cursor-pointer hover:bg-blue-50 ${hasEvents ? 'bg-red-50/20 border-red-300' : 'border-gray-100'}`
+	                      } ${isDayQuickPanelOpen ? 'z-20' : ''}`}
+	                      style={{ minHeight: `${rowMinHeight}px`, ...mergedBorderStyle }}
+	                      onClick={
                         dayData.empty
-                          ? 'bg-gray-50/60 border-gray-100'
-                          : `cursor-pointer hover:bg-blue-50 ${hasEvents ? 'bg-red-50/20 border-red-300' : 'border-gray-100'}`
-                      }`}
-                      style={{ minHeight: `${rowMinHeight}px`, ...mergedBorderStyle }}
-                      onClick={dayData.empty ? undefined : () => onDayClick(dayData.dateStr)}
-                    >
-                      {!dayData.empty && (
-                        <div className={`text-right text-xs mb-1 font-medium ${isToday ? 'text-blue-600' : 'text-gray-500'}`}>
-                          <span className={isToday ? 'bg-blue-100 px-1.5 py-0.5 rounded-full' : ''}>{dayData.day}</span>
+                          ? undefined
+                          : (event) => {
+                              event.stopPropagation();
+                              setActiveDayQuickPanelDate((prev) =>
+                                String(prev || '').trim() === dayData.dateStr ? '' : dayData.dateStr
+                              );
+                            }
+                      }
+	                    >
+	                      {!dayData.empty && (
+	                        <div className={`text-right text-xs mb-1 font-medium ${isToday ? 'text-blue-600' : 'text-gray-500'}`}>
+	                          <span className={isToday ? 'bg-blue-100 px-1.5 py-0.5 rounded-full' : ''}>{dayData.day}</span>
+	                        </div>
+	                      )}
+                      {!dayData.empty && hiddenEventCount > 0 && (
+                        <div className="mt-auto text-[10px] text-gray-500 px-0.5">+ อีก {hiddenEventCount} รายการ</div>
+                      )}
+                      {isDayQuickPanelOpen && (
+                        <div
+                          ref={dayQuickPanelRef}
+                          data-day-quick-panel="true"
+                          className="absolute left-1 right-1 top-5 z-30 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-[11px] font-semibold text-gray-700">
+                              {formatDayQuickPanelDateLabel(dayData.dateStr)}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setActiveDayQuickPanelDate('');
+                                onDayClick(dayData.dateStr);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                            >
+                              <Plus className="w-3 h-3" />
+                              Add event
+                            </button>
+                          </div>
+                          <div className="mt-2 max-h-40 overflow-y-auto space-y-1 pr-1">
+                            {dayEvents.length === 0 ? (
+                              <p className="text-[11px] text-gray-400 px-1 py-1">ไม่มี Event ในวันนี้</p>
+                            ) : (
+                              dayEvents.map((eventItem, eventIndex) => {
+                                const itemProject =
+                                  projects.find((projectItem) => projectItem.id === eventItem.projectId) ||
+                                  allProjects.find((projectItem) => projectItem.id === eventItem.projectId) ||
+                                  projects[0] ||
+                                  allProjects[0];
+                                const itemColor =
+                                  PROJECT_COLORS[itemProject?.colorIndex ?? 0] || PROJECT_COLORS[0];
+                                const itemHasTime = shouldShowEventTime(eventItem);
+                                const itemStartTime = String(eventItem?.startTime || '').trim();
+                                const itemEndTime = String(eventItem?.endTime || '').trim();
+                                const itemTimeText =
+                                  itemHasTime && itemStartTime
+                                    ? `${itemStartTime}${itemEndTime ? ` - ${itemEndTime}` : ''}`
+                                    : 'All day';
+                                return (
+                                  <button
+                                    key={`day-quick-event-${dayData.dateStr}-${eventItem.id || eventIndex}`}
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setActiveDayQuickPanelDate('');
+                                      onEventClick(eventItem, event);
+                                    }}
+                                    className="w-full text-left rounded-md border border-gray-200 bg-gray-50 hover:bg-white hover:border-blue-200 px-2 py-1.5"
+                                  >
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className={`w-2 h-2 rounded-full shrink-0 ${itemColor.bg}`} />
+                                      <p className="text-[11px] font-semibold text-gray-700 truncate">
+                                        {String(eventItem?.title || '').trim() || 'Untitled event'}
+                                      </p>
+                                    </div>
+                                    <p className="text-[10px] text-gray-500 mt-0.5 truncate">{itemTimeText}</p>
+                                  </button>
+                                );
+                              })
+                            )}
+                          </div>
                         </div>
                       )}
-                    </div>
-                  );
-                })}
-              </div>
+	                    </div>
+	                  );
+	                })}
+	              </div>
 
-              {visibleWeekSegments.length > 0 && (
-                <div className="pointer-events-none absolute left-0 right-0 top-6 px-[2px]">
-                  {visibleWeekSegments.map((segment, segmentIndex) => {
-                    const leftPercent = (segment.startIdx / 7) * 100;
-                    const widthPercent = ((segment.endIdx - segment.startIdx + 1) / 7) * 100;
-                    const showTimePrefix =
+	              {visibleWeekSegments.length > 0 && !isDayQuickPanelOpenInCurrentWeek && (
+	                <div className="pointer-events-none absolute left-0 right-0 top-6 px-[2px]">
+	                  {visibleWeekSegments.map((segment, segmentIndex) => {
+	                    const leftPercent = (segment.startIdx / 7) * 100;
+	                    const widthPercent = ((segment.endIdx - segment.startIdx + 1) / 7) * 100;
+	                    const showTimePrefix =
                       showEventTime && segment.hasDisplayTime && segment.event.startDate === segment.startDate;
                     const title = showTimePrefix
                       ? `${segment.event.startTime} ${segment.event.title}`
@@ -30652,18 +31213,13 @@ function MonthGrid({
                       : segment.event.title;
 
 	                    return (
-	                      <button
-	                        key={`${segment.event.id}-${weekIdx}-${segmentIndex}`}
-	                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEventClick(segment.event, e);
-                        }}
-	                        className={`pointer-events-auto absolute text-[10px] md:text-xs truncate px-2 h-5 rounded-md border shadow-sm flex items-center hover:opacity-80 transition-opacity ${
-                            segment.isTaskEvent
-                              ? 'bg-white border-dashed'
-                              : `${segment.color.lightBg} ${segment.color.text} ${segment.color.border}`
-                          }`}
+		                      <div
+		                        key={`${segment.event.id}-${weekIdx}-${segmentIndex}`}
+		                        className={`absolute pointer-events-none text-[10px] md:text-xs truncate px-2 h-5 rounded-md border shadow-sm flex items-center ${
+	                            segment.isTaskEvent
+	                              ? 'bg-white border-dashed'
+	                              : `${segment.color.lightBg} ${segment.color.text} ${segment.color.border}`
+	                          }`}
 		                        style={{
 		                          left: `calc(${leftPercent}% + 2px)`,
 		                          width: `calc(${widthPercent}% - 4px)`,
@@ -30678,14 +31234,14 @@ function MonthGrid({
                               }
                             : {}),
 	                        }}
-	                        title={eventTooltip}
-	                      >
-	                        {title}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+		                        title={eventTooltip}
+		                      >
+		                        {title}
+	                      </div>
+	                    );
+	                  })}
+	                </div>
+	              )}
             </div>
           );
         })}
