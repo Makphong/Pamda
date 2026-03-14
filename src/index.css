@@ -267,4 +267,18 @@
     padding-right: 0.32rem !important;
     font-size: 0.75rem !important;
   }
+
+  .pm-management-scroll-hidden,
+  .pm-management-scroll-hidden * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .pm-management-scroll-hidden::-webkit-scrollbar,
+  .pm-management-scroll-hidden *::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none;
+    background: transparent;
+  }
 }

@@ -14780,7 +14780,7 @@ function ProjectDashboard({
   };
 
   return (
-    <div className="flex flex-col h-screen bg-white font-sans relative" style={{ height: '100dvh' }}>
+    <div className="pm-management-scroll-hidden flex flex-col h-screen bg-white font-sans relative" style={{ height: '100dvh' }}>
       {/* Dashboard Header */}
       <header className={`px-3 md:px-6 py-2 md:py-4 flex items-center gap-2 md:gap-4 border-b shrink-0 ${projectColor.lightBg}`}>
         <button 
