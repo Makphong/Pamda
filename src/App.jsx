@@ -4565,6 +4565,7 @@ function ProfileSettingsView({
   const [activeSupportTicketId, setActiveSupportTicketId] = useState('');
   const [isSupportTicketDetailLoading, setIsSupportTicketDetailLoading] = useState(false);
   const [supportTicketDetail, setSupportTicketDetail] = useState(null);
+  const [isCreateTicketFormOpen, setIsCreateTicketFormOpen] = useState(false);
   const [newTicketSubject, setNewTicketSubject] = useState('');
   const [newTicketMessage, setNewTicketMessage] = useState('');
   const [newTicketAttachments, setNewTicketAttachments] = useState([]);
@@ -4611,6 +4612,7 @@ function ProfileSettingsView({
     setSupportTicketStatusFilter('all');
     setActiveSupportTicketId('');
     setSupportTicketDetail(null);
+    setIsCreateTicketFormOpen(false);
     setNewTicketSubject('');
     setNewTicketMessage('');
     setNewTicketAttachments([]);
@@ -5233,6 +5235,7 @@ function ProfileSettingsView({
         setNewTicketSubject('');
         setNewTicketMessage('');
         setNewTicketAttachments([]);
+        setIsCreateTicketFormOpen(false);
         if (result?.ticket && typeof result.ticket === 'object') {
           syncTicketInList(result.ticket);
           const openedTicketId = String(result.ticket.id || '').trim();
@@ -5418,73 +5421,64 @@ function ProfileSettingsView({
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-cyan-50 p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-6">
-        <div className="flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
-          >
-            <ArrowLeft className="w-4 h-4" /> Back to calendar
-          </button>
-          {onLogout && (
-            <button
-              type="button"
-              onClick={onLogout}
-              className="inline-flex md:hidden items-center gap-2 px-4 py-2 rounded-xl bg-gray-900 text-white hover:bg-black transition-colors shadow-sm"
-            >
-              <LogOut className="w-4 h-4" /> Logout
-            </button>
-          )}
-        </div>
-
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-2">
-          <div className="flex items-center gap-2 overflow-x-auto">
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.PROFILE)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
-                activeMenu === PROFILE_VIEW_MENUS.PROFILE
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-              }`}
+              onClick={onBack}
+              className="inline-flex shrink-0 items-center gap-2 px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap"
             >
-              ข้อมูลส่วนตัว
+              <ArrowLeft className="w-4 h-4" /> Back to calendar
             </button>
-            <button
-              type="button"
-              onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.INVITATIONS)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
-                activeMenu === PROFILE_VIEW_MENUS.INVITATIONS
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-              }`}
+            <div
+              className="ml-auto min-w-0 flex items-center justify-end gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden"
+              style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}
             >
-              คำเชิญโปรเจกต์ ({projectInvitations.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.SUPPORT)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
-                activeMenu === PROFILE_VIEW_MENUS.SUPPORT
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              {supportRole.isSupportAdmin ? 'รับ Ticket' : 'เปิด Ticket'}
-            </button>
-            {isRootAdmin && (
               <button
                 type="button"
-                onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.ADMIN)}
+                onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.PROFILE)}
                 className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
-                  activeMenu === PROFILE_VIEW_MENUS.ADMIN
+                  activeMenu === PROFILE_VIEW_MENUS.PROFILE
                     ? 'bg-blue-600 text-white border-blue-600'
                     : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
                 }`}
               >
-                แอดมิน
+                ข้อมูลส่วนตัว
               </button>
-            )}
+              <button
+                type="button"
+                onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.SUPPORT)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
+                  activeMenu === PROFILE_VIEW_MENUS.SUPPORT
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                {supportRole.isSupportAdmin ? 'รับ Ticket' : 'เปิด Ticket'}
+              </button>
+              {isRootAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.ADMIN)}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
+                    activeMenu === PROFILE_VIEW_MENUS.ADMIN
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  แอดมิน
+                </button>
+              )}
+              {onLogout && (
+                <button
+                  type="button"
+                  onClick={onLogout}
+                  className="inline-flex md:hidden items-center gap-2 px-3 py-2 rounded-lg bg-gray-900 text-white hover:bg-black transition-colors whitespace-nowrap"
+                >
+                  <LogOut className="w-4 h-4" /> Logout
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -5509,100 +5503,100 @@ function ProfileSettingsView({
 
           <div className="space-y-6">
             {activeMenu === PROFILE_VIEW_MENUS.PROFILE && (
-              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-gray-800">Profile</h3>
-                  <button
-                    type="button"
-                    onClick={openProfileEditor}
-                    className="h-8 w-8 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-blue-600 inline-flex items-center justify-center"
-                    title="Edit profile"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
+              <>
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-gray-800">Profile</h3>
+                    <button
+                      type="button"
+                      onClick={openProfileEditor}
+                      className="h-8 w-8 rounded-full border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-blue-600 inline-flex items-center justify-center"
+                      title="Edit profile"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <span className="text-sm font-medium text-gray-600">Username</span>
+                      <p className="w-full border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-gray-800">
+                        {currentUser.username || '-'}
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-sm font-medium text-gray-600">Email</span>
+                      <p className="w-full border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-gray-700 break-all">
+                        {currentUser.email || '-'}
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <span className="text-sm font-medium text-gray-600">Username</span>
-                    <p className="w-full border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-gray-800">
-                      {currentUser.username || '-'}
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-gray-800">Project Invitations</h3>
+                    <span className="text-xs font-medium rounded-full bg-blue-50 text-blue-700 px-2.5 py-1 border border-blue-200">
+                      Pending {projectInvitations.length}
+                    </span>
+                  </div>
+
+                  {inviteResult?.message && (
+                    <p
+                      className={`text-sm rounded-lg px-3 py-2 border ${
+                        inviteResult.ok
+                          ? 'bg-green-50 text-green-700 border-green-200'
+                          : 'bg-red-50 text-red-600 border-red-200'
+                      }`}
+                    >
+                      {inviteResult.message}
                     </p>
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-sm font-medium text-gray-600">Email</span>
-                    <p className="w-full border border-gray-200 rounded-xl px-3 py-2.5 bg-gray-50 text-gray-700 break-all">
-                      {currentUser.email || '-'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
+                  )}
 
-            {activeMenu === PROFILE_VIEW_MENUS.INVITATIONS && (
-              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-gray-800">Project Invitations</h3>
-                  <span className="text-xs font-medium rounded-full bg-blue-50 text-blue-700 px-2.5 py-1 border border-blue-200">
-                    Pending {projectInvitations.length}
-                  </span>
-                </div>
-
-                {inviteResult?.message && (
-                  <p
-                    className={`text-sm rounded-lg px-3 py-2 border ${
-                      inviteResult.ok
-                        ? 'bg-green-50 text-green-700 border-green-200'
-                        : 'bg-red-50 text-red-600 border-red-200'
-                    }`}
-                  >
-                    {inviteResult.message}
-                  </p>
-                )}
-
-                {projectInvitations.length === 0 ? (
-                  <p className="text-sm text-gray-500">ไม่มีคำเชิญที่รอดำเนินการ</p>
-                ) : (
-                  <div className="space-y-3">
-                    {projectInvitations.map((invite) => (
-                      <div
-                        key={invite.id}
-                        className="rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3 flex flex-col gap-3"
-                      >
-                        <div>
-                          <p className="text-sm font-semibold text-gray-800 truncate">
-                            {invite.projectName || 'Untitled project'}
-                          </p>
-                          <p className="text-xs text-gray-500 mt-1">
-                            Invited by{' '}
-                            <span className="font-medium text-gray-700">{invite.ownerUsername || '-'}</span>
-                          </p>
+                  {projectInvitations.length === 0 ? (
+                    <p className="text-sm text-gray-500">ไม่มีคำเชิญที่รอดำเนินการ</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {projectInvitations.map((invite) => (
+                        <div
+                          key={invite.id}
+                          className="rounded-xl border border-gray-200 bg-gray-50/70 px-4 py-3 flex flex-col gap-3"
+                        >
+                          <div>
+                            <p className="text-sm font-semibold text-gray-800 truncate">
+                              {invite.projectName || 'Untitled project'}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Invited by{' '}
+                              <span className="font-medium text-gray-700">{invite.ownerUsername || '-'}</span>
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.ACCEPTED)
+                              }
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium"
+                            >
+                              <Check className="w-3.5 h-3.5" /> Accept
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.DECLINED)
+                              }
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs font-medium"
+                            >
+                              <X className="w-3.5 h-3.5" /> Decline
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.ACCEPTED)
-                            }
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium"
-                          >
-                            <Check className="w-3.5 h-3.5" /> Accept
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleInvitationResponse(invite.id, PROJECT_INVITE_STATUSES.DECLINED)
-                            }
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-gray-300 hover:bg-gray-100 text-gray-600 text-xs font-medium"
-                          >
-                            <X className="w-3.5 h-3.5" /> Decline
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
 
             {activeMenu === PROFILE_VIEW_MENUS.SUPPORT && (
@@ -5612,6 +5606,18 @@ function ProfileSettingsView({
                     {supportRole.isSupportAdmin ? 'รับ Ticket จากผู้ใช้' : 'เปิด Ticket เพื่อคุยกับแอดมิน'}
                   </h3>
                   <div className="flex items-center gap-2">
+                    {!supportRole.isSupportAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreateTicketFormOpen(true);
+                          setSupportResult(null);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700"
+                      >
+                        เปิด Ticket
+                      </button>
+                    )}
                     <select
                       value={supportTicketStatusFilter}
                       onChange={(e) => setSupportTicketStatusFilter(String(e.target.value || 'all').trim())}
@@ -5634,7 +5640,7 @@ function ProfileSettingsView({
                   </div>
                 </div>
 
-                {!supportRole.isSupportAdmin && (
+                {!supportRole.isSupportAdmin && isCreateTicketFormOpen && (
                   <form onSubmit={handleCreateSupportTicket} className="rounded-xl border border-gray-200 bg-gray-50/60 p-4 space-y-3">
                     <div className="grid grid-cols-1 md:grid-cols-[1fr,auto] gap-2">
                       <input
@@ -5685,6 +5691,13 @@ function ProfileSettingsView({
                       </div>
                     )}
                     <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsCreateTicketFormOpen(false)}
+                        className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 mr-2"
+                      >
+                        ยกเลิก
+                      </button>
                       <button
                         type="submit"
                         disabled={isSupportSubmitting}
