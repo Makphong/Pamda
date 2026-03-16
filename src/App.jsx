@@ -778,6 +778,71 @@ const AI_INPUT_ATTACHMENT_MAX_FILES = 5;
 const AI_INPUT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 const AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT = 2500;
 const AI_INPUT_ATTACHMENT_TEXT_EXTENSIONS = new Set(['txt', 'md', 'csv', 'json', 'log', 'xml', 'yaml', 'yml']);
+const AI_ASSISTANT_BUBBLE_SIZE = 48;
+const AI_ASSISTANT_BUBBLE_MARGIN = 12;
+const getAiAssistantBubbleStorageKey = (userIdInput) => {
+  const normalizedUserId = String(userIdInput || '').trim();
+  return `pm_calendar_ai_bubble_pos_${normalizedUserId || 'default'}`;
+};
+const clampAiAssistantBubblePosition = (positionInput) => {
+  const rawX = Number(positionInput?.x);
+  const rawY = Number(positionInput?.y);
+  if (typeof window === 'undefined') {
+    return {
+      x: Number.isFinite(rawX) ? rawX : AI_ASSISTANT_BUBBLE_MARGIN,
+      y: Number.isFinite(rawY) ? rawY : AI_ASSISTANT_BUBBLE_MARGIN,
+    };
+  }
+  const maxX = Math.max(
+    AI_ASSISTANT_BUBBLE_MARGIN,
+    window.innerWidth - AI_ASSISTANT_BUBBLE_SIZE - AI_ASSISTANT_BUBBLE_MARGIN
+  );
+  const maxY = Math.max(
+    AI_ASSISTANT_BUBBLE_MARGIN,
+    window.innerHeight - AI_ASSISTANT_BUBBLE_SIZE - AI_ASSISTANT_BUBBLE_MARGIN
+  );
+  const x = Number.isFinite(rawX) ? Math.min(Math.max(rawX, AI_ASSISTANT_BUBBLE_MARGIN), maxX) : maxX;
+  const y = Number.isFinite(rawY) ? Math.min(Math.max(rawY, AI_ASSISTANT_BUBBLE_MARGIN), maxY) : maxY;
+  return { x, y };
+};
+const getDefaultAiAssistantBubblePosition = () =>
+  clampAiAssistantBubblePosition({
+    x:
+      typeof window === 'undefined'
+        ? AI_ASSISTANT_BUBBLE_MARGIN
+        : window.innerWidth - AI_ASSISTANT_BUBBLE_SIZE - AI_ASSISTANT_BUBBLE_MARGIN,
+    y:
+      typeof window === 'undefined'
+        ? AI_ASSISTANT_BUBBLE_MARGIN
+        : window.innerHeight - AI_ASSISTANT_BUBBLE_SIZE - AI_ASSISTANT_BUBBLE_MARGIN,
+  });
+const snapAiAssistantBubblePositionToEdge = (positionInput) => {
+  const clamped = clampAiAssistantBubblePosition(positionInput);
+  if (typeof window === 'undefined') return clamped;
+  const maxX = Math.max(
+    AI_ASSISTANT_BUBBLE_MARGIN,
+    window.innerWidth - AI_ASSISTANT_BUBBLE_SIZE - AI_ASSISTANT_BUBBLE_MARGIN
+  );
+  const maxY = Math.max(
+    AI_ASSISTANT_BUBBLE_MARGIN,
+    window.innerHeight - AI_ASSISTANT_BUBBLE_SIZE - AI_ASSISTANT_BUBBLE_MARGIN
+  );
+  const distanceToLeft = Math.abs(clamped.x - AI_ASSISTANT_BUBBLE_MARGIN);
+  const distanceToRight = Math.abs(maxX - clamped.x);
+  const distanceToTop = Math.abs(clamped.y - AI_ASSISTANT_BUBBLE_MARGIN);
+  const distanceToBottom = Math.abs(maxY - clamped.y);
+  const nearest = Math.min(distanceToLeft, distanceToRight, distanceToTop, distanceToBottom);
+  if (nearest === distanceToLeft) {
+    return { x: AI_ASSISTANT_BUBBLE_MARGIN, y: clamped.y };
+  }
+  if (nearest === distanceToRight) {
+    return { x: maxX, y: clamped.y };
+  }
+  if (nearest === distanceToTop) {
+    return { x: clamped.x, y: AI_ASSISTANT_BUBBLE_MARGIN };
+  }
+  return { x: clamped.x, y: maxY };
+};
 const PROFILE_ADMIN_ACTIVE_RANGE_OPTIONS = [
   { id: 'today', label: 'วันนี้' },
   { id: 'month', label: 'เดือนนี้' },
@@ -3402,6 +3467,22 @@ const isJsonEqual = (left, right) => {
     return false;
   }
 };
+
+const buildProjectComparableSnapshot = (projectsInput, { ignoreNotesRealtimeFields = false } = {}) =>
+  (Array.isArray(projectsInput) ? projectsInput : []).map((projectInput) => {
+    const project =
+      projectInput && typeof projectInput === 'object' && !Array.isArray(projectInput)
+        ? projectInput
+        : {};
+    if (!ignoreNotesRealtimeFields) return project;
+    return {
+      ...project,
+      // Ignore high-churn notes fields to prevent non-notes tabs from re-render flicker.
+      notesContent: null,
+      noteRevisionMap: null,
+      notesPresence: null,
+    };
+  });
 
 const postAuthApi = async (path, payload) => {
   if (!AUTH_API_BASE_URL) {
@@ -6843,6 +6924,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [mergeTaskPickerSearch, setMergeTaskPickerSearch] = useState('');
   const [mergeTaskPickerSelectedProjectId, setMergeTaskPickerSelectedProjectId] = useState('');
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
+  const [aiAssistantBubblePosition, setAiAssistantBubblePosition] = useState(() =>
+    getDefaultAiAssistantBubblePosition()
+  );
   const [aiThreads, setAiThreads] = useState([]);
   const [activeAiThreadId, setActiveAiThreadId] = useState('');
   const [isAiThreadDropdownOpen, setIsAiThreadDropdownOpen] = useState(false);
@@ -6864,6 +6948,16 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const aiProjectScopePopupRef = useRef(null);
   const aiAttachmentInputRef = useRef(null);
   const aiMessagesEndRef = useRef(null);
+  const aiAssistantBubbleDragRef = useRef({
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    originX: 0,
+    originY: 0,
+    moved: false,
+    cleanup: null,
+  });
+  const aiAssistantBubbleSuppressClickUntilRef = useRef(0);
 
   // --- New Settings State ---
   const [displayRange, setDisplayRange] = useState(() => {
@@ -7682,6 +7776,182 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!aiMessagesEndRef.current) return;
     aiMessagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [isAiAssistantOpen, aiMessages, aiPendingAction, isAiSending, isAiConfirming]);
+  const handleAiAssistantBubblePointerDown = useCallback((event) => {
+    if (!event) return;
+    if (typeof event.button === 'number' && event.button !== 0) return;
+    const pointerId = Number(event.pointerId);
+    if (!Number.isFinite(pointerId)) return;
+
+    const targetElement = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    const previousTouchAction = targetElement?.style?.touchAction || '';
+
+    if (targetElement?.setPointerCapture) {
+      try {
+        targetElement.setPointerCapture(pointerId);
+      } catch {
+        // Ignore pointer-capture errors on browsers that do not fully support it.
+      }
+    }
+    if (targetElement) {
+      targetElement.style.touchAction = 'none';
+    }
+
+    const dragState = aiAssistantBubbleDragRef.current;
+    dragState.pointerId = pointerId;
+    dragState.startX = Number(event.clientX || 0);
+    dragState.startY = Number(event.clientY || 0);
+    dragState.originX = Number(aiAssistantBubblePosition?.x || 0);
+    dragState.originY = Number(aiAssistantBubblePosition?.y || 0);
+    dragState.moved = false;
+
+    const detachListeners = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerEnd);
+      window.removeEventListener('pointercancel', handlePointerEnd);
+      if (targetElement) {
+        targetElement.style.touchAction = previousTouchAction;
+      }
+      const current = aiAssistantBubbleDragRef.current;
+      current.pointerId = null;
+      current.cleanup = null;
+      current.moved = false;
+    };
+
+    const handlePointerMove = (moveEvent) => {
+      const current = aiAssistantBubbleDragRef.current;
+      if (Number(moveEvent.pointerId) !== Number(current.pointerId)) return;
+      const deltaX = Number(moveEvent.clientX || 0) - current.startX;
+      const deltaY = Number(moveEvent.clientY || 0) - current.startY;
+      if (!current.moved && Math.hypot(deltaX, deltaY) >= 4) {
+        current.moved = true;
+      }
+      if (current.moved && moveEvent.cancelable) {
+        moveEvent.preventDefault();
+      }
+      const nextPosition = clampAiAssistantBubblePosition({
+        x: current.originX + deltaX,
+        y: current.originY + deltaY,
+      });
+      setAiAssistantBubblePosition((prev) =>
+        Number(prev?.x) === nextPosition.x && Number(prev?.y) === nextPosition.y ? prev : nextPosition
+      );
+    };
+
+    const handlePointerEnd = (endEvent) => {
+      const current = aiAssistantBubbleDragRef.current;
+      if (Number(endEvent.pointerId) !== Number(current.pointerId)) return;
+      const hasMoved = Boolean(current.moved);
+      detachListeners();
+      if (!hasMoved) return;
+      aiAssistantBubbleSuppressClickUntilRef.current = Date.now() + 520;
+      setAiAssistantBubblePosition((prev) => {
+        const snapped = snapAiAssistantBubblePositionToEdge(prev);
+        return Number(prev?.x) === snapped.x && Number(prev?.y) === snapped.y ? prev : snapped;
+      });
+    };
+
+    dragState.cleanup = detachListeners;
+    window.addEventListener('pointermove', handlePointerMove, { passive: false });
+    window.addEventListener('pointerup', handlePointerEnd);
+    window.addEventListener('pointercancel', handlePointerEnd);
+  }, [aiAssistantBubblePosition]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const storageKey = getAiAssistantBubbleStorageKey(currentUser.id);
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      setAiAssistantBubblePosition(getDefaultAiAssistantBubblePosition());
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      setAiAssistantBubblePosition(snapAiAssistantBubblePositionToEdge(parsed));
+    } catch {
+      setAiAssistantBubblePosition(getDefaultAiAssistantBubblePosition());
+    }
+    return undefined;
+  }, [currentUser.id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const storageKey = getAiAssistantBubbleStorageKey(currentUser.id);
+    const safePosition = clampAiAssistantBubblePosition(aiAssistantBubblePosition);
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        x: Math.round(safePosition.x),
+        y: Math.round(safePosition.y),
+      })
+    );
+  }, [currentUser.id, aiAssistantBubblePosition]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handleViewportResize = () => {
+      setAiAssistantBubblePosition((prev) => snapAiAssistantBubblePositionToEdge(prev));
+    };
+    window.addEventListener('resize', handleViewportResize);
+    window.addEventListener('orientationchange', handleViewportResize);
+    return () => {
+      window.removeEventListener('resize', handleViewportResize);
+      window.removeEventListener('orientationchange', handleViewportResize);
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      const cleanup = aiAssistantBubbleDragRef.current.cleanup;
+      if (typeof cleanup === 'function') {
+        cleanup();
+      }
+    },
+    []
+  );
+
+  const aiAssistantBubbleStyle = useMemo(() => {
+    const safePosition = clampAiAssistantBubblePosition(aiAssistantBubblePosition);
+    return {
+      left: `${Math.round(safePosition.x)}px`,
+      top: `${Math.round(safePosition.y)}px`,
+      touchAction: 'none',
+    };
+  }, [aiAssistantBubblePosition]);
+
+  const aiAssistantPopupStyle = useMemo(() => {
+    if (typeof window === 'undefined') return {};
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const margin = 12;
+    const maxAvailableWidth = Math.max(180, viewportWidth - margin * 2);
+    const popupWidth = Math.min(390, maxAvailableWidth);
+    const maxAvailableHeight = Math.max(220, viewportHeight - margin * 2);
+    const preferredHeight = Math.min(640, Math.round(viewportHeight * 0.72));
+    const popupHeight = Math.min(maxAvailableHeight, Math.max(220, preferredHeight));
+    const bubblePosition = clampAiAssistantBubblePosition(aiAssistantBubblePosition);
+    const bubbleCenterX = bubblePosition.x + AI_ASSISTANT_BUBBLE_SIZE / 2;
+    const shouldPlaceLeft = bubbleCenterX > viewportWidth / 2;
+
+    let popupLeft = shouldPlaceLeft
+      ? bubblePosition.x - popupWidth + AI_ASSISTANT_BUBBLE_SIZE
+      : bubblePosition.x;
+    popupLeft = Math.min(Math.max(popupLeft, margin), Math.max(margin, viewportWidth - popupWidth - margin));
+
+    let popupTop = bubblePosition.y - popupHeight - 10;
+    if (popupTop < margin) {
+      popupTop = bubblePosition.y + AI_ASSISTANT_BUBBLE_SIZE + 10;
+    }
+    popupTop = Math.min(Math.max(popupTop, margin), Math.max(margin, viewportHeight - popupHeight - margin));
+
+    return {
+      left: `${Math.round(popupLeft)}px`,
+      top: `${Math.round(popupTop)}px`,
+      width: `${Math.round(popupWidth)}px`,
+      maxWidth: `${Math.round(popupWidth)}px`,
+      height: `${Math.round(popupHeight)}px`,
+      maxHeight: `${Math.round(popupHeight)}px`,
+    };
+  }, [aiAssistantBubblePosition]);
 
   const refreshGoogleCalendarStatus = async () => {
     if (!AUTH_API_BASE_URL) {
@@ -8967,7 +9237,20 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           return;
         }
         collaborativeRefreshStateRef.current.appliedSeq = requestSeq;
-        setProjects((prevProjects) => (isJsonEqual(prevProjects, nextProjects) ? prevProjects : nextProjects));
+        const shouldIgnoreNotesRealtimeFieldsForCompare =
+          Boolean(activeDashboardProjectId) && activeDashboardTab !== 'notes';
+        setProjects((prevProjects) => {
+          if (!shouldIgnoreNotesRealtimeFieldsForCompare) {
+            return isJsonEqual(prevProjects, nextProjects) ? prevProjects : nextProjects;
+          }
+          const prevComparable = buildProjectComparableSnapshot(prevProjects, {
+            ignoreNotesRealtimeFields: true,
+          });
+          const nextComparable = buildProjectComparableSnapshot(nextProjects, {
+            ignoreNotesRealtimeFields: true,
+          });
+          return isJsonEqual(prevComparable, nextComparable) ? prevProjects : nextProjects;
+        });
         setEvents((prevEvents) => (isJsonEqual(prevEvents, nextEvents) ? prevEvents : nextEvents));
         setProjectTodosByProjectId((prevTodos) =>
           isJsonEqual(prevTodos, nextProjectTodos) ? prevTodos : nextProjectTodos
@@ -8992,7 +9275,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     const collaborativeRefreshIntervalMs = activeDashboardProjectId
       ? activeDashboardTab === 'notes'
         ? 1200
-        : 2000
+        : 4200
       : COLLABORATIVE_REFRESH_INTERVAL_MS;
     const refreshInterval = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
@@ -11594,14 +11877,22 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     <>
       <button
         type="button"
-        onClick={() => setIsAiAssistantOpen((prev) => !prev)}
-        className="fixed bottom-5 right-5 z-[120] w-12 h-12 rounded-full bg-blue-600 text-white shadow-[0_10px_28px_rgba(37,99,235,0.25)] hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center"
+        onPointerDown={handleAiAssistantBubblePointerDown}
+        onClick={() => {
+          if (Date.now() < aiAssistantBubbleSuppressClickUntilRef.current) return;
+          setIsAiAssistantOpen((prev) => !prev);
+        }}
+        className="fixed z-[120] w-12 h-12 rounded-full bg-blue-600 text-white shadow-[0_10px_28px_rgba(37,99,235,0.25)] hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center cursor-grab active:cursor-grabbing"
+        style={aiAssistantBubbleStyle}
         title="AI Assistant"
       >
         <MessageSquare className="w-5 h-5" />
       </button>
       {isAiAssistantOpen && (
-        <div className="fixed bottom-20 right-3 sm:right-5 z-[130] w-[calc(100vw-1.5rem)] sm:w-[390px] max-w-[390px] h-[72vh] max-h-[640px] rounded-2xl border border-gray-200 bg-white shadow-2xl flex flex-col overflow-hidden">
+        <div
+          className="fixed z-[130] rounded-2xl border border-gray-200 bg-white shadow-2xl flex flex-col overflow-hidden"
+          style={aiAssistantPopupStyle}
+        >
           <div className="px-3 py-2.5 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
             <div className="text-sm font-semibold text-gray-800 flex-1 truncate">Project AI Assistant</div>
             <button
@@ -11952,6 +12243,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
               setEditingEvent(null);
               setSelectedDateForNewEvent(normalizedDate || null);
               setPreSelectedProjectId(normalizedProjectId || null);
+              setShowEventModal(true);
+            }}
+            onRequestEditEvent={(eventData) => {
+              const normalizedEvent =
+                eventData && typeof eventData === 'object' && !Array.isArray(eventData)
+                  ? eventData
+                  : null;
+              if (!normalizedEvent) return;
+              setSelectedDateForNewEvent(null);
+              setPreSelectedProjectId(String(normalizedEvent.projectId || activeProject.id || '').trim() || null);
+              setEditingEvent(normalizedEvent);
               setShowEventModal(true);
             }}
           />
@@ -14149,6 +14451,7 @@ function ProjectDashboard({
   activeTab: activeTabProp,
   onActiveTabChange,
   onRequestCreateEvent = null,
+  onRequestEditEvent = null,
 }) {
   const popup = usePopup();
   const { isIpadPortrait: isIpadPortraitViewport } = useIpadClassState();
@@ -15777,6 +16080,17 @@ function ProjectDashboard({
   const [activeProjectLogMenuEntryId, setActiveProjectLogMenuEntryId] = useState('');
   const [draggingTaskId, setDraggingTaskId] = useState('');
   const [dragOverStatus, setDragOverStatus] = useState('');
+  const taskBoardTouchDragRef = useRef({
+    pointerId: null,
+    taskId: '',
+    moved: false,
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    cleanup: null,
+  });
+  const suppressTaskCardClickRef = useRef({ taskId: '', until: 0 });
   const hasHydratedTaskFiltersRef = useRef(false);
   
   // Slide-over Pane State
@@ -16452,6 +16766,126 @@ function ProjectDashboard({
       transfer.setData('application/x-pm-task-id', normalizedTaskId);
     }
   };
+  const resolveBoardDropStatusByPoint = useCallback((clientX, clientY) => {
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return '';
+    const elementAtPoint = document.elementFromPoint(clientX, clientY);
+    const dropZone = elementAtPoint?.closest?.('[data-task-board-drop-status]');
+    const rawStatus = String(dropZone?.getAttribute?.('data-task-board-drop-status') || '').trim();
+    if (!rawStatus) return '';
+    return normalizeTaskStatus(rawStatus);
+  }, []);
+  const markTaskCardClickSuppressed = useCallback((taskIdInput) => {
+    const taskId = String(taskIdInput || '').trim();
+    if (!taskId) return;
+    suppressTaskCardClickRef.current = { taskId, until: Date.now() + 600 };
+  }, []);
+  const shouldSuppressTaskCardClick = useCallback((taskIdInput) => {
+    const taskId = String(taskIdInput || '').trim();
+    const suppressed = suppressTaskCardClickRef.current;
+    if (!taskId || suppressed.taskId !== taskId) return false;
+    if (Date.now() > Number(suppressed.until || 0)) {
+      suppressTaskCardClickRef.current = { taskId: '', until: 0 };
+      return false;
+    }
+    suppressTaskCardClickRef.current = { taskId: '', until: 0 };
+    return true;
+  }, []);
+  const handleTaskTouchPointerDown = useCallback(
+    (taskIdInput, event) => {
+      if (!event || event.pointerType === 'mouse') return;
+      const normalizedTaskId = String(taskIdInput || '').trim();
+      if (!normalizedTaskId) return;
+      const pointerId = Number(event.pointerId);
+      if (!Number.isFinite(pointerId)) return;
+      const pointerTargetElement =
+        event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+      const previousTouchAction = pointerTargetElement?.style?.touchAction || '';
+      if (pointerTargetElement) {
+        pointerTargetElement.style.touchAction = 'none';
+      }
+
+      if (event.currentTarget?.setPointerCapture) {
+        try {
+          event.currentTarget.setPointerCapture(pointerId);
+        } catch {
+          // Ignore unsupported pointer capture behavior on some browsers.
+        }
+      }
+
+      setDraggingTaskId(normalizedTaskId);
+      setDragOverStatus('');
+
+      const dragState = taskBoardTouchDragRef.current;
+      dragState.pointerId = pointerId;
+      dragState.taskId = normalizedTaskId;
+      dragState.moved = false;
+      dragState.startX = Number(event.clientX || 0);
+      dragState.startY = Number(event.clientY || 0);
+      dragState.lastX = Number(event.clientX || 0);
+      dragState.lastY = Number(event.clientY || 0);
+
+      const detach = () => {
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerEnd);
+        window.removeEventListener('pointercancel', handlePointerEnd);
+        if (pointerTargetElement) {
+          pointerTargetElement.style.touchAction = previousTouchAction;
+        }
+        const current = taskBoardTouchDragRef.current;
+        current.cleanup = null;
+        current.pointerId = null;
+        current.taskId = '';
+        current.moved = false;
+      };
+
+      const handlePointerMove = (moveEvent) => {
+        const current = taskBoardTouchDragRef.current;
+        if (Number(moveEvent.pointerId) !== Number(current.pointerId)) return;
+        current.lastX = Number(moveEvent.clientX || 0);
+        current.lastY = Number(moveEvent.clientY || 0);
+        const deltaX = current.lastX - current.startX;
+        const deltaY = current.lastY - current.startY;
+        if (!current.moved && Math.hypot(deltaX, deltaY) >= 6) {
+          current.moved = true;
+        }
+        if (current.moved && moveEvent.cancelable) {
+          moveEvent.preventDefault();
+        }
+        const hoveredStatus = resolveBoardDropStatusByPoint(current.lastX, current.lastY);
+        setDragOverStatus(hoveredStatus);
+      };
+
+      const handlePointerEnd = (endEvent) => {
+        const current = taskBoardTouchDragRef.current;
+        if (Number(endEvent.pointerId) !== Number(current.pointerId)) return;
+        const draggedTaskId = String(current.taskId || '').trim();
+        const hasMoved = Boolean(current.moved);
+        const dropX = Number(endEvent.clientX || current.lastX || 0);
+        const dropY = Number(endEvent.clientY || current.lastY || 0);
+        const droppedStatus = resolveBoardDropStatusByPoint(dropX, dropY);
+
+        detach();
+        setDragOverStatus('');
+        setDraggingTaskId('');
+
+        if (!draggedTaskId || !hasMoved) return;
+        markTaskCardClickSuppressed(draggedTaskId);
+        if (!droppedStatus) return;
+
+        const task = filteredTaskById.get(draggedTaskId);
+        if (!task) return;
+        const currentStatus = normalizeTaskStatus(task.status);
+        if (currentStatus === droppedStatus) return;
+        handleStatusChange(draggedTaskId, droppedStatus);
+      };
+
+      dragState.cleanup = detach;
+      window.addEventListener('pointermove', handlePointerMove, { passive: false });
+      window.addEventListener('pointerup', handlePointerEnd);
+      window.addEventListener('pointercancel', handlePointerEnd);
+    },
+    [filteredTaskById, handleStatusChange, markTaskCardClickSuppressed, resolveBoardDropStatusByPoint]
+  );
   const handleTaskDragEnd = () => {
     setDraggingTaskId('');
     setDragOverStatus('');
@@ -16468,6 +16902,15 @@ function ProjectDashboard({
       window.removeEventListener('drop', clearTaskDragState);
     };
   }, []);
+  useEffect(
+    () => () => {
+      const cleanup = taskBoardTouchDragRef.current.cleanup;
+      if (typeof cleanup === 'function') {
+        cleanup();
+      }
+    },
+    []
+  );
   const handleTaskDropToStatus = (statusInput, event) => {
     event?.preventDefault?.();
     const targetStatus = normalizeTaskStatus(statusInput);
@@ -16801,7 +17244,23 @@ function ProjectDashboard({
     },
     [onRequestCreateEvent, project?.id]
   );
-  const noopCalendarAction = useCallback(() => {}, []);
+  const handleOrganizationEventClick = useCallback(
+    (eventItemInput) => {
+      const eventItem =
+        eventItemInput && typeof eventItemInput === 'object' && !Array.isArray(eventItemInput)
+          ? eventItemInput
+          : null;
+      if (!eventItem) return;
+      if (isTaskRecordEntry(eventItem)) {
+        openTaskDetail(eventItem);
+        return;
+      }
+      if (typeof onRequestEditEvent === 'function') {
+        onRequestEditEvent(eventItem);
+      }
+    },
+    [onRequestEditEvent]
+  );
 
   return (
     <div className="pm-management-scroll-hidden flex flex-col h-screen bg-white font-sans relative" style={{ height: '100dvh' }}>
@@ -16971,7 +17430,7 @@ function ProjectDashboard({
                         calendarColumnCount={1}
                         onDayClick={handleOrganizationAddEvent}
                         onAddTaskClick={openAddTaskForDate}
-                        onEventClick={noopCalendarAction}
+                        onEventClick={handleOrganizationEventClick}
                       />
                     </div>
                   </section>
@@ -17554,12 +18013,13 @@ function ProjectDashboard({
 	                                    {columnTasks.length}
 	                                  </span>
 	                                </div>
-	                                <div
-	                                  onDragOver={(event) => {
-	                                    event.preventDefault();
-	                                    setDragOverStatus(status);
-	                                    if (event.dataTransfer) {
-	                                      event.dataTransfer.dropEffect = 'move';
+                                <div
+                                  data-task-board-drop-status={status}
+                                  onDragOver={(event) => {
+                                    event.preventDefault();
+                                    setDragOverStatus(status);
+                                    if (event.dataTransfer) {
+                                      event.dataTransfer.dropEffect = 'move';
 	                                    }
 	                                  }}
 	                                  onDragLeave={() => setDragOverStatus((prev) => (prev === status ? '' : prev))}
@@ -17588,16 +18048,20 @@ function ProjectDashboard({
                                       const isLateTask = isTaskLateByOriginalDeadline(task, Date.now());
                                       return (
                                         <article
-	                                          key={task.id}
-	                                          draggable
-	                                          onDragStart={(event) => handleTaskDragStart(task.id, event)}
-	                                          onDragEnd={handleTaskDragEnd}
-	                                          onClick={() => openTaskDetail(task)}
-		                                          className={`rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition hover:shadow-md cursor-grab active:cursor-grabbing ${
-		                                            String(task.id || '').trim() === draggingTaskId
-		                                              ? 'ring-2 ring-blue-200 border-blue-300 shadow-md'
-		                                              : ''
-		                                          }`}
+                                          key={task.id}
+                                          draggable
+                                          onDragStart={(event) => handleTaskDragStart(task.id, event)}
+                                          onDragEnd={handleTaskDragEnd}
+                                          onPointerDown={(event) => handleTaskTouchPointerDown(task.id, event)}
+                                          onClick={() => {
+                                            if (shouldSuppressTaskCardClick(task.id)) return;
+                                            openTaskDetail(task);
+                                          }}
+                                          className={`rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition hover:shadow-md cursor-grab active:cursor-grabbing ${
+                                            String(task.id || '').trim() === draggingTaskId
+                                              ? 'ring-2 ring-blue-200 border-blue-300 shadow-md'
+                                              : ''
+                                          }`}
 		                                        >
 		                                          <div className="flex items-start justify-between gap-2">
 		                                            <div className="min-w-0 flex-1">
