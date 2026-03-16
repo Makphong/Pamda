@@ -26,6 +26,7 @@ import {
   MessageSquare,
   Search,
   Filter,
+  Wrench,
   Link as LinkIcon,
   Target,
   Activity,
@@ -773,6 +774,10 @@ const TASK_COMMENT_MAX_LENGTH = 2000;
 const TASK_TODO_MAX_LENGTH = 240;
 const TASK_ATTACHMENT_MAX_FILES = 6;
 const TASK_ATTACHMENT_MAX_BYTES = 100 * 1024 * 1024;
+const AI_INPUT_ATTACHMENT_MAX_FILES = 5;
+const AI_INPUT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT = 2500;
+const AI_INPUT_ATTACHMENT_TEXT_EXTENSIONS = new Set(['txt', 'md', 'csv', 'json', 'log', 'xml', 'yaml', 'yml']);
 const PROFILE_ADMIN_ACTIVE_RANGE_OPTIONS = [
   { id: 'today', label: 'วันนี้' },
   { id: 'month', label: 'เดือนนี้' },
@@ -832,6 +837,45 @@ const readFileAsDataUrl = (file) =>
     reader.onerror = () => reject(reader.error || new Error('Failed reading file.'));
     reader.readAsDataURL(file);
   });
+const shouldParseAiAttachmentAsText = (file) => {
+  const mimeType = String(file?.type || '').trim().toLowerCase();
+  const fileName = String(file?.name || '').trim().toLowerCase();
+  const extension = fileName.includes('.') ? fileName.split('.').pop() : '';
+  if (!mimeType && !extension) return false;
+  if (mimeType.startsWith('text/')) return true;
+  if (mimeType === 'application/json' || mimeType === 'application/xml') return true;
+  return AI_INPUT_ATTACHMENT_TEXT_EXTENSIONS.has(String(extension || '').trim());
+};
+const buildAiAttachmentPayloadFromFile = async (file) => {
+  const name = String(file?.name || 'attachment').trim().slice(0, 180) || 'attachment';
+  const mimeType = String(file?.type || '').trim().slice(0, 120);
+  const size = Math.max(0, Number(file?.size) || 0);
+  let textPreview = '';
+  let previewDataUrl = '';
+  if (shouldParseAiAttachmentAsText(file) && size <= AI_INPUT_ATTACHMENT_MAX_BYTES) {
+    try {
+      const rawText = await Promise.resolve(file.text());
+      textPreview = String(rawText || '').replace(/\r/g, '').trim().slice(0, AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT);
+    } catch {
+      textPreview = '';
+    }
+  }
+  if (String(mimeType || '').toLowerCase().startsWith('image/') && size <= AI_INPUT_ATTACHMENT_MAX_BYTES) {
+    try {
+      previewDataUrl = await readFileAsDataUrl(file);
+    } catch {
+      previewDataUrl = '';
+    }
+  }
+  return {
+    id: generateId(),
+    name,
+    mimeType,
+    size,
+    textPreview,
+    previewDataUrl,
+  };
+};
 const PROFILE_COMPLAINT_STATUS = {
   OPEN: 'open',
   IN_REVIEW: 'in_review',
@@ -6802,6 +6846,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [aiThreads, setAiThreads] = useState([]);
   const [activeAiThreadId, setActiveAiThreadId] = useState('');
   const [isAiThreadDropdownOpen, setIsAiThreadDropdownOpen] = useState(false);
+  const [isAiProjectScopePopupOpen, setIsAiProjectScopePopupOpen] = useState(false);
+  const [aiProjectScopeSearch, setAiProjectScopeSearch] = useState('');
+  const [aiProjectScopeMergeAll, setAiProjectScopeMergeAll] = useState(true);
+  const [aiProjectScopeProjectIds, setAiProjectScopeProjectIds] = useState([]);
+  const [aiInputAttachments, setAiInputAttachments] = useState([]);
   const [aiMessages, setAiMessages] = useState([]);
   const [aiPendingAction, setAiPendingAction] = useState(null);
   const [aiInput, setAiInput] = useState('');
@@ -6812,6 +6861,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [isAiConfirming, setIsAiConfirming] = useState(false);
   const [deletingAiThreadId, setDeletingAiThreadId] = useState('');
   const aiThreadDropdownRef = useRef(null);
+  const aiProjectScopePopupRef = useRef(null);
+  const aiAttachmentInputRef = useRef(null);
   const aiMessagesEndRef = useRef(null);
 
   // --- New Settings State ---
@@ -6915,6 +6966,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     setAiThreads([]);
     setActiveAiThreadId('');
     setIsAiThreadDropdownOpen(false);
+    setIsAiProjectScopePopupOpen(false);
+    setAiProjectScopeSearch('');
+    setAiProjectScopeMergeAll(true);
+    setAiProjectScopeProjectIds([]);
+    setAiInputAttachments([]);
     setAiMessages([]);
     setAiPendingAction(null);
     setAiInput('');
@@ -7202,6 +7258,102 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     return message || fallbackMessage;
   }, []);
 
+  const aiProjectScopeOptions = useMemo(
+    () =>
+      (Array.isArray(projects) ? projects : [])
+        .map((project) => ({
+          id: String(project?.id || '').trim(),
+          name: String(project?.name || '').trim() || 'Untitled project',
+        }))
+        .filter((project) => project.id),
+    [projects]
+  );
+
+  useEffect(() => {
+    const validProjectIdSet = new Set(aiProjectScopeOptions.map((project) => project.id));
+    setAiProjectScopeProjectIds((prev) =>
+      Array.from(
+        new Set(
+          (Array.isArray(prev) ? prev : [])
+            .map((id) => String(id || '').trim())
+            .filter((id) => validProjectIdSet.has(id))
+        )
+      )
+    );
+  }, [aiProjectScopeOptions]);
+
+  const filteredAiProjectScopeOptions = useMemo(() => {
+    const query = String(aiProjectScopeSearch || '').trim().toLowerCase();
+    if (!query) return aiProjectScopeOptions;
+    return aiProjectScopeOptions.filter((project) =>
+      String(project.name || '').toLowerCase().includes(query)
+    );
+  }, [aiProjectScopeOptions, aiProjectScopeSearch]);
+
+  const aiProjectScopeLabel = useMemo(() => {
+    if (aiProjectScopeMergeAll) return 'Merge View';
+    const selectedIds = Array.isArray(aiProjectScopeProjectIds) ? aiProjectScopeProjectIds : [];
+    if (selectedIds.length === 0) return 'เลือก Project';
+    if (selectedIds.length === 1) {
+      const selectedName =
+        aiProjectScopeOptions.find((project) => project.id === selectedIds[0])?.name || '';
+      return selectedName || '1 Project';
+    }
+    return `${selectedIds.length} Projects`;
+  }, [aiProjectScopeMergeAll, aiProjectScopeOptions, aiProjectScopeProjectIds]);
+
+  const handleToggleAiScopeProjectId = useCallback((projectIdInput) => {
+    const projectId = String(projectIdInput || '').trim();
+    if (!projectId) return;
+    setAiProjectScopeMergeAll(false);
+    setAiProjectScopeProjectIds((prev) => {
+      const current = Array.isArray(prev) ? prev : [];
+      if (current.includes(projectId)) {
+        return current.filter((id) => id !== projectId);
+      }
+      return [...current, projectId];
+    });
+  }, []);
+
+  const handlePickAiInputAttachments = useCallback(
+    async (filesInput) => {
+      const incomingFiles = Array.from(filesInput || []);
+      if (incomingFiles.length === 0) return;
+      const existingCount = Array.isArray(aiInputAttachments) ? aiInputAttachments.length : 0;
+      if (existingCount >= AI_INPUT_ATTACHMENT_MAX_FILES) {
+        setAiErrorMessage(`แนบไฟล์ได้สูงสุด ${AI_INPUT_ATTACHMENT_MAX_FILES} ไฟล์`);
+        return;
+      }
+      const availableSlots = Math.max(0, AI_INPUT_ATTACHMENT_MAX_FILES - existingCount);
+      const acceptedFiles = incomingFiles.slice(0, availableSlots);
+      const oversizeFiles = acceptedFiles.filter(
+        (file) => Math.max(0, Number(file?.size) || 0) > AI_INPUT_ATTACHMENT_MAX_BYTES
+      );
+      if (oversizeFiles.length > 0) {
+        setAiErrorMessage(
+          `บางไฟล์เกิน ${formatTaskAttachmentSize(
+            AI_INPUT_ATTACHMENT_MAX_BYTES
+          )} และถูกข้าม กรุณาลดขนาดไฟล์`
+        );
+      }
+      const validFiles = acceptedFiles.filter(
+        (file) => Math.max(0, Number(file?.size) || 0) <= AI_INPUT_ATTACHMENT_MAX_BYTES
+      );
+      if (validFiles.length === 0) return;
+      const nextEntries = await Promise.all(validFiles.map((file) => buildAiAttachmentPayloadFromFile(file)));
+      setAiInputAttachments((prev) => [...(Array.isArray(prev) ? prev : []), ...nextEntries]);
+    },
+    [aiInputAttachments]
+  );
+
+  const handleRemoveAiInputAttachment = useCallback((attachmentIdInput) => {
+    const attachmentId = String(attachmentIdInput || '').trim();
+    if (!attachmentId) return;
+    setAiInputAttachments((prev) =>
+      (Array.isArray(prev) ? prev : []).filter((item) => String(item?.id || '').trim() !== attachmentId)
+    );
+  }, []);
+
   const handleLoadAiThreads = useCallback(
     async ({ createIfEmpty = false } = {}) => {
       if (!AUTH_API_BASE_URL) return [];
@@ -7328,7 +7480,32 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const handleSendAiMessage = useCallback(async () => {
     if (!AUTH_API_BASE_URL) return;
     const messageText = String(aiInput || '').trim();
-    if (!messageText) return;
+    const attachmentPayload = (Array.isArray(aiInputAttachments) ? aiInputAttachments : []).map((item) => ({
+      name: String(item?.name || '').trim(),
+      mimeType: String(item?.mimeType || '').trim(),
+      size: Math.max(0, Number(item?.size) || 0),
+      textPreview: String(item?.textPreview || '').trim(),
+    }));
+    if (!messageText && attachmentPayload.length === 0) return;
+    if (!aiProjectScopeMergeAll && (Array.isArray(aiProjectScopeProjectIds) ? aiProjectScopeProjectIds : []).length === 0) {
+      setAiErrorMessage('กรุณาเลือกอย่างน้อย 1 Project หรือเลือก Merge View');
+      return;
+    }
+    const scopePayload = aiProjectScopeMergeAll
+      ? { mode: 'merge', projectIds: [] }
+      : {
+          mode: 'selected',
+          projectIds: Array.from(
+            new Set(
+              (Array.isArray(aiProjectScopeProjectIds) ? aiProjectScopeProjectIds : [])
+                .map((id) => String(id || '').trim())
+                .filter(Boolean)
+            )
+          ),
+        };
+    const effectiveMessage =
+      messageText ||
+      `ช่วยวิเคราะห์ไฟล์แนบ ${attachmentPayload.length} ไฟล์ และสรุปสาระสำคัญแบบกระชับ`;
     setAiErrorMessage('');
     setIsAiSending(true);
     try {
@@ -7350,7 +7527,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       const optimisticUserMessage = {
         id: `temp-user-${Date.now()}`,
         role: 'user',
-        content: messageText,
+        content:
+          messageText ||
+          `แนบไฟล์ ${attachmentPayload.length} ไฟล์ • ขอบเขต: ${aiProjectScopeLabel}`,
         createdAt: new Date().toISOString(),
         pendingActionId: '',
       };
@@ -7359,7 +7538,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         method: 'POST',
         body: {
           userId: currentUser.id,
-          message: messageText,
+          message: effectiveMessage,
+          projectScope: scopePayload,
+          attachments: attachmentPayload,
         },
       });
       const assistantMessage = normalizeAiMessage(result?.message);
@@ -7374,6 +7555,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       } else {
         void handleLoadAiThreads();
       }
+      setAiInputAttachments([]);
     } catch (error) {
       setAiErrorMessage(formatAiAssistantError(error, 'Failed to send AI message.'));
       setAiMessages((prev) => prev.filter((msg) => !String(msg.id || '').startsWith('temp-user-')));
@@ -7383,6 +7565,10 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   }, [
     activeAiThreadId,
     aiInput,
+    aiInputAttachments,
+    aiProjectScopeLabel,
+    aiProjectScopeMergeAll,
+    aiProjectScopeProjectIds,
     currentUser.id,
     formatAiAssistantError,
     handleLoadAiThreads,
@@ -7450,6 +7636,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   useEffect(() => {
     if (isAiAssistantOpen) return;
     setIsAiThreadDropdownOpen(false);
+    setIsAiProjectScopePopupOpen(false);
   }, [isAiAssistantOpen]);
 
   useEffect(() => {
@@ -7465,6 +7652,20 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       window.removeEventListener('mousedown', handlePointerDownOutside);
     };
   }, [isAiThreadDropdownOpen]);
+
+  useEffect(() => {
+    if (!isAiProjectScopePopupOpen) return;
+    const handlePointerDownOutside = (event) => {
+      const root = aiProjectScopePopupRef.current;
+      if (!root) return;
+      if (root.contains(event.target)) return;
+      setIsAiProjectScopePopupOpen(false);
+    };
+    window.addEventListener('mousedown', handlePointerDownOutside);
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDownOutside);
+    };
+  }, [isAiProjectScopePopupOpen]);
 
   useEffect(() => {
     if (!isAiAssistantOpen) return;
@@ -11566,35 +11767,159 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             </div>
           )}
 
-          <div className="p-3 border-t border-gray-200 bg-white">
-            <div className="flex items-end gap-2">
-              <textarea
-                value={aiInput}
-                onChange={(event) => setAiInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    if (!isAiSending && !isAiConfirming) {
-                      void handleSendAiMessage();
-                    }
-                  }
-                }}
-                rows={2}
-                placeholder="พิมพ์คำถามหรือคำสั่ง..."
-                className="flex-1 resize-none border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  void handleSendAiMessage();
-                }}
-                disabled={isAiSending || isAiConfirming || !String(aiInput || '').trim()}
-                className="h-[42px] px-3 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
-              >
-                {isAiSending ? '...' : 'Send'}
-              </button>
-            </div>
-          </div>
+		          <div className="pt-2.5 pb-2.5 pl-1.5 pr-3 border-t border-gray-200 bg-white">
+	            {aiInputAttachments.length > 0 && (
+	              <div className="mb-2 grid grid-cols-2 gap-2">
+	                {aiInputAttachments.map((attachment) => {
+	                  const mimeType = String(attachment?.mimeType || '').toLowerCase();
+	                  const isImage = mimeType.startsWith('image/');
+	                  const previewDataUrl = String(attachment?.previewDataUrl || '').trim();
+	                  return (
+	                    <div
+	                      key={attachment.id}
+	                      className="relative h-[76px] rounded-lg overflow-hidden bg-gray-50"
+	                    >
+	                      {isImage && previewDataUrl ? (
+	                        <img
+	                          src={previewDataUrl}
+	                          alt={attachment.name || 'preview'}
+	                          className="absolute inset-0 w-full h-full object-cover"
+	                        />
+	                      ) : (
+	                        <div className="absolute inset-0 flex items-center justify-center text-gray-400">
+	                          <FileText className="w-5 h-5" />
+	                        </div>
+	                      )}
+	                      <div className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-white/90 text-[10px] text-gray-600 truncate">
+	                        {attachment.name} • {formatTaskAttachmentSize(attachment.size)}
+	                      </div>
+	                      <button
+	                        type="button"
+	                        onClick={() => handleRemoveAiInputAttachment(attachment.id)}
+	                        className="absolute top-1 right-1 h-5 w-5 rounded-full bg-white/90 text-gray-500 hover:text-gray-700 inline-flex items-center justify-center"
+	                        title="Remove file"
+	                      >
+	                        <X className="w-3 h-3" />
+	                      </button>
+	                    </div>
+	                  );
+	                })}
+	              </div>
+	            )}
+		            <div className="flex items-center gap-0.5">
+		              <div className="shrink-0 flex items-center gap-0">
+	                <div ref={aiProjectScopePopupRef} className="relative">
+	                  <button
+	                    type="button"
+	                    onClick={() => setIsAiProjectScopePopupOpen((prev) => !prev)}
+		                    className="h-10 w-8 rounded-lg bg-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100 inline-flex items-center justify-center"
+	                    title={`ขอบเขต: ${aiProjectScopeLabel}`}
+	                  >
+	                    <Wrench className="w-4 h-4" />
+	                  </button>
+	                  {isAiProjectScopePopupOpen && (
+	                    <div className="absolute bottom-[calc(100%+0.45rem)] left-0 z-30 w-[300px] rounded-xl border border-gray-200 bg-white shadow-xl p-2.5">
+	                      <div className="mb-2">
+	                        <div className="relative">
+	                          <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+	                          <input
+	                            type="text"
+	                            value={aiProjectScopeSearch}
+	                            onChange={(event) => setAiProjectScopeSearch(event.target.value)}
+	                            placeholder="ค้นหา Project..."
+	                            className="w-full h-9 rounded-lg border border-gray-200 bg-white pl-8 pr-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+	                          />
+	                        </div>
+	                      </div>
+	                      <label className="flex items-center gap-2 px-2 py-1.5 cursor-pointer">
+	                        <input
+	                          type="checkbox"
+	                          checked={aiProjectScopeMergeAll}
+	                          onChange={(event) => {
+	                            const checked = event.target.checked;
+	                            setAiProjectScopeMergeAll(checked);
+	                            if (checked) setAiProjectScopeProjectIds([]);
+	                          }}
+	                          className="h-4 w-4 accent-blue-600"
+	                        />
+	                        <span className="text-sm font-medium text-gray-700">Merge View (ทุก Project)</span>
+	                      </label>
+	                      <div className="mt-1 max-h-44 overflow-y-auto">
+	                        {filteredAiProjectScopeOptions.length === 0 ? (
+	                          <div className="px-2.5 py-2 text-sm text-gray-400">ไม่พบ Project</div>
+	                        ) : (
+	                          filteredAiProjectScopeOptions.map((project) => {
+	                            const checked = aiProjectScopeProjectIds.includes(project.id);
+	                            return (
+	                              <label key={`ai-scope-project-${project.id}`} className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer">
+	                                <input
+	                                  type="checkbox"
+	                                  checked={checked}
+	                                  onChange={() => handleToggleAiScopeProjectId(project.id)}
+	                                  className="h-4 w-4 accent-blue-600"
+	                                />
+	                                <span className="min-w-0 truncate text-sm text-gray-700">{project.name}</span>
+	                              </label>
+	                            );
+	                          })
+	                        )}
+	                      </div>
+	                      <div className="mt-2 px-1 text-sm text-gray-500">
+	                        ขอบเขตปัจจุบัน: {aiProjectScopeLabel}
+	                      </div>
+	                    </div>
+	                  )}
+	                </div>
+	                <button
+	                  type="button"
+	                  onClick={() => aiAttachmentInputRef.current?.click()}
+		                  className="h-10 w-8 rounded-lg bg-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100 inline-flex items-center justify-center"
+	                  title="แนบไฟล์"
+	                >
+	                  <Plus className="w-4 h-4" />
+	                </button>
+	                <input
+	                  ref={aiAttachmentInputRef}
+	                  type="file"
+	                  multiple
+	                  className="hidden"
+	                  onChange={(event) => {
+	                    void handlePickAiInputAttachments(event.target.files);
+	                    event.target.value = '';
+	                  }}
+	                />
+	              </div>
+	              <textarea
+	                value={aiInput}
+	                onChange={(event) => setAiInput(event.target.value)}
+	                onKeyDown={(event) => {
+	                  if (event.key === 'Enter' && !event.shiftKey) {
+	                    event.preventDefault();
+	                    if (!isAiSending && !isAiConfirming) {
+	                      void handleSendAiMessage();
+	                    }
+	                  }
+	                }}
+	                rows={1}
+	                placeholder="พิมพ์คำถามหรือคำสั่ง..."
+	                className="flex-1 h-10 min-h-10 max-h-10 resize-none rounded-lg bg-gray-50 border-transparent px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+	              />
+	              <button
+	                type="button"
+	                onClick={() => {
+	                  void handleSendAiMessage();
+	                }}
+	                disabled={
+	                  isAiSending ||
+	                  isAiConfirming ||
+	                  (!String(aiInput || '').trim() && aiInputAttachments.length === 0)
+	                }
+	                className="h-10 px-3 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+	              >
+	                {isAiSending ? '...' : 'Send'}
+	              </button>
+	            </div>
+	          </div>
         </div>
       )}
     </>

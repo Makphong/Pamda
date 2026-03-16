@@ -159,6 +159,14 @@ const AI_MAX_TOOL_CALL_ROUNDS = Math.max(
   1,
   Math.min(10, Number(process.env.AI_MAX_TOOL_CALL_ROUNDS || 5))
 );
+const AI_INPUT_ATTACHMENT_MAX_COUNT = Math.max(
+  1,
+  Math.min(10, Number(process.env.AI_INPUT_ATTACHMENT_MAX_COUNT || 5))
+);
+const AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT = Math.max(
+  200,
+  Math.min(10000, Number(process.env.AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT || 2500))
+);
 
 const loadGoogleOauthConfigFromJson = (filePath) => {
   const emptyConfig = { clientId: '', clientSecret: '', redirectUris: [] };
@@ -2111,6 +2119,123 @@ const getProjectNameByIdFromPayload = (payloadInput, projectIdInput) => {
   return String(project?.name || projectIdInput || '').trim() || '';
 };
 
+const AI_PROJECT_SCOPE_MODES = {
+  MERGE: 'merge',
+  SELECTED: 'selected',
+};
+const AI_PROJECT_SCOPE_MODE_SET = new Set(Object.values(AI_PROJECT_SCOPE_MODES));
+
+const normalizeAiProjectScopeMode = (valueInput) => {
+  const mode = String(valueInput || '').trim().toLowerCase();
+  return AI_PROJECT_SCOPE_MODE_SET.has(mode) ? mode : AI_PROJECT_SCOPE_MODES.MERGE;
+};
+
+const resolveAiProjectScopeFromRequest = ({ payload, scopeInput }) => {
+  const scope = scopeInput && typeof scopeInput === 'object' && !Array.isArray(scopeInput) ? scopeInput : {};
+  const mode = normalizeAiProjectScopeMode(scope.mode);
+  const projects = getPayloadProjects(payload);
+  const validProjectIds = new Set(
+    projects.map((project) => String(project?.id || '').trim()).filter(Boolean)
+  );
+  const requestedProjectIds = Array.from(
+    new Set(
+      (Array.isArray(scope.projectIds) ? scope.projectIds : [])
+        .map((id) => String(id || '').trim())
+        .filter((id) => id && validProjectIds.has(id))
+    )
+  );
+  if (mode !== AI_PROJECT_SCOPE_MODES.SELECTED) {
+    return {
+      mode: AI_PROJECT_SCOPE_MODES.MERGE,
+      projectIds: Array.from(validProjectIds),
+    };
+  }
+  if (requestedProjectIds.length === 0) {
+    return {
+      mode: AI_PROJECT_SCOPE_MODES.MERGE,
+      projectIds: Array.from(validProjectIds),
+    };
+  }
+  return {
+    mode: AI_PROJECT_SCOPE_MODES.SELECTED,
+    projectIds: requestedProjectIds,
+  };
+};
+
+const applyAiProjectScopeToPayload = ({ payload, scope }) => {
+  const safePayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  const projects = getPayloadProjects(safePayload);
+  const events = getPayloadEvents(safePayload);
+  const scopeProjectIds = new Set(
+    (Array.isArray(scope?.projectIds) ? scope.projectIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+  );
+  if (scopeProjectIds.size === 0) {
+    return safePayload;
+  }
+  const scopedProjects = projects.filter((project) =>
+    scopeProjectIds.has(String(project?.id || '').trim())
+  );
+  const scopedEvents = events.filter((event) =>
+    scopeProjectIds.has(String(event?.projectId || '').trim())
+  );
+  return {
+    ...safePayload,
+    projects: scopedProjects,
+    events: scopedEvents,
+  };
+};
+
+const normalizeAiInputAttachments = (attachmentsInput) =>
+  (Array.isArray(attachmentsInput) ? attachmentsInput : [])
+    .slice(0, AI_INPUT_ATTACHMENT_MAX_COUNT)
+    .map((item) => (item && typeof item === 'object' && !Array.isArray(item) ? item : null))
+    .filter(Boolean)
+    .map((attachment) => ({
+      name: String(attachment.name || 'attachment').trim().slice(0, 180) || 'attachment',
+      mimeType: String(attachment.mimeType || '').trim().slice(0, 120),
+      size: Math.max(0, Number.parseInt(String(attachment.size || 0), 10) || 0),
+      textPreview: sanitizeAiMessageContent(
+        String(attachment.textPreview || '').trim(),
+        AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT
+      ),
+    }));
+
+const buildAiRequestContextNote = ({ payload, scope, attachments }) => {
+  const lines = [];
+  if (scope?.mode === AI_PROJECT_SCOPE_MODES.SELECTED) {
+    const selectedIds = Array.isArray(scope.projectIds) ? scope.projectIds : [];
+    const selectedNames = selectedIds
+      .map((projectId) => getProjectNameByIdFromPayload(payload, projectId))
+      .filter(Boolean);
+    if (selectedNames.length > 0) {
+      lines.push(`User selected project scope: ${selectedNames.join(', ')}`);
+      lines.push('Only answer and execute actions within selected project scope.');
+    }
+  } else {
+    lines.push('User selected merge view scope (all projects).');
+  }
+  const safeAttachments = Array.isArray(attachments) ? attachments : [];
+  if (safeAttachments.length > 0) {
+    lines.push('User attached files (metadata and optional text preview):');
+    safeAttachments.forEach((attachment, index) => {
+      const name = String(attachment?.name || 'attachment').trim() || 'attachment';
+      const mimeType = String(attachment?.mimeType || '').trim() || 'unknown';
+      const size = Math.max(0, Number.parseInt(String(attachment?.size || 0), 10) || 0);
+      lines.push(`${index + 1}. ${name} (${mimeType}, ${size} bytes)`);
+      const preview = sanitizeAiMessageContent(
+        String(attachment?.textPreview || '').trim(),
+        AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT
+      );
+      if (preview) {
+        lines.push(`Preview:\n${preview}`);
+      }
+    });
+  }
+  return sanitizeAiMessageContent(lines.join('\n'), 12000);
+};
+
 const toDateTimeMs = (dateInput, timeInput, endOfDayFallback = false) => {
   const date = normalizeIsoDate(dateInput);
   if (!date) return 0;
@@ -2816,7 +2941,14 @@ const executeAiToolCall = async ({ payload, args, toolName }) => {
   };
 };
 
-const runAiAssistant = async ({ payload, threadMessages, userMessage, userId, username }) => {
+const runAiAssistant = async ({
+  payload,
+  threadMessages,
+  userMessage,
+  userId,
+  username,
+  userContextNote = '',
+}) => {
   const history = Array.isArray(threadMessages) ? threadMessages : [];
   const compactHistory = history
     .filter((message) => ['user', 'assistant'].includes(String(message?.role || '').trim()))
@@ -2830,6 +2962,10 @@ const runAiAssistant = async ({ payload, threadMessages, userMessage, userId, us
   const contextSummary = buildAiContextSummary({ payload, userId, username });
   const systemPrompt = buildAiAssistantSystemPrompt({ contextSummary });
   const initialInput = [buildOpenAiInputMessage('system', systemPrompt), ...compactHistory];
+  const contextNote = sanitizeAiMessageContent(userContextNote, 12000);
+  if (contextNote) {
+    initialInput.push(buildOpenAiInputMessage('developer', contextNote));
+  }
   const lastHistoryItem = compactHistory[compactHistory.length - 1];
   const lastHistoryRole = String(lastHistoryItem?.role || '').trim().toLowerCase();
   let lastHistoryText = '';
@@ -6062,12 +6198,27 @@ app.post('/ai/threads/:threadId/chat', requireAuth, async (req, res) => {
       .map((doc) => toAiMessagePublicResponse(doc.id, doc.data() || {}))
       .reverse();
     const payload = await readAccountPayloadFromStore(userId);
-    const assistantResult = await runAiAssistant({
+    const projectScope = resolveAiProjectScopeFromRequest({
       payload,
+      scopeInput: req.body?.projectScope,
+    });
+    const scopedPayload = applyAiProjectScopeToPayload({
+      payload,
+      scope: projectScope,
+    });
+    const attachments = normalizeAiInputAttachments(req.body?.attachments);
+    const userContextNote = buildAiRequestContextNote({
+      payload,
+      scope: projectScope,
+      attachments,
+    });
+    const assistantResult = await runAiAssistant({
+      payload: scopedPayload,
       threadMessages: historyMessages,
       userMessage,
       userId,
       username: req.authUser?.username,
+      userContextNote,
     });
     const pendingAction = normalizeAiPendingAction(assistantResult.pendingAction);
     const assistantMessage = await saveAiThreadMessage({
