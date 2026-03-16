@@ -8965,7 +8965,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         const ownerIds = Array.from(
           new Set(
             (
-              normalizedActiveProjectId && scopedOwnerIdsForActiveProject.length > 0
+              normalizedActiveProjectId
                 ? scopedOwnerIdsForActiveProject
                 : [
                     ...baseProjects
