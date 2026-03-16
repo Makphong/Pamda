@@ -2587,6 +2587,65 @@ const DEFAULT_LINE_REMINDER_PROJECT_CONFIG = {
   lastTestedAt: null,
   lastOpenTaskDigestAt: null,
 };
+const LINE_REMINDER_VISIBILITY_MODES = Object.freeze({
+  HOST_ONLY: 'host_only',
+  SELECTED_MEMBERS: 'selected_members',
+  ALL_MEMBERS: 'all_members',
+});
+const LINE_REMINDER_VISIBILITY_MODE_SET = new Set(Object.values(LINE_REMINDER_VISIBILITY_MODES));
+const LINE_REMINDER_VISIBILITY_MODE_OPTIONS = [
+  { id: LINE_REMINDER_VISIBILITY_MODES.HOST_ONLY, label: 'ปิดจากทุกคน (Host เท่านั้น)' },
+  { id: LINE_REMINDER_VISIBILITY_MODES.SELECTED_MEMBERS, label: 'เลือกคนใน Project' },
+  { id: LINE_REMINDER_VISIBILITY_MODES.ALL_MEMBERS, label: 'แสดงทุกคนใน Project' },
+];
+const DEFAULT_LINE_REMINDER_VISIBILITY_CONFIG = {
+  mode: LINE_REMINDER_VISIBILITY_MODES.HOST_ONLY,
+  memberAccessKeys: [],
+};
+const normalizeLineReminderVisibilityMode = (valueInput) => {
+  const normalizedValue = String(valueInput || '').trim().toLowerCase();
+  return LINE_REMINDER_VISIBILITY_MODE_SET.has(normalizedValue)
+    ? normalizedValue
+    : DEFAULT_LINE_REMINDER_VISIBILITY_CONFIG.mode;
+};
+const normalizeLineReminderMemberAccessKeys = (valueInput) =>
+  Array.from(
+    new Set(
+      (Array.isArray(valueInput) ? valueInput : [])
+        .map((value) => {
+          const raw = String(value || '').trim();
+          if (!raw) return '';
+          const lowerRaw = raw.toLowerCase();
+          if (lowerRaw.startsWith('uid:')) {
+            const userId = raw.slice(raw.indexOf(':') + 1).trim();
+            return userId ? `uid:${userId}` : '';
+          }
+          if (lowerRaw.startsWith('uname:')) {
+            const username = raw.slice(raw.indexOf(':') + 1).trim().toLowerCase();
+            return username ? `uname:${username}` : '';
+          }
+          return `uname:${lowerRaw}`;
+        })
+        .filter(Boolean)
+    )
+  );
+const normalizeLineReminderVisibilityConfig = (configInput) => {
+  const config =
+    configInput && typeof configInput === 'object' && !Array.isArray(configInput) ? configInput : {};
+  return {
+    ...DEFAULT_LINE_REMINDER_VISIBILITY_CONFIG,
+    mode: normalizeLineReminderVisibilityMode(config.mode),
+    memberAccessKeys: normalizeLineReminderMemberAccessKeys(
+      config.memberAccessKeys || config.memberKeys || config.members || config.memberIds
+    ),
+  };
+};
+const buildLineReminderMemberAccessKey = ({ userId = '', username = '' } = {}) => {
+  const normalizedUserId = String(userId || '').trim();
+  if (normalizedUserId) return `uid:${normalizedUserId}`;
+  const normalizedUsername = String(username || '').trim().toLowerCase();
+  return normalizedUsername ? `uname:${normalizedUsername}` : '';
+};
 const normalizeLineReminderDaysBefore = (valueInput) => {
   const source = Array.isArray(valueInput) ? valueInput : [];
   const normalized = source
@@ -6732,6 +6791,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [editingEvent, setEditingEvent] = useState(null);
   const [selectedDateForNewEvent, setSelectedDateForNewEvent] = useState(null);
   const [preSelectedProjectId, setPreSelectedProjectId] = useState(null);
+  const [showCalendarTaskPane, setShowCalendarTaskPane] = useState(false);
+  const [calendarTaskPaneTask, setCalendarTaskPaneTask] = useState(null);
+  const [calendarTaskPaneProjectId, setCalendarTaskPaneProjectId] = useState('');
+  const [showMergeTaskProjectPicker, setShowMergeTaskProjectPicker] = useState(false);
+  const [mergeTaskPickerDate, setMergeTaskPickerDate] = useState('');
+  const [mergeTaskPickerSearch, setMergeTaskPickerSearch] = useState('');
+  const [mergeTaskPickerSelectedProjectId, setMergeTaskPickerSelectedProjectId] = useState('');
 
   // --- New Settings State ---
   const [displayRange, setDisplayRange] = useState(() => {
@@ -7432,6 +7498,20 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const isCalendarCompactViewport = isCompactViewport || isIpadPortraitViewport;
   const shouldUseCompactTopNavigation = isCompactViewport || isIpadPortraitViewport;
   const visibleProjects = projects.filter(p => p.isVisible);
+  const calendarTaskProjectOptions = useMemo(
+    () =>
+      visibleProjects
+        .filter(
+          (project) =>
+            String(project?.id || '').trim() &&
+            String(project?.id || '').trim() !== GOOGLE_CALENDAR_PROJECT_ID
+        )
+        .map((project) => ({
+          id: String(project.id || '').trim(),
+          name: String(project.name || '').trim() || 'Untitled project',
+        })),
+    [visibleProjects]
+  );
   const mobileVisibleProjects = visibleProjects.slice(0, 4);
   const selectedMobileProject = useMemo(
     () => visibleProjects.find((project) => project.id === mobileCalendarProjectId) || null,
@@ -7470,6 +7550,59 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const mobileCalendarEvents = selectedMobileProject
     ? events.filter((event) => event.projectId === selectedMobileProject.id)
     : mergeViewEvents;
+  const filteredMergeTaskProjectOptions = useMemo(() => {
+    const searchTerm = String(mergeTaskPickerSearch || '').trim().toLowerCase();
+    if (!searchTerm) return calendarTaskProjectOptions;
+    return calendarTaskProjectOptions.filter((option) =>
+      String(option?.name || '').trim().toLowerCase().includes(searchTerm)
+    );
+  }, [calendarTaskProjectOptions, mergeTaskPickerSearch]);
+  const mergeTaskPickerDateLabel = useMemo(() => {
+    const rawDate = String(mergeTaskPickerDate || '').trim();
+    const matched = rawDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!matched) return '';
+    const year = Number(matched[1]);
+    const month = Number(matched[2]);
+    const day = Number(matched[3]);
+    const parsedDate = new Date(year, month - 1, day);
+    if (Number.isNaN(parsedDate.getTime())) return rawDate;
+    return parsedDate.toLocaleDateString('th-TH', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  }, [mergeTaskPickerDate]);
+  const calendarTaskPaneProject = useMemo(
+    () =>
+      projects.find(
+        (project) => String(project?.id || '').trim() === String(calendarTaskPaneProjectId || '').trim()
+      ) || null,
+    [projects, calendarTaskPaneProjectId]
+  );
+  const calendarTaskPaneTeamMembers = useMemo(
+    () => (calendarTaskPaneProject ? normalizeProjectTeamMembers(calendarTaskPaneProject) : []),
+    [calendarTaskPaneProject]
+  );
+  const calendarTaskPaneDepartments = useMemo(
+    () => normalizeDepartments(calendarTaskPaneProject?.departments),
+    [calendarTaskPaneProject?.departments]
+  );
+  const calendarTaskPaneDepartmentColors = useMemo(
+    () =>
+      normalizeDepartmentColorMap(
+        calendarTaskPaneProject?.departmentColors,
+        calendarTaskPaneDepartments
+      ),
+    [calendarTaskPaneProject?.departmentColors, calendarTaskPaneDepartments]
+  );
+  const calendarTaskPaneProjectEvents = useMemo(() => {
+    const targetProjectId = String(calendarTaskPaneProject?.id || '').trim();
+    if (!targetProjectId) return [];
+    return events.filter(
+      (event) => String(event?.projectId || '').trim() === targetProjectId
+    );
+  }, [events, calendarTaskPaneProject]);
   const mergedTodoBoardItems = useMemo(() => {
     const visibleProjectById = new Map(
       visibleProjects.map((project) => [String(project.id || '').trim(), project])
@@ -9219,6 +9352,70 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     setPreSelectedProjectId(projectId || (visibleProjects.length > 0 ? visibleProjects[0].id : ''));
     setShowEventModal(true);
   };
+  const openCalendarTaskPaneForProject = (dateStrInput, projectIdInput) => {
+    const dateStr = String(dateStrInput || '').trim();
+    const targetProjectId = String(projectIdInput || '').trim();
+    if (!dateStr || !targetProjectId) return;
+    setIsPersonalWorkspaceOpen(false);
+    setShowEventModal(false);
+    setCalendarTaskPaneProjectId(targetProjectId);
+    setCalendarTaskPaneTask({
+      id: '',
+      projectId: targetProjectId,
+      recordType: 'task',
+      title: '',
+      description: '',
+      status: 'To Do',
+      startDate: '',
+      startTime: '',
+      endDate: dateStr,
+      endTime: '',
+      hasExplicitStartDate: false,
+      hasExplicitStartTime: false,
+      assigneeIds: [],
+      assigneeId: '',
+      attachments: [],
+      comments: [],
+      taskTodos: [],
+      __isTaskDraft: true,
+    });
+    setShowCalendarTaskPane(true);
+  };
+  const handleConfirmMergeTaskProjectPicker = () => {
+    const dateStr = String(mergeTaskPickerDate || '').trim();
+    const projectId = String(mergeTaskPickerSelectedProjectId || '').trim();
+    if (!dateStr || !projectId) return;
+    setShowMergeTaskProjectPicker(false);
+    setMergeTaskPickerSearch('');
+    openCalendarTaskPaneForProject(dateStr, projectId);
+  };
+  const handleAddTaskFromCalendar = async (dateStrInput, projectIdInput = null) => {
+    const dateStr = String(dateStrInput || '').trim();
+    if (!dateStr) return;
+
+    const availableProjects = visibleProjects.filter(
+      (project) => String(project?.id || '').trim() && String(project?.id || '').trim() !== GOOGLE_CALENDAR_PROJECT_ID
+    );
+    if (availableProjects.length === 0) {
+      await popup.alert({
+        title: 'Add task unavailable',
+        message: 'No project calendar available for task creation.',
+      });
+      return;
+    }
+
+    let targetProjectId = String(projectIdInput || '').trim();
+    if (targetProjectId === GOOGLE_CALENDAR_PROJECT_ID) targetProjectId = '';
+    if (!targetProjectId) {
+      setMergeTaskPickerDate(dateStr);
+      setMergeTaskPickerSearch('');
+      setMergeTaskPickerSelectedProjectId(String(availableProjects[0]?.id || '').trim());
+      setShowMergeTaskProjectPicker(true);
+      return;
+    }
+
+    openCalendarTaskPaneForProject(dateStr, targetProjectId);
+  };
 
   const handleNewEventClick = () => {
     setIsPersonalWorkspaceOpen(false);
@@ -10822,7 +11019,30 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             onInviteMember={inviteMemberToProject}
             activeTab={activeDashboardTab}
             onActiveTabChange={setActiveDashboardTab}
+            onRequestCreateEvent={(dateStr, projectId) => {
+              const normalizedDate = String(dateStr || '').trim();
+              const normalizedProjectId = String(projectId || activeProject.id || '').trim();
+              setEditingEvent(null);
+              setSelectedDateForNewEvent(normalizedDate || null);
+              setPreSelectedProjectId(normalizedProjectId || null);
+              setShowEventModal(true);
+            }}
           />
+          {showEventModal && (
+            <EventModal
+              event={editingEvent}
+              projects={projects}
+              defaultDate={selectedDateForNewEvent}
+              defaultProjectId={preSelectedProjectId}
+              googleCalendarStatus={googleCalendarStatus}
+              googleCalendarCalendars={googleCalendarCalendars}
+              googleCalendarSelectedCalendarIds={googleCalendarSelectedCalendarIds}
+              isGoogleCalendarCalendarsLoading={isGoogleCalendarCalendarsLoading}
+              onClose={() => setShowEventModal(false)}
+              onSave={saveEvent}
+              onDelete={deleteEvent}
+            />
+          )}
           {projectUpdatesOverlay}
         </>
       );
@@ -11213,6 +11433,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                             events={mobileCalendarEvents}
                             showEventTime={false}
                             onDayClick={(dateStr) => handleDayClick(dateStr, selectedMobileProject?.id || null)}
+                            onAddTaskClick={(dateStr) => {
+                              void handleAddTaskFromCalendar(dateStr, selectedMobileProject?.id || null);
+                            }}
                             onEventClick={handleEventClick}
                             hidePastWeeks={hidePastWeeks}
                             currentWeekStart={currentWeekStart}
@@ -11230,6 +11453,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                             events={mergeViewEvents}
                             showEventTime
                             onDayClick={(dateStr) => handleDayClick(dateStr, null)}
+                            onAddTaskClick={(dateStr) => {
+                              void handleAddTaskFromCalendar(dateStr, null);
+                            }}
                             onEventClick={handleEventClick}
                             hidePastWeeks={hidePastWeeks}
                             currentWeekStart={currentWeekStart}
@@ -11248,6 +11474,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                               events={events.filter(e => e.projectId === project.id)}
                               showEventTime={false}
                               onDayClick={(dateStr) => handleDayClick(dateStr, project.id)}
+                              onAddTaskClick={(dateStr) => {
+                                void handleAddTaskFromCalendar(dateStr, project.id);
+                              }}
                               onEventClick={handleEventClick}
                               hidePastWeeks={hidePastWeeks}
                               currentWeekStart={currentWeekStart}
@@ -11324,6 +11553,121 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           onSave={saveEvent}
           onDelete={deleteEvent}
         />
+      )}
+      <TaskDetailPane
+        isOpen={showCalendarTaskPane}
+        onClose={() => {
+          setShowCalendarTaskPane(false);
+          setCalendarTaskPaneTask(null);
+          setCalendarTaskPaneProjectId('');
+        }}
+        task={calendarTaskPaneTask}
+        onSave={(data) => {
+          const targetProjectId = String(calendarTaskPaneProjectId || '').trim();
+          if (!targetProjectId) return;
+          saveTaskForProject(targetProjectId, data);
+          setShowCalendarTaskPane(false);
+          setCalendarTaskPaneTask(null);
+          setCalendarTaskPaneProjectId('');
+        }}
+        onPatchTask={null}
+        onCreateSubtask={null}
+        onOpenTask={null}
+        onDelete={() => {}}
+        currentUserId={currentUser.id}
+        currentUserProfile={currentUser}
+        isProjectHost={
+          String(calendarTaskPaneProject?.ownerId || '').trim() === String(currentUser.id || '').trim()
+        }
+        projectTasks={calendarTaskPaneProjectEvents.filter(
+          (event) => String(event?.recordType || '').trim().toLowerCase() === 'task'
+        )}
+        projectEvents={calendarTaskPaneProjectEvents}
+        googleCalendarEvents={googleCalendarEvents}
+        teamMembers={calendarTaskPaneTeamMembers}
+        TASK_STATUSES={['To Do', 'In Progress', 'Review', 'Done']}
+        DEPARTMENTS={calendarTaskPaneDepartments}
+        departmentColors={calendarTaskPaneDepartmentColors}
+      />
+      {showMergeTaskProjectPicker && (
+        <div className="fixed inset-0 z-[120] bg-slate-900/45 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
+              <h3 className="text-base font-semibold text-slate-800">เลือก Project สำหรับ Task</h3>
+              {mergeTaskPickerDateLabel ? (
+                <p className="text-xs text-slate-500 mt-1">{mergeTaskPickerDateLabel}</p>
+              ) : null}
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={mergeTaskPickerSearch}
+                  onChange={(event) => setMergeTaskPickerSearch(event.target.value)}
+                  placeholder="ค้นหา Project"
+                  className="w-full rounded-lg border border-slate-300 bg-white pl-9 pr-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
+                />
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1.5 space-y-1">
+                {filteredMergeTaskProjectOptions.length === 0 ? (
+                  <p className="text-sm text-slate-400 px-2 py-3">ไม่พบ Project ที่ค้นหา</p>
+                ) : (
+                  filteredMergeTaskProjectOptions.map((projectOption) => {
+                    const optionId = String(projectOption?.id || '').trim();
+                    const isSelected = optionId === String(mergeTaskPickerSelectedProjectId || '').trim();
+                    return (
+                      <button
+                        key={`merge-task-project-option-${optionId}`}
+                        type="button"
+                        onClick={() => setMergeTaskPickerSelectedProjectId(optionId)}
+                        className={`w-full flex items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
+                          isSelected
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : 'bg-white text-slate-700 border border-transparent hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="truncate">{projectOption.name}</span>
+                        <span
+                          className={`h-5 w-5 rounded border inline-flex items-center justify-center shrink-0 ${
+                            isSelected
+                              ? 'border-blue-500 bg-blue-500 text-white'
+                              : 'border-slate-300 bg-white text-transparent'
+                          }`}
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMergeTaskProjectPicker(false);
+                  setMergeTaskPickerSearch('');
+                  setMergeTaskPickerDate('');
+                  setMergeTaskPickerSelectedProjectId('');
+                }}
+                className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmMergeTaskProjectPicker}
+                disabled={!String(mergeTaskPickerSelectedProjectId || '').trim()}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-semibold disabled:bg-blue-300 disabled:cursor-not-allowed"
+              >
+                เลือก
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
@@ -12875,6 +13219,7 @@ function ProjectDashboard({
   onInviteMember,
   activeTab: activeTabProp,
   onActiveTabChange,
+  onRequestCreateEvent = null,
 }) {
   const popup = usePopup();
   const { isIpadPortrait: isIpadPortraitViewport } = useIpadClassState();
@@ -13039,6 +13384,14 @@ function ProjectDashboard({
   const [isLineReminderConfigSaving, setIsLineReminderConfigSaving] = useState(false);
   const [isLineReminderTestSending, setIsLineReminderTestSending] = useState(false);
   const [isLineReminderOpenTasksSending, setIsLineReminderOpenTasksSending] = useState(false);
+  const [lineReminderVisibilityConfig, setLineReminderVisibilityConfig] = useState(() =>
+    normalizeLineReminderVisibilityConfig(project.lineReminderVisibility)
+  );
+  const [isLineReminderVisibilityPopupOpen, setIsLineReminderVisibilityPopupOpen] = useState(false);
+  const [lineReminderVisibilityDraftMode, setLineReminderVisibilityDraftMode] = useState(
+    DEFAULT_LINE_REMINDER_VISIBILITY_CONFIG.mode
+  );
+  const [lineReminderVisibilityDraftMemberKeys, setLineReminderVisibilityDraftMemberKeys] = useState([]);
   const [isLineReminderGuidePopupOpen, setIsLineReminderGuidePopupOpen] = useState(false);
 
   const normalizeAnnouncementRecord = (value) => {
@@ -13163,9 +13516,20 @@ function ProjectDashboard({
   ]);
 
   useEffect(() => {
+    const normalizedVisibility = normalizeLineReminderVisibilityConfig(project.lineReminderVisibility);
+    setLineReminderVisibilityConfig((prev) =>
+      isJsonEqual(prev, normalizedVisibility) ? prev : normalizedVisibility
+    );
+  }, [project.id, project.lineReminderVisibility]);
+
+  useEffect(() => {
     if (activeTab !== 'announcements') return undefined;
-    if (!isProjectHost) return undefined;
     if (!AUTH_API_BASE_URL || !currentUser?.id || !project?.id) return undefined;
+    if (!isProjectHost) {
+      setIsLineReminderConfigLoading(false);
+      setLineReminderConfigError('');
+      return undefined;
+    }
 
     let cancelled = false;
     setIsLineReminderConfigLoading(true);
@@ -13194,7 +13558,7 @@ function ProjectDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeTab, isProjectHost, currentUser?.id, project?.id]);
+  }, [activeTab, currentUser?.id, project?.id, isProjectHost]);
   
   const statusConfig = {
     on_track: { label: 'On Track', bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' },
@@ -13222,6 +13586,120 @@ function ProjectDashboard({
   }, [project.id, onActiveTabChange, activeTabProp]);
 
   const canManageMembers = isProjectAccessibleByUser(project, currentUser);
+  const lineReminderVisibilityMemberOptions = useMemo(() => {
+    const ownerUsername = String(project.ownerUsername || '').trim().toLowerCase();
+    return (Array.isArray(teamMembers) ? teamMembers : [])
+      .filter((member) => {
+        const memberUsername = String(member?.username || member?.name || '').trim().toLowerCase();
+        return Boolean(memberUsername) && memberUsername !== ownerUsername;
+      })
+      .map((member) => {
+        const memberName = String(member?.name || member?.username || 'Member').trim() || 'Member';
+        const memberUsername = String(member?.username || member?.name || '').trim().toLowerCase();
+        return {
+          key: buildLineReminderMemberAccessKey({
+            userId: member?.userId,
+            username: memberUsername,
+          }),
+          name: memberName,
+          username: memberUsername,
+          avatarUrl: String(member?.avatarUrl || '').trim(),
+          initials: getInitials(memberName),
+        };
+      })
+      .filter((option) => Boolean(option.key));
+  }, [teamMembers, project.ownerUsername]);
+  const lineReminderVisibilityMemberOptionKeySet = useMemo(
+    () => new Set(lineReminderVisibilityMemberOptions.map((option) => option.key)),
+    [lineReminderVisibilityMemberOptions]
+  );
+  const currentLineReminderAccessKey = useMemo(
+    () =>
+      buildLineReminderMemberAccessKey({
+        userId: currentUser?.id,
+        username: currentUser?.username,
+      }),
+    [currentUser?.id, currentUser?.username]
+  );
+  const canCurrentUserSeeLineReminder = useMemo(() => {
+    if (!isProjectAccessibleByUser(project, currentUser)) return false;
+    if (isProjectHost) return true;
+    if (lineReminderVisibilityConfig.mode === LINE_REMINDER_VISIBILITY_MODES.ALL_MEMBERS) return true;
+    if (lineReminderVisibilityConfig.mode === LINE_REMINDER_VISIBILITY_MODES.SELECTED_MEMBERS) {
+      return lineReminderVisibilityConfig.memberAccessKeys.includes(currentLineReminderAccessKey);
+    }
+    return false;
+  }, [
+    project,
+    currentUser,
+    isProjectHost,
+    lineReminderVisibilityConfig.mode,
+    lineReminderVisibilityConfig.memberAccessKeys,
+    currentLineReminderAccessKey,
+  ]);
+  const lineReminderVisibilityModeLabel = useMemo(() => {
+    const matched = LINE_REMINDER_VISIBILITY_MODE_OPTIONS.find(
+      (option) => option.id === lineReminderVisibilityConfig.mode
+    );
+    return matched?.label || LINE_REMINDER_VISIBILITY_MODE_OPTIONS[0].label;
+  }, [lineReminderVisibilityConfig.mode]);
+  const lineReminderSelectedViewerCount = useMemo(
+    () =>
+      lineReminderVisibilityConfig.mode === LINE_REMINDER_VISIBILITY_MODES.SELECTED_MEMBERS
+        ? lineReminderVisibilityConfig.memberAccessKeys.filter((key) =>
+            lineReminderVisibilityMemberOptionKeySet.has(key)
+          ).length
+        : 0,
+    [
+      lineReminderVisibilityConfig.mode,
+      lineReminderVisibilityConfig.memberAccessKeys,
+      lineReminderVisibilityMemberOptionKeySet,
+    ]
+  );
+  const openLineReminderVisibilityPopup = useCallback(() => {
+    if (!isProjectHost) return;
+    const normalizedVisibility = normalizeLineReminderVisibilityConfig(lineReminderVisibilityConfig);
+    setLineReminderVisibilityDraftMode(normalizedVisibility.mode);
+    setLineReminderVisibilityDraftMemberKeys(normalizedVisibility.memberAccessKeys);
+    setIsLineReminderVisibilityPopupOpen(true);
+  }, [isProjectHost, lineReminderVisibilityConfig]);
+  const toggleLineReminderVisibilityMemberDraft = useCallback((memberAccessKey) => {
+    const normalizedKey = String(memberAccessKey || '').trim();
+    if (!normalizedKey) return;
+    setLineReminderVisibilityDraftMemberKeys((prev) => {
+      const currentKeys = normalizeLineReminderMemberAccessKeys(prev);
+      if (currentKeys.includes(normalizedKey)) {
+        return currentKeys.filter((key) => key !== normalizedKey);
+      }
+      return normalizeLineReminderMemberAccessKeys([...currentKeys, normalizedKey]);
+    });
+  }, []);
+  const handleSaveLineReminderVisibility = useCallback(() => {
+    if (!isProjectHost) return;
+    const normalizedMode = normalizeLineReminderVisibilityMode(lineReminderVisibilityDraftMode);
+    const normalizedSelectedKeys = normalizeLineReminderMemberAccessKeys(
+      lineReminderVisibilityDraftMemberKeys
+    ).filter((key) => lineReminderVisibilityMemberOptionKeySet.has(key));
+    const nextVisibilityConfig = normalizeLineReminderVisibilityConfig({
+      mode: normalizedMode,
+      memberAccessKeys:
+        normalizedMode === LINE_REMINDER_VISIBILITY_MODES.SELECTED_MEMBERS
+          ? normalizedSelectedKeys
+          : [],
+    });
+    setLineReminderVisibilityConfig(nextVisibilityConfig);
+    onUpdateProject(project.id, {
+      lineReminderVisibility: nextVisibilityConfig,
+    });
+    setIsLineReminderVisibilityPopupOpen(false);
+  }, [
+    isProjectHost,
+    lineReminderVisibilityDraftMode,
+    lineReminderVisibilityDraftMemberKeys,
+    lineReminderVisibilityMemberOptionKeySet,
+    onUpdateProject,
+    project.id,
+  ]);
 
   const persistTeamManagement = (
     membersInput,
@@ -15154,6 +15632,36 @@ function ProjectDashboard({
     setPaneTask(null);
     setIsPaneOpen(true);
   };
+  const openAddTaskForDate = (dateStrInput = '') => {
+    setShowFilterPopup(false);
+    const dateStr = String(dateStrInput || '').trim();
+    if (!dateStr) {
+      setPaneTask(null);
+      setIsPaneOpen(true);
+      return;
+    }
+    setPaneTask({
+      id: '',
+      projectId: String(project?.id || '').trim(),
+      recordType: 'task',
+      title: '',
+      description: '',
+      status: 'To Do',
+      startDate: '',
+      startTime: '',
+      endDate: dateStr,
+      endTime: '',
+      hasExplicitStartDate: false,
+      hasExplicitStartTime: false,
+      assigneeIds: [],
+      assigneeId: '',
+      attachments: [],
+      comments: [],
+      taskTodos: [],
+      __isTaskDraft: true,
+    });
+    setIsPaneOpen(true);
+  };
   const openAddSubtask = (parentTaskInput) => {
     setShowFilterPopup(false);
     const parentTask = parentTaskInput && typeof parentTaskInput === 'object' ? parentTaskInput : null;
@@ -15355,6 +15863,15 @@ function ProjectDashboard({
       return new Date(current.getFullYear(), current.getMonth() + numericStep, 1, 0, 0, 0, 0);
     });
   }, []);
+  const handleOrganizationAddEvent = useCallback(
+    (dateStr) => {
+      if (typeof onRequestCreateEvent !== 'function') return;
+      const normalizedDate = String(dateStr || '').trim();
+      if (!normalizedDate) return;
+      onRequestCreateEvent(normalizedDate, String(project?.id || '').trim());
+    },
+    [onRequestCreateEvent, project?.id]
+  );
   const noopCalendarAction = useCallback(() => {}, []);
 
   return (
@@ -15523,7 +16040,8 @@ function ProjectDashboard({
                         hidePastWeeks={false}
                         currentWeekStart={organizationCalendarDate}
                         calendarColumnCount={1}
-                        onDayClick={noopCalendarAction}
+                        onDayClick={handleOrganizationAddEvent}
+                        onAddTaskClick={openAddTaskForDate}
                         onEventClick={noopCalendarAction}
                       />
                     </div>
@@ -15688,33 +16206,45 @@ function ProjectDashboard({
                       </div>
                     </div>
 
-                    <div className="mt-4 space-y-2">
-                      <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2.5">
-                        <p className="text-[11px] font-semibold text-blue-700">1. งานที่เสร็จแล้ว</p>
-                        <p className="text-lg font-bold text-blue-800 leading-tight">
+                    <div className="mt-4 grid grid-cols-1 gap-1.5">
+                      <div className="px-3 py-2.5">
+                        <div className="flex items-start gap-2">
+                          <p className="text-xs font-semibold text-gray-600">งานที่เสร็จแล้ว</p>
+                        </div>
+                        <p className="mt-1 text-3xl font-bold leading-none text-gray-600">
                           {organizationProgressStats.donePercent.toFixed(1)}%
                         </p>
-                        <p className="text-xs text-blue-700">
+                        <p className="mt-1 text-sm font-medium text-gray-600">
                           {organizationProgressStats.doneTasks}/{organizationProgressStats.totalTasks} Tasks
                         </p>
                       </div>
-                      <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2.5">
-                        <p className="text-[11px] font-semibold text-amber-700">2. งานที่ยังไม่เสร็จ</p>
-                        <p className="text-lg font-bold text-amber-800 leading-tight">
-                          {organizationProgressStats.remainingTasks} Tasks
+                      <div className="px-3 py-2.5">
+                        <div className="flex items-start gap-2">
+                          <p className="text-xs font-semibold text-gray-600">งานที่ยังไม่เสร็จ</p>
+                        </div>
+                        <p className="mt-1 text-3xl font-bold leading-none text-gray-600">
+                          {organizationProgressStats.remainingTasks}
                         </p>
+                        <p className="mt-1 text-sm font-medium text-gray-600">Tasks</p>
                       </div>
-                      <div className="rounded-lg border border-rose-100 bg-rose-50/60 px-3 py-2.5">
-                        <p className="text-[11px] font-semibold text-rose-700">
-                          3. งานเสี่ยงล่าช้า / ขยาย Deadline
+                      <div className="px-3 py-2.5">
+                        <div className="flex items-start gap-2">
+                          <p className="text-xs font-semibold text-gray-600">งานเสี่ยงล่าช้า / ขยาย Deadline</p>
+                        </div>
+                        <p className="mt-1 text-3xl font-bold leading-none text-gray-600">
+                          {organizationProgressStats.riskTaskCount}{' '}
+                          <span className="text-3xl font-bold text-gray-600">
+                            ({organizationProgressStats.riskPercent.toFixed(1)}%)
+                          </span>
                         </p>
-                        <p className="text-lg font-bold text-rose-800 leading-tight">
-                          {organizationProgressStats.riskTaskCount} Tasks (
-                          {organizationProgressStats.riskPercent.toFixed(1)}%)
-                        </p>
-                        <p className="text-xs text-rose-700">
-                          Late {organizationProgressStats.lateTaskCount} | Extended {organizationProgressStats.extendedTaskCount}
-                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+                            Late {organizationProgressStats.lateTaskCount}
+                          </span>
+                          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                            Extended {organizationProgressStats.extendedTaskCount}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -16976,25 +17506,50 @@ function ProjectDashboard({
                   </div>
                 </div>
 
-                {isProjectHost && (
+                {canCurrentUserSeeLineReminder && (
                   <div className="rounded-xl border border-gray-200 bg-white p-4 md:p-5 space-y-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <h3 className="text-base font-semibold text-gray-800">LINE Reminder (Host only)</h3>
+                        <h3 className="text-base font-semibold text-gray-800">LINE Reminder</h3>
                         <p className="text-xs text-gray-500 mt-0.5">
                           Send task reminder to LINE group before due date (7 / 3 / 1 days).
+                          {isProjectHost && (
+                            <span className="block mt-1 text-gray-400">
+                              การมองเห็น: {lineReminderVisibilityModeLabel}
+                              {lineReminderVisibilityConfig.mode ===
+                              LINE_REMINDER_VISIBILITY_MODES.SELECTED_MEMBERS
+                                ? ` (${lineReminderSelectedViewerCount} คน)`
+                                : ''}
+                            </span>
+                          )}
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setIsLineReminderGuidePopupOpen(true)}
-                        className="text-xs font-semibold px-2.5 py-1.5 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50"
-                      >
-                        วิธีตั้งค่า
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {isProjectHost && (
+                          <button
+                            type="button"
+                            onClick={openLineReminderVisibilityPopup}
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50"
+                          >
+                            <Users className="w-3.5 h-3.5" />
+                            การมองเห็น
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setIsLineReminderGuidePopupOpen(true)}
+                          className="text-xs font-semibold px-2.5 py-1.5 rounded-md border border-gray-300 text-gray-600 hover:bg-gray-50"
+                        >
+                          วิธีการใช้งาน
+                        </button>
+                      </div>
                     </div>
 
-                    {isLineReminderConfigLoading ? (
+                    {!isProjectHost ? (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-600">
+                        Host อนุญาตให้คุณเห็นเมนูนี้แล้ว แต่เฉพาะ Host เท่านั้นที่แก้ไขการตั้งค่าและส่งข้อความได้
+                      </div>
+                    ) : isLineReminderConfigLoading ? (
                       <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-500">
                         Loading LINE reminder settings...
                       </div>
@@ -17643,11 +18198,116 @@ function ProjectDashboard({
           departmentColors={projectDepartmentColors}
 	      />
 
+      {isLineReminderVisibilityPopupOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-800">การมองเห็น LINE Reminder</h3>
+              <button
+                type="button"
+                onClick={() => setIsLineReminderVisibilityPopupOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-md hover:bg-gray-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              <div className="space-y-2">
+                {LINE_REMINDER_VISIBILITY_MODE_OPTIONS.map((option) => {
+                  const checked = lineReminderVisibilityDraftMode === option.id;
+                  return (
+                    <label
+                      key={`line-reminder-visibility-mode-${option.id}`}
+                      className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors ${
+                        checked
+                          ? 'text-blue-700'
+                          : 'text-gray-700'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="lineReminderVisibilityMode"
+                        value={option.id}
+                        checked={checked}
+                        onChange={(event) => setLineReminderVisibilityDraftMode(event.target.value)}
+                        className="border-gray-300"
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              {lineReminderVisibilityDraftMode === LINE_REMINDER_VISIBILITY_MODES.SELECTED_MEMBERS && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">เลือกสมาชิกที่มองเห็น</p>
+                  {lineReminderVisibilityMemberOptions.length === 0 ? (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-500">
+                      ยังไม่มีสมาชิกให้เลือก
+                    </div>
+                  ) : (
+                    <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
+                      {lineReminderVisibilityMemberOptions.map((option) => {
+                        const checked = lineReminderVisibilityDraftMemberKeys.includes(option.key);
+                        return (
+                          <button
+                            key={`line-reminder-visibility-member-${option.key}`}
+                            type="button"
+                            onClick={() => toggleLineReminderVisibilityMemberDraft(option.key)}
+                            className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left transition-colors ${
+                              checked ? 'bg-blue-50 text-blue-700' : 'bg-white text-gray-700 hover:bg-gray-50'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 min-w-0">
+                              {option.avatarUrl ? (
+                                <img
+                                  src={option.avatarUrl}
+                                  alt={option.name}
+                                  className="w-7 h-7 rounded-full object-cover border border-gray-200 shrink-0"
+                                />
+                              ) : (
+                                <span className="w-7 h-7 rounded-full bg-gray-100 text-gray-500 text-xs font-semibold inline-flex items-center justify-center shrink-0">
+                                  {option.initials}
+                                </span>
+                              )}
+                              <span className="min-w-0">
+                                <span className="block text-sm font-medium text-gray-800 truncate">{option.name}</span>
+                                <span className="block text-xs text-gray-500 truncate">@{option.username}</span>
+                              </span>
+                            </span>
+                            {checked && <Check className="w-4 h-4 shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsLineReminderVisibilityPopupOpen(false)}
+                className="px-3 py-1.5 rounded-md text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveLineReminderVisibility}
+                className="px-3 py-1.5 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+              >
+                บันทึก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isLineReminderGuidePopupOpen && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden">
+          <div className="w-full max-w-2xl bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden">
             <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-800">LINE Reminder Setup</h3>
+              <h3 className="text-lg font-semibold text-gray-800">วิธีการใช้งาน LINE Reminder</h3>
               <button
                 type="button"
                 onClick={() => setIsLineReminderGuidePopupOpen(false)}
@@ -17656,23 +18316,33 @@ function ProjectDashboard({
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="px-5 py-4 space-y-3 text-sm text-gray-700">
-              <p className="text-xs text-gray-500">
-                ทำครั้งเดียวต่อโปรเจกต์ (เฉพาะ Host)
-              </p>
-	              <ol className="list-decimal pl-5 space-y-1.5">
-                <li>เข้า LINE Developers แล้วเปิด Messaging API channel ของบอท</li>
-                <li>เชิญ LINE OA (บอท) เข้า LINE กลุ่มงาน</li>
-                <li>ใส่ Group ID ในฟอร์มนี้ และกด Save settings</li>
-                <li>ระบบจะใช้ Channel Access Token กลางที่ตั้งไว้บนเซิร์ฟเวอร์อัตโนมัติ</li>
-                <li>กด ปุ่มประกาศข้อความ เพื่อทดสอบส่งข้อความเข้ากลุ่ม</li>
-	                <li>กด ปุ่มแจ้งเตือน Task ทั้งหมด เพื่อส่งสรุปงานค้างทั้งหมดในโปรเจกต์</li>
-	                <li>เลือกแจ้งเตือนล่วงหน้า 7/3/1 วัน ได้หลายตัวเลือก แล้วกด Save settings</li>
-	                <li>ตั้ง Cloud Scheduler ให้เรียก endpoint งานเตือนทุกชั่วโมง</li>
-	              </ol>
-              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-                Endpoint สำหรับ Scheduler: <code>/internal/jobs/line/remind-due-tomorrow</code><br />
-                Header ที่ต้องส่ง: <code>x-cron-secret</code> = <code>LINE_REMINDER_CRON_SECRET</code>
+            <div className="px-5 py-4 space-y-4">
+              <div className="aspect-video rounded-xl overflow-hidden border border-gray-200 bg-black">
+                <iframe
+                  title="LINE Reminder Guide"
+                  src="https://www.youtube.com/embed/H-98PXm1qow"
+                  className="w-full h-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <a
+                  href="https://line.me/R/ti/p/@753flopf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100"
+                >
+                  ไปที่หน้าแอดไลน์
+                </a>
+                <a
+                  href="https://youtu.be/H-98PXm1qow?si=Lg1UhD5C8yBapFCp"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100"
+                >
+                  ดูบน YouTube
+                </a>
               </div>
             </div>
             <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
@@ -19212,7 +19882,7 @@ function TaskDetailPane({
                 />
               </div>
 
-	              <div className="grid grid-cols-[120px_1fr] items-center gap-y-5 gap-x-2 text-sm">
+		              <div className="grid grid-cols-[120px_1fr] items-center gap-y-5 gap-x-2 text-sm">
                 {parentTaskId ? (
                   <>
                     <div className="text-gray-500 flex items-center gap-2"><Layers className="w-4 h-4" /> Task หลัก</div>
@@ -31394,6 +32064,7 @@ function MonthGrid({
   events,
   showEventTime = false,
   onDayClick,
+  onAddTaskClick,
   onEventClick,
   hidePastWeeks,
   currentWeekStart,
@@ -31445,11 +32116,11 @@ function MonthGrid({
   const normalizedCalendarColumnCount = Math.max(1, Number(calendarColumnCount) || 1);
   const dayQuickPanelWidthPx =
     normalizedCalendarColumnCount >= 4
-      ? 220
+      ? 300
       : normalizedCalendarColumnCount === 3
-        ? 250
+        ? 300
         : normalizedCalendarColumnCount === 2
-          ? 300
+          ? 320
           : 340;
   const dayEventsByDate = useMemo(() => {
     const mapped = {};
@@ -31760,18 +32431,36 @@ function MonthGrid({
                             <p className="text-[11px] font-semibold text-gray-700 whitespace-nowrap">
                               {formatDayQuickPanelDateLabel(dayData.dateStr)}
                             </p>
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setActiveDayQuickPanelDate('');
-                                onDayClick(dayData.dateStr);
-                              }}
-                              className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 whitespace-nowrap shrink-0"
-                            >
-                              <Plus className="w-3 h-3" />
-                              Add event
-                            </button>
+                            <div className="inline-flex items-center justify-end gap-1 shrink-0">
+                              {typeof onAddTaskClick === 'function' && (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setActiveDayQuickPanelDate('');
+                                    onAddTaskClick(dayData.dateStr);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Add task
+                                </button>
+                              )}
+                              {typeof onDayClick === 'function' && (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setActiveDayQuickPanelDate('');
+                                    onDayClick(dayData.dateStr);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  Add event
+                                </button>
+                              )}
+                            </div>
                           </div>
                           <div className="mt-2 max-h-40 overflow-y-auto space-y-1 pr-1">
                             {dayEvents.length === 0 ? (
