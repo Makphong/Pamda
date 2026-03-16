@@ -1143,6 +1143,8 @@ const PROJECT_UPDATE_POPUP_MODES = {
 const PROJECT_UPDATE_TOAST_AUTO_CLOSE_MS = 5000;
 const PROJECT_UPDATE_TOAST_EXIT_MS = 280;
 const COLLABORATIVE_REFRESH_INTERVAL_MS = 5000;
+const COLLABORATIVE_REFRESH_ACTIVE_NOTES_INTERVAL_MS = 1800;
+const COLLABORATIVE_REFRESH_ACTIVE_OTHER_INTERVAL_MS = 6500;
 const PROJECT_OWNER_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
 const STABLE_FALLBACK_ISO = new Date(0).toISOString();
 const VALID_PROJECT_UPDATE_POPUP_MODES = new Set(Object.values(PROJECT_UPDATE_POPUP_MODES));
@@ -8936,17 +8938,45 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           )
           .map((invite) => String(invite.ownerId || '').trim())
           .filter(Boolean);
+        const normalizedActiveProjectId = String(activeDashboardProjectId || '').trim();
+        const scopedOwnerIdsForActiveProject = normalizedActiveProjectId
+          ? Array.from(
+              new Set(
+                [...baseProjects, ...localProjectsSnapshot]
+                  .filter(
+                    (project) => String(project?.id || '').trim() === normalizedActiveProjectId
+                  )
+                  .flatMap((project) => {
+                    const directOwnerId = String(project?.ownerId || '').trim();
+                    if (directOwnerId && directOwnerId !== currentUser.id) {
+                      return [directOwnerId];
+                    }
+                    const ownerUsername = String(project?.ownerUsername || '').trim().toLowerCase();
+                    const resolvedOwnerId = ownerUsername
+                      ? String(ownerIdByUsername.get(ownerUsername) || '').trim()
+                      : '';
+                    return resolvedOwnerId && resolvedOwnerId !== currentUser.id
+                      ? [resolvedOwnerId]
+                      : [];
+                  })
+              )
+            )
+          : [];
         const ownerIds = Array.from(
           new Set(
-            [
-              ...baseProjects
-                .map((project) => String(project.ownerId || '').trim())
-                .filter((ownerId) => ownerId && ownerId !== currentUser.id),
-              ...invitedOwnerIds,
-              ...Array.from(ownerIdByUsername.values()).filter(
-                (ownerId) => ownerId && ownerId !== currentUser.id
-              ),
-            ].filter(Boolean)
+            (
+              normalizedActiveProjectId && scopedOwnerIdsForActiveProject.length > 0
+                ? scopedOwnerIdsForActiveProject
+                : [
+                    ...baseProjects
+                      .map((project) => String(project.ownerId || '').trim())
+                      .filter((ownerId) => ownerId && ownerId !== currentUser.id),
+                    ...invitedOwnerIds,
+                    ...Array.from(ownerIdByUsername.values()).filter(
+                      (ownerId) => ownerId && ownerId !== currentUser.id
+                    ),
+                  ]
+            ).filter(Boolean)
           )
         );
 
@@ -9328,8 +9358,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     const collaborativeRefreshIntervalMs = activeDashboardProjectId
       ? activeDashboardTab === 'notes'
-        ? 1200
-        : 4200
+        ? COLLABORATIVE_REFRESH_ACTIVE_NOTES_INTERVAL_MS
+        : COLLABORATIVE_REFRESH_ACTIVE_OTHER_INTERVAL_MS
       : COLLABORATIVE_REFRESH_INTERVAL_MS;
     const refreshInterval = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
