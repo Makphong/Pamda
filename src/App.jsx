@@ -6801,6 +6801,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
   const [aiThreads, setAiThreads] = useState([]);
   const [activeAiThreadId, setActiveAiThreadId] = useState('');
+  const [isAiThreadDropdownOpen, setIsAiThreadDropdownOpen] = useState(false);
   const [aiMessages, setAiMessages] = useState([]);
   const [aiPendingAction, setAiPendingAction] = useState(null);
   const [aiInput, setAiInput] = useState('');
@@ -6809,6 +6810,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [isAiLoadingMessages, setIsAiLoadingMessages] = useState(false);
   const [isAiSending, setIsAiSending] = useState(false);
   const [isAiConfirming, setIsAiConfirming] = useState(false);
+  const [deletingAiThreadId, setDeletingAiThreadId] = useState('');
+  const aiThreadDropdownRef = useRef(null);
   const aiMessagesEndRef = useRef(null);
 
   // --- New Settings State ---
@@ -6911,6 +6914,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     setIsAiAssistantOpen(false);
     setAiThreads([]);
     setActiveAiThreadId('');
+    setIsAiThreadDropdownOpen(false);
     setAiMessages([]);
     setAiPendingAction(null);
     setAiInput('');
@@ -6919,6 +6923,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     setIsAiLoadingMessages(false);
     setIsAiSending(false);
     setIsAiConfirming(false);
+    setDeletingAiThreadId('');
   }, [currentUser.id]);
 
   useEffect(() => {
@@ -7170,6 +7175,33 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     };
   }, []);
 
+  const formatAiAssistantError = useCallback((errorInput, fallbackMessage) => {
+    const status = Number(errorInput?.status || 0);
+    const payloadCode = String(errorInput?.payload?.code || errorInput?.code || '')
+      .trim()
+      .toLowerCase();
+    const message = String(errorInput?.message || '').trim();
+    const messageLower = message.toLowerCase();
+    if (
+      payloadCode === 'insufficient_quota' ||
+      messageLower.includes('insufficient_quota') ||
+      messageLower.includes('quota') ||
+      messageLower.includes('billing')
+    ) {
+      return 'AI quota เต็มแล้ว กรุณาตรวจสอบแพ็กเกจและ Billing ของ OpenAI แล้วลองใหม่อีกครั้ง';
+    }
+    if (status === 429) {
+      return 'AI ใช้งานหนาแน่นชั่วคราว กรุณาลองใหม่อีกครั้งในอีกสักครู่';
+    }
+    if (status === 401 || status === 403) {
+      return 'AI key บนเซิร์ฟเวอร์ไม่ถูกต้องหรือไม่มีสิทธิ์ใช้งาน';
+    }
+    if (status === 503) {
+      return 'เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า OPENAI_API_KEY';
+    }
+    return message || fallbackMessage;
+  }, []);
+
   const handleLoadAiThreads = useCallback(
     async ({ createIfEmpty = false } = {}) => {
       if (!AUTH_API_BASE_URL) return [];
@@ -7199,13 +7231,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         });
         return threads;
       } catch (error) {
-        setAiErrorMessage(error.message || 'Failed to load AI threads.');
+        setAiErrorMessage(formatAiAssistantError(error, 'Failed to load AI threads.'));
         return [];
       } finally {
         setIsAiLoadingThreads(false);
       }
     },
-    [currentUser.id, normalizeAiThread]
+    [currentUser.id, formatAiAssistantError, normalizeAiThread]
   );
 
   const handleLoadAiMessages = useCallback(
@@ -7231,12 +7263,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       } catch (error) {
         setAiMessages([]);
         setAiPendingAction(null);
-        setAiErrorMessage(error.message || 'Failed to load AI messages.');
+        setAiErrorMessage(formatAiAssistantError(error, 'Failed to load AI messages.'));
       } finally {
         setIsAiLoadingMessages(false);
       }
     },
-    [currentUser.id, normalizeAiMessage, normalizeAiPendingAction]
+    [currentUser.id, formatAiAssistantError, normalizeAiMessage, normalizeAiPendingAction]
   );
 
   const handleCreateAiThread = useCallback(async () => {
@@ -7254,9 +7286,44 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       setAiMessages([]);
       setAiPendingAction(null);
     } catch (error) {
-      setAiErrorMessage(error.message || 'Failed to create AI thread.');
+      setAiErrorMessage(formatAiAssistantError(error, 'Failed to create AI thread.'));
     }
-  }, [currentUser.id, normalizeAiThread]);
+  }, [currentUser.id, formatAiAssistantError, normalizeAiThread]);
+
+  const handleDeleteAiThread = useCallback(
+    async (threadIdInput) => {
+      if (!AUTH_API_BASE_URL) return;
+      const threadId = String(threadIdInput || '').trim();
+      if (!threadId || deletingAiThreadId === threadId) return;
+      setAiErrorMessage('');
+      setDeletingAiThreadId(threadId);
+      try {
+        await requestCloudDataApi(`/ai/threads/${encodeURIComponent(threadId)}`, {
+          method: 'DELETE',
+          body: { userId: currentUser.id },
+        });
+        setAiThreads((prev) => {
+          const nextThreads = prev.filter((thread) => thread.id !== threadId);
+          const wasActive = String(activeAiThreadId || '').trim() === threadId;
+          if (wasActive) {
+            const nextActiveId = String(nextThreads[0]?.id || '').trim();
+            setActiveAiThreadId(nextActiveId);
+            if (!nextActiveId) {
+              setAiMessages([]);
+              setAiPendingAction(null);
+            }
+          }
+          return nextThreads;
+        });
+        setIsAiThreadDropdownOpen(false);
+      } catch (error) {
+        setAiErrorMessage(formatAiAssistantError(error, 'Failed to delete AI thread.'));
+      } finally {
+        setDeletingAiThreadId('');
+      }
+    },
+    [activeAiThreadId, currentUser.id, deletingAiThreadId, formatAiAssistantError]
+  );
 
   const handleSendAiMessage = useCallback(async () => {
     if (!AUTH_API_BASE_URL) return;
@@ -7308,7 +7375,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         void handleLoadAiThreads();
       }
     } catch (error) {
-      setAiErrorMessage(error.message || 'Failed to send AI message.');
+      setAiErrorMessage(formatAiAssistantError(error, 'Failed to send AI message.'));
       setAiMessages((prev) => prev.filter((msg) => !String(msg.id || '').startsWith('temp-user-')));
     } finally {
       setIsAiSending(false);
@@ -7317,6 +7384,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     activeAiThreadId,
     aiInput,
     currentUser.id,
+    formatAiAssistantError,
     handleLoadAiThreads,
     normalizeAiMessage,
     normalizeAiPendingAction,
@@ -7357,7 +7425,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           void handleLoadAiThreads();
         }
       } catch (error) {
-        setAiErrorMessage(error.message || 'Failed to execute pending action.');
+        setAiErrorMessage(formatAiAssistantError(error, 'Failed to execute pending action.'));
       } finally {
         setIsAiConfirming(false);
       }
@@ -7366,6 +7434,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       activeAiThreadId,
       aiPendingAction,
       currentUser.id,
+      formatAiAssistantError,
       handleLoadAiThreads,
       normalizeAiMessage,
       normalizeAiPendingAction,
@@ -7377,6 +7446,25 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!isAiAssistantOpen) return;
     void handleLoadAiThreads({ createIfEmpty: true });
   }, [isAiAssistantOpen, handleLoadAiThreads]);
+
+  useEffect(() => {
+    if (isAiAssistantOpen) return;
+    setIsAiThreadDropdownOpen(false);
+  }, [isAiAssistantOpen]);
+
+  useEffect(() => {
+    if (!isAiThreadDropdownOpen) return;
+    const handlePointerDownOutside = (event) => {
+      const root = aiThreadDropdownRef.current;
+      if (!root) return;
+      if (root.contains(event.target)) return;
+      setIsAiThreadDropdownOpen(false);
+    };
+    window.addEventListener('mousedown', handlePointerDownOutside);
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDownOutside);
+    };
+  }, [isAiThreadDropdownOpen]);
 
   useEffect(() => {
     if (!isAiAssistantOpen) return;
@@ -11346,21 +11434,68 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           </div>
 
           <div className="px-3 py-2 border-b border-gray-100 bg-white">
-            <select
-              value={activeAiThreadId}
-              onChange={(event) => setActiveAiThreadId(event.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-sm text-gray-700 bg-white outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {aiThreads.length === 0 ? (
-                <option value="">No chat thread</option>
-              ) : (
-                aiThreads.map((thread) => (
-                  <option key={`ai-thread-${thread.id}`} value={thread.id}>
-                    {thread.title}
-                  </option>
-                ))
+            <div ref={aiThreadDropdownRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setIsAiThreadDropdownOpen((prev) => !prev)}
+                className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-sm text-gray-700 bg-white outline-none focus:ring-2 focus:ring-blue-500 flex items-center gap-2"
+              >
+                <span className="flex-1 text-left truncate">
+                  {aiThreads.find((thread) => thread.id === activeAiThreadId)?.title ||
+                    (aiThreads[0]?.title || 'No chat thread')}
+                </span>
+                <ChevronDown
+                  className={`w-4 h-4 text-gray-400 transition-transform ${
+                    isAiThreadDropdownOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+              {isAiThreadDropdownOpen && (
+                <div className="absolute left-0 right-0 top-[calc(100%+0.3rem)] z-20 rounded-lg border border-gray-200 bg-white shadow-lg max-h-56 overflow-y-auto">
+                  {aiThreads.length === 0 ? (
+                    <div className="px-2.5 py-2 text-xs text-gray-400">No chat thread</div>
+                  ) : (
+                    aiThreads.map((thread) => {
+                      const isActive = thread.id === activeAiThreadId;
+                      const isDeletingThisThread = deletingAiThreadId === thread.id;
+                      return (
+                        <div
+                          key={`ai-thread-${thread.id}`}
+                          className={`flex items-center gap-1.5 px-1.5 py-1 ${isActive ? 'bg-blue-50' : ''}`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveAiThreadId(thread.id);
+                              setIsAiThreadDropdownOpen(false);
+                            }}
+                            className="min-w-0 flex-1 text-left px-2 py-1.5 rounded-md text-sm text-gray-700 hover:bg-gray-100 truncate"
+                            title={thread.title}
+                          >
+                            {thread.title}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleDeleteAiThread(thread.id);
+                            }}
+                            disabled={Boolean(deletingAiThreadId) || isAiSending || isAiConfirming}
+                            className="h-8 w-8 rounded-md inline-flex items-center justify-center text-gray-300 hover:text-gray-500 disabled:text-gray-200 disabled:cursor-not-allowed transition-colors"
+                            title="Delete thread"
+                          >
+                            {isDeletingThisThread ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               )}
-            </select>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 bg-gray-50 space-y-2">

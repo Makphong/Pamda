@@ -2050,6 +2050,24 @@ const trimAiThreadMessages = async (threadIdInput, keepLimit = AI_THREAD_MAX_MES
   }
 };
 
+const deleteAiThreadMessages = async (threadIdInput, pageSize = 250) => {
+  const threadId = String(threadIdInput || '').trim();
+  if (!threadId) return 0;
+  const safePageSize = Math.max(20, Math.min(500, Number(pageSize || 250)));
+  let deletedCount = 0;
+  while (true) {
+    const snapshot = await aiThreadMessagesRef(threadId)
+      .orderBy('createdAt', 'asc')
+      .limit(safePageSize)
+      .get();
+    if (snapshot.empty) break;
+    await Promise.all(snapshot.docs.map((doc) => doc.ref.delete()));
+    deletedCount += snapshot.docs.length;
+    if (snapshot.docs.length < safePageSize) break;
+  }
+  return deletedCount;
+};
+
 const saveAiThreadMessage = async ({ threadId, role, content, pendingActionId = '' }) => {
   const normalizedThreadId = String(threadId || '').trim();
   if (!normalizedThreadId) return null;
@@ -2493,7 +2511,10 @@ const AI_TOOL_DEFINITIONS = [
 
 const callOpenAiResponsesApi = async ({ input, tools, previousResponseId = '' }) => {
   if (!OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is not configured on server.');
+    const configError = new Error('OPENAI_API_KEY is not configured on server.');
+    configError.status = 503;
+    configError.code = 'openai_key_missing';
+    throw configError;
   }
   const endpointBase = String(OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
   const payload = {
@@ -2525,11 +2546,33 @@ const callOpenAiResponsesApi = async ({ input, tools, previousResponseId = '' })
     parsed = {};
   }
   if (!response.ok) {
-    throw new Error(
-      parsed?.error?.message ||
-        parsed?.message ||
-        `OpenAI request failed (${response.status})${text ? `: ${text.slice(0, 240)}` : ''}`
-    );
+    const status = Number(response.status || 500);
+    const upstreamMessage = String(parsed?.error?.message || parsed?.message || '').trim();
+    const errorCode = String(parsed?.error?.code || parsed?.code || '').trim().toLowerCase();
+    const errorType = String(parsed?.error?.type || parsed?.type || '').trim().toLowerCase();
+    const fallbackMessage = `OpenAI request failed (${status})${text ? `: ${text.slice(0, 240)}` : ''}`;
+    const joinedSignal = `${errorCode} ${errorType} ${upstreamMessage}`.toLowerCase();
+    let message = upstreamMessage || fallbackMessage;
+    if (
+      status === 429 &&
+      (joinedSignal.includes('insufficient_quota') ||
+        joinedSignal.includes('quota') ||
+        joinedSignal.includes('billing'))
+    ) {
+      message = 'AI quota exceeded. Please check OpenAI plan and billing, then try again.';
+    } else if (status === 429) {
+      message = 'AI rate limit reached. Please retry in a moment.';
+    } else if (status === 401 || status === 403) {
+      message = 'OpenAI authentication failed. Please verify OPENAI_API_KEY on server.';
+    } else if (status >= 500) {
+      message = 'OpenAI service is temporarily unavailable. Please retry shortly.';
+    }
+    const requestError = new Error(message);
+    requestError.status = status;
+    if (errorCode) requestError.code = errorCode;
+    if (errorType) requestError.type = errorType;
+    if (upstreamMessage) requestError.upstreamMessage = upstreamMessage;
+    throw requestError;
   }
   return parsed;
 };
@@ -2635,7 +2678,8 @@ const buildOpenAiInputMessage = (roleInput, textInput) => {
   const text = sanitizeAiMessageContent(textInput, 12000);
   return {
     role: safeRole,
-    content: [{ type: 'input_text', text }],
+    // Use plain string content to avoid role/content-type schema drift across API versions.
+    content: text,
   };
 };
 
@@ -2788,7 +2832,15 @@ const runAiAssistant = async ({ payload, threadMessages, userMessage, userId, us
   const initialInput = [buildOpenAiInputMessage('system', systemPrompt), ...compactHistory];
   const lastHistoryItem = compactHistory[compactHistory.length - 1];
   const lastHistoryRole = String(lastHistoryItem?.role || '').trim().toLowerCase();
-  const lastHistoryText = String(lastHistoryItem?.content?.[0]?.text || '').trim();
+  let lastHistoryText = '';
+  if (typeof lastHistoryItem?.content === 'string') {
+    lastHistoryText = String(lastHistoryItem.content || '').trim();
+  } else if (Array.isArray(lastHistoryItem?.content)) {
+    lastHistoryText = String(lastHistoryItem?.content?.[0]?.text || lastHistoryItem?.content?.[0]?.output_text || '')
+      .trim();
+  } else {
+    lastHistoryText = String(lastHistoryItem?.content?.text || '').trim();
+  }
   if (lastHistoryRole !== 'user' || lastHistoryText !== String(userMessage || '').trim()) {
     initialInput.push(buildOpenAiInputMessage('user', userMessage));
   }
@@ -3404,6 +3456,9 @@ app.get('/health', (_req, res) => {
     lineReminderDefaultDaysBefore: DEFAULT_LINE_REMINDER_DAYS_BEFORE,
     lineWebhookConfigured: Boolean(LINE_CHANNEL_SECRET),
     lineWebhookReplyConfigured: Boolean(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN),
+    openAiConfigured: Boolean(OPENAI_API_KEY),
+    openAiModel: OPENAI_MODEL,
+    openAiReasoningEffort: OPENAI_REASONING_EFFORT,
     rootAdminConfigured: Boolean(ROOT_ADMIN_EMAIL),
     adminStatsTimezone: ADMIN_STATS_TIMEZONE,
     supportTicketAttachmentLimit: SUPPORT_TICKET_MAX_ATTACHMENTS,
@@ -5904,6 +5959,32 @@ app.post('/ai/threads', requireAuth, async (req, res) => {
   }
 });
 
+app.delete('/ai/threads/:threadId', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.body?.userId || req.query?.userId);
+    const threadId = String(req.params?.threadId || '').trim();
+    if (!userId || !threadId) {
+      return res.status(400).json({ message: 'userId and threadId are required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
+    }
+    const threadRecord = await loadAiThreadForUser({ threadId, userId });
+    if (!threadRecord) {
+      return res.status(404).json({ message: 'AI thread not found.' });
+    }
+    const deletedMessages = await deleteAiThreadMessages(threadId);
+    await threadRecord.ref.delete();
+    return res.json({
+      ok: true,
+      deletedThreadId: threadId,
+      deletedMessages,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to delete AI thread.' });
+  }
+});
+
 app.get('/ai/threads/:threadId/messages', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.query?.userId);
@@ -6022,6 +6103,13 @@ app.post('/ai/threads/:threadId/chat', requireAuth, async (req, res) => {
       message: assistantMessage,
     });
   } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({
+        message: error.message || (status >= 500 ? 'AI service is unavailable.' : 'Invalid request.'),
+        code: String(error?.code || '').trim() || undefined,
+      });
+    }
     return res.status(500).json({ message: error.message || 'Failed to process AI chat.' });
   }
 });
