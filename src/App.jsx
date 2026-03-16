@@ -6798,6 +6798,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [mergeTaskPickerDate, setMergeTaskPickerDate] = useState('');
   const [mergeTaskPickerSearch, setMergeTaskPickerSearch] = useState('');
   const [mergeTaskPickerSelectedProjectId, setMergeTaskPickerSelectedProjectId] = useState('');
+  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
+  const [aiThreads, setAiThreads] = useState([]);
+  const [activeAiThreadId, setActiveAiThreadId] = useState('');
+  const [aiMessages, setAiMessages] = useState([]);
+  const [aiPendingAction, setAiPendingAction] = useState(null);
+  const [aiInput, setAiInput] = useState('');
+  const [aiErrorMessage, setAiErrorMessage] = useState('');
+  const [isAiLoadingThreads, setIsAiLoadingThreads] = useState(false);
+  const [isAiLoadingMessages, setIsAiLoadingMessages] = useState(false);
+  const [isAiSending, setIsAiSending] = useState(false);
+  const [isAiConfirming, setIsAiConfirming] = useState(false);
+  const aiMessagesEndRef = useRef(null);
 
   // --- New Settings State ---
   const [displayRange, setDisplayRange] = useState(() => {
@@ -6896,6 +6908,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       appliedSeq: 0,
     };
     ACCOUNT_DB_VERSION_BY_USER.delete(currentUser.id);
+    setIsAiAssistantOpen(false);
+    setAiThreads([]);
+    setActiveAiThreadId('');
+    setAiMessages([]);
+    setAiPendingAction(null);
+    setAiInput('');
+    setAiErrorMessage('');
+    setIsAiLoadingThreads(false);
+    setIsAiLoadingMessages(false);
+    setIsAiSending(false);
+    setIsAiConfirming(false);
   }, [currentUser.id]);
 
   useEffect(() => {
@@ -7090,6 +7113,286 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       isCancelled = true;
     };
   }, [currentUser.id, currentUser.authToken]);
+
+  const normalizeAiThread = useCallback((threadInput) => {
+    const thread =
+      threadInput && typeof threadInput === 'object' && !Array.isArray(threadInput)
+        ? threadInput
+        : {};
+    return {
+      id: String(thread.id || '').trim(),
+      title: String(thread.title || 'New chat').trim() || 'New chat',
+      createdAt: String(thread.createdAt || '').trim() || null,
+      updatedAt: String(thread.updatedAt || '').trim() || null,
+      lastMessagePreview: String(thread.lastMessagePreview || '').trim(),
+      pendingAction:
+        thread.pendingAction && typeof thread.pendingAction === 'object' && !Array.isArray(thread.pendingAction)
+          ? thread.pendingAction
+          : null,
+    };
+  }, []);
+
+  const normalizeAiMessage = useCallback((messageInput) => {
+    const message =
+      messageInput && typeof messageInput === 'object' && !Array.isArray(messageInput)
+        ? messageInput
+        : {};
+    const roleRaw = String(message.role || '').trim().toLowerCase();
+    const role = roleRaw === 'assistant' ? 'assistant' : 'user';
+    return {
+      id: String(message.id || generateId()).trim(),
+      role,
+      content: String(message.content || '').trim(),
+      createdAt: String(message.createdAt || '').trim() || null,
+      pendingActionId: String(message.pendingActionId || '').trim(),
+    };
+  }, []);
+
+  const normalizeAiPendingAction = useCallback((pendingInput) => {
+    const pending =
+      pendingInput && typeof pendingInput === 'object' && !Array.isArray(pendingInput)
+        ? pendingInput
+        : null;
+    if (!pending) return null;
+    const id = String(pending.id || '').trim();
+    const type = String(pending.type || '').trim();
+    if (!id || !type) return null;
+    return {
+      id,
+      type,
+      summary: String(pending.summary || '').trim(),
+      expiresAt: String(pending.expiresAt || '').trim() || null,
+      createdAt: String(pending.createdAt || '').trim() || null,
+      payload:
+        pending.payload && typeof pending.payload === 'object' && !Array.isArray(pending.payload)
+          ? pending.payload
+          : {},
+    };
+  }, []);
+
+  const handleLoadAiThreads = useCallback(
+    async ({ createIfEmpty = false } = {}) => {
+      if (!AUTH_API_BASE_URL) return [];
+      setIsAiLoadingThreads(true);
+      setAiErrorMessage('');
+      try {
+        const result = await requestCloudDataApi(
+          `/ai/threads?userId=${encodeURIComponent(currentUser.id)}`
+        );
+        let threads = (Array.isArray(result?.threads) ? result.threads : [])
+          .map((thread) => normalizeAiThread(thread))
+          .filter((thread) => thread.id);
+        if (threads.length === 0 && createIfEmpty) {
+          const createdResult = await requestCloudDataApi('/ai/threads', {
+            method: 'POST',
+            body: { userId: currentUser.id, title: 'New chat' },
+          });
+          const createdThread = normalizeAiThread(createdResult?.thread);
+          if (createdThread.id) {
+            threads = [createdThread];
+          }
+        }
+        setAiThreads(threads);
+        setActiveAiThreadId((prev) => {
+          if (prev && threads.some((thread) => thread.id === prev)) return prev;
+          return threads[0]?.id || '';
+        });
+        return threads;
+      } catch (error) {
+        setAiErrorMessage(error.message || 'Failed to load AI threads.');
+        return [];
+      } finally {
+        setIsAiLoadingThreads(false);
+      }
+    },
+    [currentUser.id, normalizeAiThread]
+  );
+
+  const handleLoadAiMessages = useCallback(
+    async (threadIdInput) => {
+      if (!AUTH_API_BASE_URL) return;
+      const threadId = String(threadIdInput || '').trim();
+      if (!threadId) {
+        setAiMessages([]);
+        setAiPendingAction(null);
+        return;
+      }
+      setIsAiLoadingMessages(true);
+      setAiErrorMessage('');
+      try {
+        const result = await requestCloudDataApi(
+          `/ai/threads/${encodeURIComponent(threadId)}/messages?userId=${encodeURIComponent(currentUser.id)}`
+        );
+        const messages = (Array.isArray(result?.messages) ? result.messages : []).map((message) =>
+          normalizeAiMessage(message)
+        );
+        setAiMessages(messages);
+        setAiPendingAction(normalizeAiPendingAction(result?.pendingAction));
+      } catch (error) {
+        setAiMessages([]);
+        setAiPendingAction(null);
+        setAiErrorMessage(error.message || 'Failed to load AI messages.');
+      } finally {
+        setIsAiLoadingMessages(false);
+      }
+    },
+    [currentUser.id, normalizeAiMessage, normalizeAiPendingAction]
+  );
+
+  const handleCreateAiThread = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) return;
+    setAiErrorMessage('');
+    try {
+      const result = await requestCloudDataApi('/ai/threads', {
+        method: 'POST',
+        body: { userId: currentUser.id, title: 'New chat' },
+      });
+      const thread = normalizeAiThread(result?.thread);
+      if (!thread.id) return;
+      setAiThreads((prev) => [thread, ...prev.filter((item) => item.id !== thread.id)]);
+      setActiveAiThreadId(thread.id);
+      setAiMessages([]);
+      setAiPendingAction(null);
+    } catch (error) {
+      setAiErrorMessage(error.message || 'Failed to create AI thread.');
+    }
+  }, [currentUser.id, normalizeAiThread]);
+
+  const handleSendAiMessage = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) return;
+    const messageText = String(aiInput || '').trim();
+    if (!messageText) return;
+    setAiErrorMessage('');
+    setIsAiSending(true);
+    try {
+      let threadId = String(activeAiThreadId || '').trim();
+      if (!threadId) {
+        const createdResult = await requestCloudDataApi('/ai/threads', {
+          method: 'POST',
+          body: { userId: currentUser.id, title: 'New chat' },
+        });
+        const createdThread = normalizeAiThread(createdResult?.thread);
+        if (!createdThread.id) {
+          throw new Error('Cannot create AI thread.');
+        }
+        setAiThreads((prev) => [createdThread, ...prev.filter((item) => item.id !== createdThread.id)]);
+        setActiveAiThreadId(createdThread.id);
+        threadId = createdThread.id;
+      }
+      setAiInput('');
+      const optimisticUserMessage = {
+        id: `temp-user-${Date.now()}`,
+        role: 'user',
+        content: messageText,
+        createdAt: new Date().toISOString(),
+        pendingActionId: '',
+      };
+      setAiMessages((prev) => [...prev, optimisticUserMessage]);
+      const result = await requestCloudDataApi(`/ai/threads/${encodeURIComponent(threadId)}/chat`, {
+        method: 'POST',
+        body: {
+          userId: currentUser.id,
+          message: messageText,
+        },
+      });
+      const assistantMessage = normalizeAiMessage(result?.message);
+      const nextThread = normalizeAiThread(result?.thread);
+      setAiMessages((prev) => {
+        const withoutTemp = prev.filter((msg) => !String(msg.id || '').startsWith('temp-user-'));
+        return [...withoutTemp, normalizeAiMessage(optimisticUserMessage), assistantMessage];
+      });
+      setAiPendingAction(normalizeAiPendingAction(result?.pendingAction));
+      if (nextThread.id) {
+        setAiThreads((prev) => [nextThread, ...prev.filter((thread) => thread.id !== nextThread.id)]);
+      } else {
+        void handleLoadAiThreads();
+      }
+    } catch (error) {
+      setAiErrorMessage(error.message || 'Failed to send AI message.');
+      setAiMessages((prev) => prev.filter((msg) => !String(msg.id || '').startsWith('temp-user-')));
+    } finally {
+      setIsAiSending(false);
+    }
+  }, [
+    activeAiThreadId,
+    aiInput,
+    currentUser.id,
+    handleLoadAiThreads,
+    normalizeAiMessage,
+    normalizeAiPendingAction,
+    normalizeAiThread,
+  ]);
+
+  const handleConfirmAiPendingAction = useCallback(
+    async (decisionInput) => {
+      if (!AUTH_API_BASE_URL) return;
+      const threadId = String(activeAiThreadId || '').trim();
+      const pending = normalizeAiPendingAction(aiPendingAction);
+      if (!threadId || !pending) return;
+      const decision = String(decisionInput || '').trim().toLowerCase();
+      if (decision !== 'confirm' && decision !== 'cancel') return;
+      setAiErrorMessage('');
+      setIsAiConfirming(true);
+      try {
+        const result = await requestCloudDataApi(
+          `/ai/threads/${encodeURIComponent(threadId)}/confirm-action`,
+          {
+            method: 'POST',
+            body: {
+              userId: currentUser.id,
+              actionId: pending.id,
+              decision,
+            },
+          }
+        );
+        const assistantMessage = normalizeAiMessage(result?.message);
+        if (assistantMessage.id && assistantMessage.content) {
+          setAiMessages((prev) => [...prev, assistantMessage]);
+        }
+        setAiPendingAction(null);
+        const nextThread = normalizeAiThread(result?.thread);
+        if (nextThread.id) {
+          setAiThreads((prev) => [nextThread, ...prev.filter((thread) => thread.id !== nextThread.id)]);
+        } else {
+          void handleLoadAiThreads();
+        }
+      } catch (error) {
+        setAiErrorMessage(error.message || 'Failed to execute pending action.');
+      } finally {
+        setIsAiConfirming(false);
+      }
+    },
+    [
+      activeAiThreadId,
+      aiPendingAction,
+      currentUser.id,
+      handleLoadAiThreads,
+      normalizeAiMessage,
+      normalizeAiPendingAction,
+      normalizeAiThread,
+    ]
+  );
+
+  useEffect(() => {
+    if (!isAiAssistantOpen) return;
+    void handleLoadAiThreads({ createIfEmpty: true });
+  }, [isAiAssistantOpen, handleLoadAiThreads]);
+
+  useEffect(() => {
+    if (!isAiAssistantOpen) return;
+    if (!activeAiThreadId) {
+      setAiMessages([]);
+      setAiPendingAction(null);
+      return;
+    }
+    void handleLoadAiMessages(activeAiThreadId);
+  }, [activeAiThreadId, handleLoadAiMessages, isAiAssistantOpen]);
+
+  useEffect(() => {
+    if (!isAiAssistantOpen) return;
+    if (!aiMessagesEndRef.current) return;
+    aiMessagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [isAiAssistantOpen, aiMessages, aiPendingAction, isAiSending, isAiConfirming]);
 
   const refreshGoogleCalendarStatus = async () => {
     if (!AUTH_API_BASE_URL) {
@@ -10998,6 +11301,170 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     );
   }
 
+  const aiAssistantWidget = (
+    <>
+      <button
+        type="button"
+        onClick={() => setIsAiAssistantOpen((prev) => !prev)}
+        className="fixed bottom-5 right-5 z-[120] w-12 h-12 rounded-full bg-blue-600 text-white shadow-[0_10px_28px_rgba(37,99,235,0.25)] hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center"
+        title="AI Assistant"
+      >
+        <MessageSquare className="w-5 h-5" />
+      </button>
+      {isAiAssistantOpen && (
+        <div className="fixed bottom-20 right-3 sm:right-5 z-[130] w-[calc(100vw-1.5rem)] sm:w-[390px] max-w-[390px] h-[72vh] max-h-[640px] rounded-2xl border border-gray-200 bg-white shadow-2xl flex flex-col overflow-hidden">
+          <div className="px-3 py-2.5 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
+            <div className="text-sm font-semibold text-gray-800 flex-1 truncate">Project AI Assistant</div>
+            <button
+              type="button"
+              onClick={() => {
+                void handleLoadAiThreads({ createIfEmpty: true });
+              }}
+              className="h-8 w-8 rounded-md border border-gray-200 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 inline-flex items-center justify-center"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${isAiLoadingThreads ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleCreateAiThread();
+              }}
+              className="h-8 w-8 rounded-md border border-gray-200 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 inline-flex items-center justify-center"
+              title="New chat"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsAiAssistantOpen(false)}
+              className="h-8 w-8 rounded-md border border-gray-200 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 inline-flex items-center justify-center"
+              title="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="px-3 py-2 border-b border-gray-100 bg-white">
+            <select
+              value={activeAiThreadId}
+              onChange={(event) => setActiveAiThreadId(event.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-sm text-gray-700 bg-white outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {aiThreads.length === 0 ? (
+                <option value="">No chat thread</option>
+              ) : (
+                aiThreads.map((thread) => (
+                  <option key={`ai-thread-${thread.id}`} value={thread.id}>
+                    {thread.title}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-3 bg-gray-50 space-y-2">
+            {isAiLoadingMessages ? (
+              <div className="text-xs text-gray-500">Loading messages...</div>
+            ) : aiMessages.length === 0 ? (
+              <div className="text-xs text-gray-500">
+                เริ่มคุยกับ AI ได้เลย เช่น "วันนี้ฉันติดอะไรบ้าง" หรือ "ช่วยเสนอเวลาประชุมสัปดาห์นี้"
+              </div>
+            ) : (
+              aiMessages.map((message) => {
+                const isAssistant = message.role === 'assistant';
+                return (
+                  <div
+                    key={message.id}
+                    className={`flex ${isAssistant ? 'justify-start' : 'justify-end'}`}
+                  >
+                    <div
+                      className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+                        isAssistant
+                          ? 'bg-white border border-gray-200 text-gray-700'
+                          : 'bg-blue-600 text-white'
+                      }`}
+                    >
+                      {message.content}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <div ref={aiMessagesEndRef} />
+          </div>
+
+          {normalizeAiPendingAction(aiPendingAction) && (
+            <div className="px-3 py-2 border-t border-amber-200 bg-amber-50">
+              <div className="text-[11px] text-amber-700 font-semibold">Pending action</div>
+              <p className="text-sm text-gray-700 mt-1">
+                {normalizeAiPendingAction(aiPendingAction)?.summary || 'Please confirm action'}
+              </p>
+              <div className="mt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={isAiConfirming}
+                  onClick={() => {
+                    void handleConfirmAiPendingAction('cancel');
+                  }}
+                  className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-600 text-xs font-medium hover:bg-gray-50 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isAiConfirming}
+                  onClick={() => {
+                    void handleConfirmAiPendingAction('confirm');
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-60"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+          )}
+
+          {aiErrorMessage && (
+            <div className="px-3 py-1.5 text-xs text-red-600 border-t border-red-100 bg-red-50">
+              {aiErrorMessage}
+            </div>
+          )}
+
+          <div className="p-3 border-t border-gray-200 bg-white">
+            <div className="flex items-end gap-2">
+              <textarea
+                value={aiInput}
+                onChange={(event) => setAiInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    if (!isAiSending && !isAiConfirming) {
+                      void handleSendAiMessage();
+                    }
+                  }
+                }}
+                rows={2}
+                placeholder="พิมพ์คำถามหรือคำสั่ง..."
+                className="flex-1 resize-none border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  void handleSendAiMessage();
+                }}
+                disabled={isAiSending || isAiConfirming || !String(aiInput || '').trim()}
+                className="h-[42px] px-3 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed"
+              >
+                {isAiSending ? '...' : 'Send'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   // --- Render App View vs Project Dashboard View ---
   if (activeDashboardProjectId) {
     const activeProject = projects.find(p => p.id === activeDashboardProjectId);
@@ -11044,6 +11511,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             />
           )}
           {projectUpdatesOverlay}
+          {aiAssistantWidget}
         </>
       );
     }
@@ -11507,6 +11975,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       )}
 
       {projectUpdatesOverlay}
+      {aiAssistantWidget}
 
       {/* --- Modals --- */}
       {showProjectModal && (

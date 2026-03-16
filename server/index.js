@@ -79,6 +79,9 @@ const FIRESTORE_ADMIN_COMPLAINT_COLLECTION = String(
 const FIRESTORE_SUPPORT_TICKET_COLLECTION = String(
   process.env.FIRESTORE_SUPPORT_TICKET_COLLECTION || 'support_tickets'
 ).trim();
+const FIRESTORE_AI_THREAD_COLLECTION = String(
+  process.env.FIRESTORE_AI_THREAD_COLLECTION || 'ai_threads'
+).trim();
 const LINE_REMINDER_CRON_SECRET = String(process.env.LINE_REMINDER_CRON_SECRET || '').trim();
 const DEFAULT_LINE_REMINDER_TIMEZONE = String(
   process.env.LINE_REMINDER_DEFAULT_TIMEZONE || 'Asia/Bangkok'
@@ -125,6 +128,37 @@ const LINE_REMINDER_CHANNEL_ACCESS_TOKEN = String(
     LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN ||
     ''
 ).trim();
+const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || '').trim();
+const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-5-mini').trim() || 'gpt-5-mini';
+const OPENAI_REASONING_EFFORT = String(process.env.OPENAI_REASONING_EFFORT || 'low')
+  .trim()
+  .toLowerCase();
+const OPENAI_BASE_URL = String(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').trim();
+const AI_THREAD_MAX_MESSAGES = Math.max(10, Math.min(200, Number(process.env.AI_THREAD_MAX_MESSAGES || 80)));
+const AI_THREAD_MESSAGE_PREVIEW_LIMIT = Math.max(
+  40,
+  Math.min(800, Number(process.env.AI_THREAD_MESSAGE_PREVIEW_LIMIT || 220))
+);
+const AI_CHAT_MAX_USER_MESSAGE_LENGTH = Math.max(
+  100,
+  Math.min(12000, Number(process.env.AI_CHAT_MAX_USER_MESSAGE_LENGTH || 2500))
+);
+const AI_PENDING_ACTION_TTL_MS = Math.max(
+  30_000,
+  Math.min(24 * 60 * 60 * 1000, Number(process.env.AI_PENDING_ACTION_TTL_MS || 15 * 60 * 1000))
+);
+const AI_THREAD_LIST_LIMIT = Math.max(
+  5,
+  Math.min(80, Number(process.env.AI_THREAD_LIST_LIMIT || 24))
+);
+const AI_THREAD_HISTORY_LIMIT = Math.max(
+  8,
+  Math.min(80, Number(process.env.AI_THREAD_HISTORY_LIMIT || 22))
+);
+const AI_MAX_TOOL_CALL_ROUNDS = Math.max(
+  1,
+  Math.min(10, Number(process.env.AI_MAX_TOOL_CALL_ROUNDS || 5))
+);
 
 const loadGoogleOauthConfigFromJson = (filePath) => {
   const emptyConfig = { clientId: '', clientSecret: '', redirectUris: [] };
@@ -195,6 +229,7 @@ const lineReminderLogRef = firestore.collection(FIRESTORE_LINE_REMINDER_LOG_COLL
 const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION);
 const adminComplaintRef = firestore.collection(FIRESTORE_ADMIN_COMPLAINT_COLLECTION);
 const supportTicketRef = firestore.collection(FIRESTORE_SUPPORT_TICKET_COLLECTION);
+const aiThreadRef = firestore.collection(FIRESTORE_AI_THREAD_COLLECTION);
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
 const resolveGoogleCalendarRedirectUri = (req) => {
@@ -1871,6 +1906,1142 @@ const writeAccountPayloadToStore = async (userId, payload, options = {}) => {
   return {
     version: nextVersion,
     updatedAt: nowIso,
+  };
+};
+
+const AI_ACTION_TYPES = {
+  CREATE_TASK: 'create_task',
+  DELETE_EVENT: 'delete_event',
+  NOTIFY_OPEN_TASKS: 'notify_open_tasks',
+};
+const AI_VALID_ACTION_TYPES = new Set(Object.values(AI_ACTION_TYPES));
+
+const aiThreadMessagesRef = (threadIdInput) =>
+  aiThreadRef.doc(String(threadIdInput || '').trim()).collection('messages');
+
+const buildAiId = () => {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return crypto.randomBytes(16).toString('hex');
+  }
+};
+
+const sanitizeAiThreadTitle = (value) =>
+  String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+
+const sanitizeAiMessageContent = (value, maxLength = AI_CHAT_MAX_USER_MESSAGE_LENGTH) =>
+  String(value || '')
+    .replace(/\r/g, '')
+    .trim()
+    .slice(0, Math.max(1, maxLength));
+
+const buildAiThreadMessagePreview = (value) =>
+  sanitizeAiMessageContent(value, AI_THREAD_MESSAGE_PREVIEW_LIMIT);
+
+const normalizeIsoDate = (value) => {
+  const date = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : '';
+};
+
+const normalizeIsoTime = (value) => {
+  const time = String(value || '').trim();
+  return /^\d{2}:\d{2}$/.test(time) ? time : '';
+};
+
+const clampAiCount = (value, fallback = 5, min = 1, max = 20) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+};
+
+const parseJsonObjectSafe = (value) => {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
+const normalizeAiPendingAction = (valueInput) => {
+  const value = valueInput && typeof valueInput === 'object' ? valueInput : {};
+  const id = String(value.id || '').trim();
+  const type = String(value.type || '').trim();
+  const createdAt = String(value.createdAt || '').trim();
+  const expiresAt = String(value.expiresAt || '').trim();
+  const payload =
+    value.payload && typeof value.payload === 'object' && !Array.isArray(value.payload)
+      ? value.payload
+      : {};
+  const summary = String(value.summary || '').trim().slice(0, 300);
+  if (!id || !AI_VALID_ACTION_TYPES.has(type) || !createdAt || !expiresAt) return null;
+  const expiresAtMs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) return null;
+  return {
+    id,
+    type,
+    summary,
+    payload,
+    createdAt,
+    expiresAt,
+  };
+};
+
+const toAiThreadPublicResponse = (docId, dataInput) => {
+  const data = dataInput && typeof dataInput === 'object' ? dataInput : {};
+  const createdAt = String(data.createdAt || '').trim() || null;
+  const updatedAt = String(data.updatedAt || '').trim() || createdAt;
+  return {
+    id: String(docId || '').trim(),
+    userId: sanitizeUserId(data.userId),
+    title: sanitizeAiThreadTitle(data.title) || 'New chat',
+    lastMessagePreview: buildAiThreadMessagePreview(data.lastMessagePreview || ''),
+    createdAt,
+    updatedAt,
+    pendingAction: normalizeAiPendingAction(data.pendingAction),
+  };
+};
+
+const toAiMessagePublicResponse = (docId, dataInput) => {
+  const data = dataInput && typeof dataInput === 'object' ? dataInput : {};
+  const roleRaw = String(data.role || '').trim().toLowerCase();
+  const role = roleRaw === 'assistant' || roleRaw === 'system' ? roleRaw : 'user';
+  return {
+    id: String(docId || '').trim(),
+    threadId: String(data.threadId || '').trim(),
+    role,
+    content: sanitizeAiMessageContent(data.content || '', 12000),
+    createdAt: String(data.createdAt || '').trim() || null,
+    pendingActionId: String(data.pendingActionId || '').trim(),
+  };
+};
+
+const loadAiThreadForUser = async ({ threadId, userId }) => {
+  const normalizedThreadId = String(threadId || '').trim();
+  const normalizedUserId = sanitizeUserId(userId);
+  if (!normalizedThreadId || !normalizedUserId) return null;
+  const docRef = aiThreadRef.doc(normalizedThreadId);
+  const snapshot = await docRef.get();
+  if (!snapshot.exists) return null;
+  const thread = toAiThreadPublicResponse(snapshot.id, snapshot.data() || {});
+  if (thread.userId !== normalizedUserId) return null;
+  return {
+    ref: docRef,
+    thread,
+  };
+};
+
+const trimAiThreadMessages = async (threadIdInput, keepLimit = AI_THREAD_MAX_MESSAGES) => {
+  const threadId = String(threadIdInput || '').trim();
+  if (!threadId) return;
+  const snapshot = await aiThreadMessagesRef(threadId).orderBy('createdAt', 'asc').get();
+  if (snapshot.empty || snapshot.docs.length <= keepLimit) return;
+  const overflow = snapshot.docs.length - keepLimit;
+  const deletes = snapshot.docs.slice(0, overflow).map((doc) => doc.ref.delete());
+  if (deletes.length > 0) {
+    await Promise.all(deletes);
+  }
+};
+
+const saveAiThreadMessage = async ({ threadId, role, content, pendingActionId = '' }) => {
+  const normalizedThreadId = String(threadId || '').trim();
+  if (!normalizedThreadId) return null;
+  const safeRole = String(role || '').trim().toLowerCase() === 'assistant' ? 'assistant' : 'user';
+  const safeContent = sanitizeAiMessageContent(content, 12000);
+  if (!safeContent) return null;
+  const createdAt = new Date().toISOString();
+  const docRef = aiThreadMessagesRef(normalizedThreadId).doc(buildAiId());
+  await docRef.set({
+    id: docRef.id,
+    threadId: normalizedThreadId,
+    role: safeRole,
+    content: safeContent,
+    pendingActionId: String(pendingActionId || '').trim(),
+    createdAt,
+  });
+  return toAiMessagePublicResponse(docRef.id, {
+    id: docRef.id,
+    threadId: normalizedThreadId,
+    role: safeRole,
+    content: safeContent,
+    pendingActionId,
+    createdAt,
+  });
+};
+
+const getPayloadProjects = (payloadInput) =>
+  Array.isArray(payloadInput?.projects) ? payloadInput.projects : [];
+
+const getPayloadEvents = (payloadInput) => (Array.isArray(payloadInput?.events) ? payloadInput.events : []);
+
+const getProjectByIdFromPayload = (payloadInput, projectIdInput) => {
+  const projectId = String(projectIdInput || '').trim();
+  if (!projectId) return null;
+  const projects = getPayloadProjects(payloadInput);
+  return projects.find((project) => String(project?.id || '').trim() === projectId) || null;
+};
+
+const getProjectNameByIdFromPayload = (payloadInput, projectIdInput) => {
+  const project = getProjectByIdFromPayload(payloadInput, projectIdInput);
+  return String(project?.name || projectIdInput || '').trim() || '';
+};
+
+const toDateTimeMs = (dateInput, timeInput, endOfDayFallback = false) => {
+  const date = normalizeIsoDate(dateInput);
+  if (!date) return 0;
+  const time = normalizeIsoTime(timeInput) || (endOfDayFallback ? '23:59' : '00:00');
+  const parsed = new Date(`${date}T${time}:00`).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const isEventOverlappingDate = (eventInput, dateInput) => {
+  const date = normalizeIsoDate(dateInput);
+  if (!date) return false;
+  const event = eventInput && typeof eventInput === 'object' ? eventInput : {};
+  const startDate = normalizeIsoDate(event.startDate || event.endDate);
+  const endDate = normalizeIsoDate(event.endDate || event.startDate || event.endDate);
+  if (!startDate || !endDate) return false;
+  return startDate <= date && endDate >= date;
+};
+
+const toAiAgendaItem = (payloadInput, eventInput) => {
+  const event = eventInput && typeof eventInput === 'object' ? eventInput : {};
+  const isTask = isTaskRecord(event);
+  return {
+    id: String(event.id || '').trim(),
+    type: isTask ? 'task' : 'event',
+    title: String(event.title || '').trim() || (isTask ? 'Untitled task' : 'Untitled event'),
+    projectId: String(event.projectId || '').trim(),
+    projectName: getProjectNameByIdFromPayload(payloadInput, event.projectId),
+    startDate: normalizeIsoDate(event.startDate || ''),
+    startTime: normalizeIsoTime(event.startTime || ''),
+    endDate: normalizeIsoDate(event.endDate || ''),
+    endTime: normalizeIsoTime(event.endTime || ''),
+    status: isTask ? String(event.status || '').trim() || 'To Do' : '',
+    department: String(event.department || '').trim(),
+    assigneeIds: normalizeTaskAssigneeIds(event),
+  };
+};
+
+const buildAiAgendaForDate = ({ payload, date, projectId = '' }) => {
+  const safeDate = normalizeIsoDate(date) || getIsoDateInTimeZone(new Date(), DEFAULT_LINE_REMINDER_TIMEZONE);
+  const targetProjectId = String(projectId || '').trim();
+  const events = getPayloadEvents(payload);
+  const items = events
+    .filter((event) => {
+      if (targetProjectId && String(event?.projectId || '').trim() !== targetProjectId) return false;
+      if (!isEventOverlappingDate(event, safeDate)) return false;
+      if (isTaskRecord(event) && isCompletedTaskRecord(event)) return false;
+      return true;
+    })
+    .map((event) => toAiAgendaItem(payload, event))
+    .sort((left, right) => {
+      const leftMs = toDateTimeMs(left.startDate || safeDate, left.startTime || '00:00', false);
+      const rightMs = toDateTimeMs(right.startDate || safeDate, right.startTime || '00:00', false);
+      return leftMs - rightMs;
+    })
+    .slice(0, 40);
+
+  return {
+    date: safeDate,
+    projectId: targetProjectId,
+    projectName: targetProjectId ? getProjectNameByIdFromPayload(payload, targetProjectId) : '',
+    itemCount: items.length,
+    items,
+  };
+};
+
+const enumerateDatesInRange = (startDateInput, endDateInput, maxDays = 40) => {
+  const startDate = normalizeIsoDate(startDateInput);
+  const endDate = normalizeIsoDate(endDateInput);
+  if (!startDate || !endDate || endDate < startDate) return [];
+  const dates = [];
+  let cursor = startDate;
+  while (cursor <= endDate && dates.length < maxDays) {
+    dates.push(cursor);
+    cursor = shiftIsoDateByDays(cursor, 1);
+    if (!cursor) break;
+  }
+  return dates;
+};
+
+const suggestAiTimeSlots = ({
+  payload,
+  projectId = '',
+  startDate,
+  endDate,
+  durationMinutes = 60,
+  maxSuggestions = 5,
+}) => {
+  const safeProjectId = String(projectId || '').trim();
+  const baseStartDate = normalizeIsoDate(startDate) || getIsoDateInTimeZone(new Date(), DEFAULT_LINE_REMINDER_TIMEZONE);
+  const baseEndDate = normalizeIsoDate(endDate) || shiftIsoDateByDays(baseStartDate, 14);
+  const rangeDates = enumerateDatesInRange(baseStartDate, baseEndDate, 60);
+  const durationMs = Math.max(15, Math.min(8 * 60, Number(durationMinutes || 60))) * 60 * 1000;
+  const maxItems = clampAiCount(maxSuggestions, 5, 1, 12);
+  if (rangeDates.length === 0) {
+    return {
+      suggestions: [],
+      reason: 'Invalid date range.',
+    };
+  }
+
+  const events = getPayloadEvents(payload).filter((event) => {
+    if (safeProjectId && String(event?.projectId || '').trim() !== safeProjectId) return false;
+    if (isTaskRecord(event) && isCompletedTaskRecord(event)) return false;
+    return true;
+  });
+
+  const busyByDate = new Map();
+  rangeDates.forEach((date) => busyByDate.set(date, []));
+
+  events.forEach((event) => {
+    const startDateIso = normalizeIsoDate(event?.startDate || event?.endDate);
+    const endDateIso = normalizeIsoDate(event?.endDate || event?.startDate);
+    if (!startDateIso || !endDateIso) return;
+    rangeDates.forEach((date) => {
+      if (date < startDateIso || date > endDateIso) return;
+      const isAllDay =
+        !normalizeIsoTime(event?.startTime) &&
+        !normalizeIsoTime(event?.endTime) &&
+        (String(event?.showTime || '').trim() === '' || event?.showTime === false);
+      const busyStart = isAllDay
+        ? toDateTimeMs(date, '00:00', false)
+        : toDateTimeMs(date, event?.startTime || '00:00', false);
+      const busyEnd = isAllDay
+        ? toDateTimeMs(date, '23:59', true)
+        : toDateTimeMs(date, event?.endTime || event?.startTime || '23:59', true);
+      if (!busyStart || !busyEnd || busyEnd <= busyStart) return;
+      const current = busyByDate.get(date) || [];
+      current.push({ start: busyStart, end: busyEnd });
+      busyByDate.set(date, current);
+    });
+  });
+
+  const suggestions = [];
+  const workStartTime = '09:00';
+  const workEndTime = '18:00';
+  for (const date of rangeDates) {
+    const dayBusy = (busyByDate.get(date) || []).sort((left, right) => left.start - right.start);
+    const dayStart = toDateTimeMs(date, workStartTime, false);
+    const dayEnd = toDateTimeMs(date, workEndTime, true);
+    if (!dayStart || !dayEnd || dayEnd <= dayStart) continue;
+
+    for (let cursor = dayStart; cursor + durationMs <= dayEnd; cursor += 30 * 60 * 1000) {
+      const candidateStart = cursor;
+      const candidateEnd = cursor + durationMs;
+      const hasOverlap = dayBusy.some(
+        (busy) => candidateStart < busy.end && candidateEnd > busy.start
+      );
+      if (hasOverlap) continue;
+      const start = new Date(candidateStart);
+      const end = new Date(candidateEnd);
+      suggestions.push({
+        date,
+        startTime: `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(
+          2,
+          '0'
+        )}`,
+        endTime: `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`,
+      });
+      if (suggestions.length >= maxItems) break;
+    }
+    if (suggestions.length >= maxItems) break;
+  }
+
+  return {
+    projectId: safeProjectId,
+    projectName: safeProjectId ? getProjectNameByIdFromPayload(payload, safeProjectId) : '',
+    dateRange: { startDate: baseStartDate, endDate: baseEndDate },
+    durationMinutes: Math.round(durationMs / 60000),
+    suggestions,
+  };
+};
+
+const listAiProjectUpdates = ({ payload, projectId, limit = 12 }) => {
+  const project = getProjectByIdFromPayload(payload, projectId);
+  if (!project) {
+    return {
+      projectId: String(projectId || '').trim(),
+      updates: [],
+      message: 'Project not found.',
+    };
+  }
+  const feed = Array.isArray(project.changeFeed) ? project.changeFeed : [];
+  const safeLimit = clampAiCount(limit, 12, 1, 40);
+  const updates = feed
+    .slice()
+    .sort((left, right) => String(right?.createdAt || '').localeCompare(String(left?.createdAt || '')))
+    .slice(0, safeLimit)
+    .map((entry) => ({
+      id: String(entry?.id || '').trim(),
+      title: String(entry?.title || '').trim(),
+      message: String(entry?.message || '').trim(),
+      type: String(entry?.type || '').trim(),
+      createdAt: String(entry?.createdAt || '').trim(),
+      actorUsername: String(entry?.actorUsername || '').trim(),
+    }));
+  return {
+    projectId: String(project.id || '').trim(),
+    projectName: String(project.name || '').trim(),
+    updates,
+  };
+};
+
+const buildAiProjectOverview = ({ payload, projectId }) => {
+  const project = getProjectByIdFromPayload(payload, projectId);
+  if (!project) {
+    return {
+      projectId: String(projectId || '').trim(),
+      message: 'Project not found.',
+    };
+  }
+  const events = getPayloadEvents(payload).filter(
+    (event) => String(event?.projectId || '').trim() === String(project.id || '').trim()
+  );
+  const tasks = events.filter((event) => isTaskRecord(event));
+  const openTasks = tasks.filter((task) => !isCompletedTaskRecord(task));
+  const completedTasks = tasks.filter((task) => isCompletedTaskRecord(task));
+  const nextDeadlines = openTasks
+    .map((task) => ({
+      id: String(task?.id || '').trim(),
+      title: String(task?.title || '').trim() || 'Untitled task',
+      endDate: normalizeIsoDate(task?.endDate || ''),
+      status: String(task?.status || '').trim() || 'To Do',
+    }))
+    .filter((task) => task.endDate)
+    .sort((left, right) => left.endDate.localeCompare(right.endDate))
+    .slice(0, 6);
+  return {
+    projectId: String(project.id || '').trim(),
+    projectName: String(project.name || '').trim(),
+    status: String(project.status || '').trim() || 'on_track',
+    taskCount: tasks.length,
+    openTaskCount: openTasks.length,
+    completedTaskCount: completedTasks.length,
+    eventCount: events.filter((event) => !isTaskRecord(event)).length,
+    nextDeadlines,
+  };
+};
+
+const resolveAiProjectByHint = (payload, hintInput) => {
+  const hint = String(hintInput || '').trim();
+  if (!hint) return null;
+  const projects = getPayloadProjects(payload);
+  const byId = projects.find((project) => String(project?.id || '').trim() === hint);
+  if (byId) return byId;
+  const lowerHint = hint.toLowerCase();
+  return (
+    projects.find((project) => String(project?.name || '').trim().toLowerCase().includes(lowerHint)) ||
+    null
+  );
+};
+
+const resolveAiEventForDeletion = ({ payload, eventId, projectId, titleContains }) => {
+  const normalizedEventId = String(eventId || '').trim();
+  const normalizedProjectId = String(projectId || '').trim();
+  const normalizedTitle = String(titleContains || '').trim().toLowerCase();
+  const events = getPayloadEvents(payload);
+  if (normalizedEventId) {
+    const event = events.find((item) => String(item?.id || '').trim() === normalizedEventId) || null;
+    return event;
+  }
+  if (!normalizedTitle) return null;
+  return (
+    events.find((event) => {
+      if (normalizedProjectId && String(event?.projectId || '').trim() !== normalizedProjectId) return false;
+      const title = String(event?.title || '').trim().toLowerCase();
+      return title.includes(normalizedTitle);
+    }) || null
+  );
+};
+
+const createAiPendingAction = ({ type, summary, payload }) => {
+  const actionType = String(type || '').trim();
+  if (!AI_VALID_ACTION_TYPES.has(actionType)) return null;
+  const now = new Date();
+  const createdAt = now.toISOString();
+  const expiresAt = new Date(now.getTime() + AI_PENDING_ACTION_TTL_MS).toISOString();
+  return {
+    id: buildAiId(),
+    type: actionType,
+    summary: String(summary || '').trim().slice(0, 300),
+    payload: payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {},
+    createdAt,
+    expiresAt,
+  };
+};
+
+const AI_TOOL_DEFINITIONS = [
+  {
+    type: 'function',
+    name: 'get_today_agenda',
+    description: 'List events/tasks for a specific date (defaults to today).',
+    parameters: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: 'ISO date YYYY-MM-DD' },
+        projectId: { type: 'string', description: 'Optional project id' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'suggest_best_time',
+    description: 'Suggest available time slots from project schedule density.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        startDate: { type: 'string', description: 'ISO date YYYY-MM-DD' },
+        endDate: { type: 'string', description: 'ISO date YYYY-MM-DD' },
+        durationMinutes: { type: 'number' },
+        maxSuggestions: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'list_project_updates',
+    description: 'Read recent project change feed updates.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        limit: { type: 'number' },
+      },
+      required: ['projectId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'get_project_overview',
+    description: 'Summarize task/event counts and next deadlines.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+      },
+      required: ['projectId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'draft_create_task',
+    description: 'Prepare task creation action for user confirmation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+        projectHint: { type: 'string', description: 'Project id or project name hint' },
+        title: { type: 'string' },
+        description: { type: 'string' },
+        startDate: { type: 'string' },
+        startTime: { type: 'string' },
+        endDate: { type: 'string' },
+        endTime: { type: 'string' },
+        status: { type: 'string' },
+        department: { type: 'string' },
+        assigneeIds: { type: 'array', items: { type: 'string' } },
+        assigneeNames: { type: 'array', items: { type: 'string' } },
+        parentTaskId: { type: 'string' },
+        linkedEventId: { type: 'string' },
+      },
+      required: ['title'],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'draft_delete_event',
+    description: 'Prepare event/task deletion action for user confirmation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        eventId: { type: 'string' },
+        projectId: { type: 'string' },
+        titleContains: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
+    name: 'draft_send_line_open_tasks',
+    description: 'Prepare action to send LINE open-task summary for one project.',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string' },
+      },
+      required: ['projectId'],
+      additionalProperties: false,
+    },
+  },
+];
+
+const callOpenAiResponsesApi = async ({ input, tools, previousResponseId = '' }) => {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is not configured on server.');
+  }
+  const endpointBase = String(OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const payload = {
+    model: OPENAI_MODEL,
+    input,
+    tools,
+  };
+  if (previousResponseId) {
+    payload.previous_response_id = String(previousResponseId || '').trim();
+  }
+  if (OPENAI_REASONING_EFFORT) {
+    payload.reasoning = {
+      effort: OPENAI_REASONING_EFFORT,
+    };
+  }
+  const response = await fetch(`${endpointBase}/responses`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const text = String(await response.text()).trim();
+  let parsed = {};
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    parsed = {};
+  }
+  if (!response.ok) {
+    throw new Error(
+      parsed?.error?.message ||
+        parsed?.message ||
+        `OpenAI request failed (${response.status})${text ? `: ${text.slice(0, 240)}` : ''}`
+    );
+  }
+  return parsed;
+};
+
+const extractOpenAiOutputText = (responseInput) => {
+  const response = responseInput && typeof responseInput === 'object' ? responseInput : {};
+  const direct = String(response.output_text || '').trim();
+  if (direct) return direct;
+  const output = Array.isArray(response.output) ? response.output : [];
+  const textParts = [];
+  output.forEach((item) => {
+    if (item?.type !== 'message') return;
+    const content = Array.isArray(item.content) ? item.content : [];
+    content.forEach((part) => {
+      const text = String(part?.text || part?.output_text || '').trim();
+      if (text) textParts.push(text);
+    });
+  });
+  return textParts.join('\n').trim();
+};
+
+const extractOpenAiFunctionCalls = (responseInput) => {
+  const response = responseInput && typeof responseInput === 'object' ? responseInput : {};
+  const output = Array.isArray(response.output) ? response.output : [];
+  const calls = [];
+  output.forEach((item) => {
+    if (item?.type === 'function_call' || item?.type === 'tool_call') {
+      const name = String(item?.name || item?.function?.name || '').trim();
+      if (!name) return;
+      calls.push({
+        callId: String(item?.call_id || item?.id || buildAiId()).trim(),
+        name,
+        arguments: String(item?.arguments || item?.function?.arguments || '{}'),
+      });
+      return;
+    }
+    const content = Array.isArray(item?.content) ? item.content : [];
+    content.forEach((part) => {
+      if (part?.type !== 'function_call') return;
+      const name = String(part?.name || '').trim();
+      if (!name) return;
+      calls.push({
+        callId: String(part?.call_id || part?.id || buildAiId()).trim(),
+        name,
+        arguments: String(part?.arguments || '{}'),
+      });
+    });
+  });
+  return calls;
+};
+
+const buildAiContextSummary = ({ payload, userId, username }) => {
+  const projects = getPayloadProjects(payload);
+  const events = getPayloadEvents(payload);
+  const projectSummaries = projects.slice(0, 30).map((project) => {
+    const projectId = String(project?.id || '').trim();
+    const projectEvents = events.filter((event) => String(event?.projectId || '').trim() === projectId);
+    const tasks = projectEvents.filter((event) => isTaskRecord(event));
+    const openTasks = tasks.filter((task) => !isCompletedTaskRecord(task));
+    const upcomingEvents = projectEvents
+      .filter((event) => !isTaskRecord(event))
+      .filter((event) => normalizeIsoDate(event?.startDate || event?.endDate))
+      .slice(0, 12);
+    return {
+      id: projectId,
+      name: String(project?.name || '').trim() || projectId,
+      status: String(project?.status || '').trim() || 'on_track',
+      openTasks: openTasks.length,
+      totalTasks: tasks.length,
+      upcomingEvents: upcomingEvents.length,
+    };
+  });
+  return {
+    nowIso: new Date().toISOString(),
+    timezone: DEFAULT_LINE_REMINDER_TIMEZONE,
+    user: {
+      id: sanitizeUserId(userId),
+      username: sanitizeUsername(username),
+    },
+    projects: projectSummaries,
+  };
+};
+
+const buildAiAssistantSystemPrompt = ({ contextSummary }) => {
+  const contextText = JSON.stringify(contextSummary);
+  return [
+    'You are PM Calendar AI assistant.',
+    'Answer in concise Thai by default.',
+    'Use tools when a tool can improve accuracy.',
+    'Never invent project/task/event ids.',
+    'For mutating requests, always call a draft_* tool first and ask user to confirm action.',
+    'If user asks today schedule, prioritize get_today_agenda tool.',
+    'When suggesting schedule, use suggest_best_time and explain briefly.',
+    'Context summary (JSON):',
+    contextText,
+  ].join('\n');
+};
+
+const buildOpenAiInputMessage = (roleInput, textInput) => {
+  const role = String(roleInput || '').trim().toLowerCase();
+  const safeRole =
+    role === 'system' || role === 'assistant' || role === 'developer' ? role : 'user';
+  const text = sanitizeAiMessageContent(textInput, 12000);
+  return {
+    role: safeRole,
+    content: [{ type: 'input_text', text }],
+  };
+};
+
+const executeAiToolCall = async ({ payload, args, toolName }) => {
+  const toolArgs = args && typeof args === 'object' ? args : {};
+  if (toolName === 'get_today_agenda') {
+    return buildAiAgendaForDate({
+      payload,
+      date: toolArgs.date,
+      projectId: toolArgs.projectId,
+    });
+  }
+  if (toolName === 'suggest_best_time') {
+    return suggestAiTimeSlots({
+      payload,
+      projectId: toolArgs.projectId,
+      startDate: toolArgs.startDate,
+      endDate: toolArgs.endDate,
+      durationMinutes: toolArgs.durationMinutes,
+      maxSuggestions: toolArgs.maxSuggestions,
+    });
+  }
+  if (toolName === 'list_project_updates') {
+    return listAiProjectUpdates({
+      payload,
+      projectId: toolArgs.projectId,
+      limit: toolArgs.limit,
+    });
+  }
+  if (toolName === 'get_project_overview') {
+    return buildAiProjectOverview({
+      payload,
+      projectId: toolArgs.projectId,
+    });
+  }
+  if (toolName === 'draft_create_task') {
+    const project =
+      getProjectByIdFromPayload(payload, toolArgs.projectId) ||
+      resolveAiProjectByHint(payload, toolArgs.projectHint);
+    const title = sanitizeAiMessageContent(toolArgs.title, 220);
+    if (!project || !title) {
+      return {
+        ok: false,
+        message: !project ? 'Project not found for task creation.' : 'Task title is required.',
+      };
+    }
+    const projectId = String(project.id || '').trim();
+    const dueDate =
+      normalizeIsoDate(toolArgs.endDate) ||
+      getIsoDateInTimeZone(new Date(), DEFAULT_LINE_REMINDER_TIMEZONE);
+    const pendingAction = createAiPendingAction({
+      type: AI_ACTION_TYPES.CREATE_TASK,
+      summary: `Create task "${title}" in ${String(project.name || projectId).trim() || projectId}`,
+      payload: {
+        projectId,
+        title,
+        description: sanitizeAiMessageContent(toolArgs.description, 2000),
+        startDate: normalizeIsoDate(toolArgs.startDate),
+        startTime: normalizeIsoTime(toolArgs.startTime),
+        endDate: dueDate,
+        endTime: normalizeIsoTime(toolArgs.endTime),
+        status: String(toolArgs.status || '').trim(),
+        department: String(toolArgs.department || '').trim(),
+        assigneeIds: Array.isArray(toolArgs.assigneeIds)
+          ? toolArgs.assigneeIds.map((id) => String(id || '').trim()).filter(Boolean)
+          : [],
+        assigneeNames: Array.isArray(toolArgs.assigneeNames)
+          ? toolArgs.assigneeNames.map((name) => String(name || '').trim()).filter(Boolean)
+          : [],
+        parentTaskId: String(toolArgs.parentTaskId || '').trim(),
+        linkedEventId: String(toolArgs.linkedEventId || '').trim(),
+      },
+    });
+    return {
+      ok: true,
+      pendingAction,
+      confirmationText:
+        'Task draft prepared. Please ask user to confirm before execution.',
+    };
+  }
+  if (toolName === 'draft_delete_event') {
+    const targetEvent = resolveAiEventForDeletion({
+      payload,
+      eventId: toolArgs.eventId,
+      projectId: toolArgs.projectId,
+      titleContains: toolArgs.titleContains,
+    });
+    if (!targetEvent) {
+      return {
+        ok: false,
+        message: 'Event or task to delete was not found.',
+      };
+    }
+    const pendingAction = createAiPendingAction({
+      type: AI_ACTION_TYPES.DELETE_EVENT,
+      summary: `Delete "${String(targetEvent.title || '').trim() || 'Untitled'}"`,
+      payload: {
+        eventId: String(targetEvent.id || '').trim(),
+        projectId: String(targetEvent.projectId || '').trim(),
+      },
+    });
+    return {
+      ok: true,
+      pendingAction,
+      confirmationText:
+        'Delete draft prepared. Please ask user to confirm before execution.',
+    };
+  }
+  if (toolName === 'draft_send_line_open_tasks') {
+    const project = getProjectByIdFromPayload(payload, toolArgs.projectId);
+    if (!project) {
+      return {
+        ok: false,
+        message: 'Project not found for LINE reminder.',
+      };
+    }
+    const pendingAction = createAiPendingAction({
+      type: AI_ACTION_TYPES.NOTIFY_OPEN_TASKS,
+      summary: `Send LINE open-task summary for ${String(project.name || project.id).trim()}`,
+      payload: {
+        projectId: String(project.id || '').trim(),
+      },
+    });
+    return {
+      ok: true,
+      pendingAction,
+      confirmationText:
+        'LINE notification draft prepared. Please ask user to confirm before execution.',
+    };
+  }
+  return {
+    ok: false,
+    message: `Unknown tool: ${toolName}`,
+  };
+};
+
+const runAiAssistant = async ({ payload, threadMessages, userMessage, userId, username }) => {
+  const history = Array.isArray(threadMessages) ? threadMessages : [];
+  const compactHistory = history
+    .filter((message) => ['user', 'assistant'].includes(String(message?.role || '').trim()))
+    .slice(-AI_THREAD_HISTORY_LIMIT)
+    .map((message) =>
+      buildOpenAiInputMessage(
+        String(message.role || '').trim(),
+        sanitizeAiMessageContent(message.content, 3000)
+      )
+    );
+  const contextSummary = buildAiContextSummary({ payload, userId, username });
+  const systemPrompt = buildAiAssistantSystemPrompt({ contextSummary });
+  const initialInput = [buildOpenAiInputMessage('system', systemPrompt), ...compactHistory];
+  const lastHistoryItem = compactHistory[compactHistory.length - 1];
+  const lastHistoryRole = String(lastHistoryItem?.role || '').trim().toLowerCase();
+  const lastHistoryText = String(lastHistoryItem?.content?.[0]?.text || '').trim();
+  if (lastHistoryRole !== 'user' || lastHistoryText !== String(userMessage || '').trim()) {
+    initialInput.push(buildOpenAiInputMessage('user', userMessage));
+  }
+
+  let response = await callOpenAiResponsesApi({
+    input: initialInput,
+    tools: AI_TOOL_DEFINITIONS,
+  });
+  let pendingAction = null;
+
+  for (let round = 0; round < AI_MAX_TOOL_CALL_ROUNDS; round += 1) {
+    const functionCalls = extractOpenAiFunctionCalls(response);
+    if (functionCalls.length === 0) break;
+    const toolOutputs = [];
+    for (const functionCall of functionCalls) {
+      const args = parseJsonObjectSafe(functionCall.arguments);
+      const toolResult = await executeAiToolCall({
+        payload,
+        args,
+        toolName: functionCall.name,
+      });
+      const pendingFromTool = normalizeAiPendingAction(toolResult?.pendingAction);
+      if (pendingFromTool) {
+        pendingAction = pendingFromTool;
+      }
+      toolOutputs.push({
+        type: 'function_call_output',
+        call_id: functionCall.callId || buildAiId(),
+        output: JSON.stringify(toolResult),
+      });
+    }
+    response = await callOpenAiResponsesApi({
+      previousResponseId: String(response?.id || '').trim(),
+      input: toolOutputs,
+      tools: AI_TOOL_DEFINITIONS,
+    });
+  }
+
+  const assistantTextRaw = extractOpenAiOutputText(response);
+  const assistantText =
+    assistantTextRaw ||
+    (pendingAction
+      ? 'ร่างคำสั่งพร้อมแล้ว กรุณากดยืนยันเพื่อให้ระบบดำเนินการ'
+      : 'ขออภัย ระบบยังไม่สามารถสร้างคำตอบได้ในขณะนี้');
+  return {
+    assistantText: sanitizeAiMessageContent(assistantText, 12000),
+    pendingAction,
+  };
+};
+
+const resolveAiTaskAssigneeIds = ({ project, payloadAssigneeIds, payloadAssigneeNames }) => {
+  const teamMembers = Array.isArray(project?.teamMembers) ? project.teamMembers : [];
+  const memberById = new Map();
+  const memberByName = new Map();
+  teamMembers.forEach((member) => {
+    const memberId = String(member?.id || '').trim();
+    if (!memberId) return;
+    memberById.set(memberId, member);
+    const candidateNames = [
+      String(member?.name || '').trim().toLowerCase(),
+      String(member?.username || '').trim().toLowerCase(),
+      String(member?.email || '').trim().toLowerCase(),
+    ].filter(Boolean);
+    candidateNames.forEach((candidate) => memberByName.set(candidate, memberId));
+  });
+
+  const result = [];
+  (Array.isArray(payloadAssigneeIds) ? payloadAssigneeIds : []).forEach((id) => {
+    const safeId = String(id || '').trim();
+    if (!safeId || !memberById.has(safeId)) return;
+    if (!result.includes(safeId)) result.push(safeId);
+  });
+  (Array.isArray(payloadAssigneeNames) ? payloadAssigneeNames : []).forEach((name) => {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return;
+    const matched = memberByName.get(key);
+    if (!matched) return;
+    if (!result.includes(matched)) result.push(matched);
+  });
+  return result.slice(0, 10);
+};
+
+const resolveAiTaskDepartment = ({ project, requestedDepartment, assigneeIds }) => {
+  const explicit = String(requestedDepartment || '').trim();
+  if (explicit) return explicit;
+  const teamMembers = Array.isArray(project?.teamMembers) ? project.teamMembers : [];
+  const memberMap = new Map();
+  teamMembers.forEach((member) => {
+    const memberId = String(member?.id || '').trim();
+    if (!memberId) return;
+    memberMap.set(memberId, String(member?.department || '').trim() || 'Unassigned');
+  });
+  const departments = Array.from(
+    new Set(
+      (Array.isArray(assigneeIds) ? assigneeIds : [])
+        .map((id) => memberMap.get(String(id || '').trim()))
+        .filter(Boolean)
+    )
+  );
+  if (departments.length === 1) return departments[0];
+  if (departments.length > 1) return 'Multiple';
+  return 'Unassigned';
+};
+
+const executeAiCreateTaskAction = async ({ userId, actionPayload }) => {
+  const payload = await readAccountPayloadFromStore(userId);
+  const projects = getPayloadProjects(payload);
+  const events = getPayloadEvents(payload);
+  const projectId = String(actionPayload?.projectId || '').trim();
+  const targetProject = projects.find((project) => String(project?.id || '').trim() === projectId);
+  if (!targetProject) {
+    throw new Error('Project not found for task creation.');
+  }
+  const nowIso = new Date().toISOString();
+  const title = sanitizeAiMessageContent(actionPayload?.title, 220);
+  if (!title) {
+    throw new Error('Task title is required.');
+  }
+  const endDate =
+    normalizeIsoDate(actionPayload?.endDate) ||
+    getIsoDateInTimeZone(new Date(), DEFAULT_LINE_REMINDER_TIMEZONE);
+  const endTime = normalizeIsoTime(actionPayload?.endTime);
+  const startDate = normalizeIsoDate(actionPayload?.startDate);
+  const startTime = normalizeIsoTime(actionPayload?.startTime);
+  const assigneeIds = resolveAiTaskAssigneeIds({
+    project: targetProject,
+    payloadAssigneeIds: actionPayload?.assigneeIds,
+    payloadAssigneeNames: actionPayload?.assigneeNames,
+  });
+  const department = resolveAiTaskDepartment({
+    project: targetProject,
+    requestedDepartment: actionPayload?.department,
+    assigneeIds,
+  });
+  const taskId = buildAiId();
+  const parentTaskId = String(actionPayload?.parentTaskId || '').trim();
+  const parentTask = parentTaskId
+    ? events.find((event) => String(event?.id || '').trim() === parentTaskId && isTaskRecord(event))
+    : null;
+  const taskRecord = {
+    id: taskId,
+    recordType: 'task',
+    projectId,
+    title,
+    description: sanitizeAiMessageContent(actionPayload?.description, 2000),
+    status: String(actionPayload?.status || '').trim() || 'To Do',
+    department,
+    assigneeIds,
+    assigneeId: assigneeIds[0] || '',
+    startDate,
+    startTime,
+    endDate,
+    endTime,
+    parentTaskId: parentTask ? String(parentTask.id || '').trim() : '',
+    parentTaskTitle: parentTask ? String(parentTask.title || '').trim() : '',
+    linkedEventId: String(actionPayload?.linkedEventId || '').trim(),
+    comments: [],
+    attachments: [],
+    taskTodos: [],
+    deadlineOriginalEndDate: endDate,
+    deadlineOriginalEndTime: endTime || '',
+    deadlineExtensionCount: 0,
+    deadlineWasExtended: false,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+  const nextEvents = [...events, taskRecord];
+  const nextProjects = projects.map((project) => {
+    if (String(project?.id || '').trim() !== projectId) return project;
+    const feed = Array.isArray(project?.changeFeed) ? project.changeFeed : [];
+    const nextFeed = [
+      {
+        id: buildAiId(),
+        type: 'task_created',
+        title,
+        message: 'AI assistant created a task.',
+        actorUsername: 'pm_ai',
+        actorId: 'pm_ai',
+        createdAt: nowIso,
+      },
+      ...feed,
+    ].slice(0, 160);
+    return {
+      ...project,
+      changeFeed: nextFeed,
+      updatedAt: nowIso,
+    };
+  });
+  const nextPayload = {
+    ...payload,
+    projects: nextProjects,
+    events: nextEvents,
+  };
+  await writeAccountPayloadToStore(userId, nextPayload);
+  return {
+    task: {
+      id: taskId,
+      title,
+      projectId,
+      projectName: String(targetProject?.name || projectId).trim(),
+      endDate,
+      endTime,
+    },
+  };
+};
+
+const executeAiDeleteEventAction = async ({ userId, actionPayload }) => {
+  const payload = await readAccountPayloadFromStore(userId);
+  const events = getPayloadEvents(payload);
+  const projects = getPayloadProjects(payload);
+  const eventId = String(actionPayload?.eventId || '').trim();
+  if (!eventId) throw new Error('eventId is required for delete action.');
+  const targetEvent = events.find((event) => String(event?.id || '').trim() === eventId);
+  if (!targetEvent) {
+    throw new Error('Event not found.');
+  }
+  const projectId = String(targetEvent?.projectId || '').trim();
+  const nowIso = new Date().toISOString();
+  const nextEvents = events.filter((event) => String(event?.id || '').trim() !== eventId);
+  const nextProjects = projects.map((project) => {
+    if (String(project?.id || '').trim() !== projectId) return project;
+    const feed = Array.isArray(project?.changeFeed) ? project.changeFeed : [];
+    const nextFeed = [
+      {
+        id: buildAiId(),
+        type: 'event_deleted',
+        title: String(targetEvent?.title || '').trim(),
+        message: 'AI assistant deleted an event/task.',
+        actorUsername: 'pm_ai',
+        actorId: 'pm_ai',
+        createdAt: nowIso,
+      },
+      ...feed,
+    ].slice(0, 160);
+    return {
+      ...project,
+      changeFeed: nextFeed,
+      updatedAt: nowIso,
+    };
+  });
+  const nextPayload = {
+    ...payload,
+    projects: nextProjects,
+    events: nextEvents,
+  };
+  await writeAccountPayloadToStore(userId, nextPayload);
+  return {
+    removed: {
+      id: eventId,
+      title: String(targetEvent?.title || '').trim() || 'Untitled',
+      projectId,
+      projectName: getProjectNameByIdFromPayload(payload, projectId),
+    },
   };
 };
 
@@ -4545,6 +5716,112 @@ app.post('/line/reminder/test-push', requireAuth, async (req, res) => {
   }
 });
 
+const sendLineOpenTaskDigestForProject = async ({ userId, projectId, authUsername = '' }) => {
+  const normalizedUserId = sanitizeUserId(userId);
+  const normalizedProjectId = String(projectId || '').trim();
+  if (!normalizedUserId || !normalizedProjectId) {
+    throw new Error('userId and projectId are required.');
+  }
+
+  const ownership = await loadOwnedProjectById({
+    userId: normalizedUserId,
+    projectId: normalizedProjectId,
+    authUsername,
+  });
+  if (!ownership.foundProject) {
+    const notFoundError = new Error('Project not found.');
+    notFoundError.status = 404;
+    throw notFoundError;
+  }
+  if (!ownership.isOwner) {
+    const forbiddenError = new Error('Only project host can notify open tasks for this project.');
+    forbiddenError.status = 403;
+    throw forbiddenError;
+  }
+
+  const docRef = lineReminderConfigRef.doc(lineReminderDocIdFor(normalizedUserId, normalizedProjectId));
+  const snapshot = await docRef.get();
+  if (!snapshot.exists) {
+    const missingConfigError = new Error('LINE reminder settings not found for this project.');
+    missingConfigError.status = 404;
+    throw missingConfigError;
+  }
+  const config = normalizeLineReminderConfigRecord(snapshot.data() || {}, { includeSecrets: true });
+  if (!config.channelAccessToken) {
+    const missingTokenError = new Error('LINE channel access token is not configured.');
+    missingTokenError.status = 400;
+    throw missingTokenError;
+  }
+  if (!config.groupId) {
+    const missingGroupError = new Error('LINE group ID is not configured.');
+    missingGroupError.status = 400;
+    throw missingGroupError;
+  }
+
+  const ownerEvents = Array.isArray(ownership.payload?.events) ? ownership.payload.events : [];
+  const allOpenProjectTasks = ownerEvents.filter((event) => {
+    if (!isTaskRecord(event)) return false;
+    if (String(event?.projectId || '').trim() !== normalizedProjectId) return false;
+    return !isCompletedTaskRecord(event);
+  });
+  const openTasks = selectLineReminderTasksForNotification(allOpenProjectTasks, allOpenProjectTasks);
+
+  if (openTasks.length === 0) {
+    return {
+      ok: true,
+      message: 'No open tasks found for this project.',
+      openTaskCount: 0,
+      sentAt: null,
+    };
+  }
+
+  const teamMembers = Array.isArray(ownership.project?.teamMembers) ? ownership.project.teamMembers : [];
+  const teamMembersById = new Map();
+  teamMembers.forEach((member) => {
+    const memberId = String(member?.id || '').trim();
+    if (!memberId) return;
+    const memberName = String(member?.name || member?.username || '').trim() || memberId;
+    const memberAvatarUrl = String(member?.avatarUrl || '').trim();
+    const memberDepartment = String(member?.department || '').trim();
+    teamMembersById.set(memberId, {
+      id: memberId,
+      name: memberName,
+      avatarUrl: memberAvatarUrl,
+      department: memberDepartment,
+    });
+  });
+
+  const nowIso = new Date().toISOString();
+  const digestMessage = buildLineOpenTasksDigestMessage({
+    projectName: ownership.project?.name || normalizedProjectId,
+    tasks: openTasks,
+    teamMembersById,
+    departmentColorMap: ownership.project?.departmentColors,
+    timezone: config.timezone,
+  });
+
+  await sendLinePushMessage({
+    channelAccessToken: config.channelAccessToken,
+    to: config.groupId,
+    messages: [digestMessage],
+  });
+
+  await docRef.set(
+    {
+      lastOpenTaskDigestAt: nowIso,
+      updatedAt: nowIso,
+    },
+    { merge: true }
+  );
+
+  return {
+    ok: true,
+    message: 'Open task summary sent.',
+    openTaskCount: openTasks.length,
+    sentAt: nowIso,
+  };
+};
+
 app.post('/line/reminder/notify-open-tasks', requireAuth, async (req, res) => {
   try {
     const userId = sanitizeUserId(req.body?.userId);
@@ -4555,98 +5832,285 @@ app.post('/line/reminder/notify-open-tasks', requireAuth, async (req, res) => {
     if (!ensureAuthUserMatches(req, res, userId)) {
       return;
     }
-
-    const ownership = await loadOwnedProjectById({
+    const result = await sendLineOpenTaskDigestForProject({
       userId,
       projectId,
       authUsername: req.authUser?.username,
     });
-    if (!ownership.foundProject) {
-      return res.status(404).json({ message: 'Project not found.' });
+    return res.json(result);
+  } catch (error) {
+    if (Number(error?.status || 0) >= 400 && Number(error?.status || 0) < 500) {
+      return res.status(Number(error.status)).json({ message: error.message || 'Invalid request.' });
     }
-    if (!ownership.isOwner) {
-      return res
-        .status(403)
-        .json({ message: 'Only project host can notify open tasks for this project.' });
-    }
+    return res.status(500).json({ message: error.message || 'Failed to notify open tasks.' });
+  }
+});
 
-    const docRef = lineReminderConfigRef.doc(lineReminderDocIdFor(userId, projectId));
-    const snapshot = await docRef.get();
-    if (!snapshot.exists) {
-      return res.status(404).json({ message: 'LINE reminder settings not found for this project.' });
+app.get('/ai/threads', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.query?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
     }
-    const config = normalizeLineReminderConfigRecord(snapshot.data() || {}, { includeSecrets: true });
-    if (!config.channelAccessToken) {
-      return res.status(400).json({ message: 'LINE channel access token is not configured.' });
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
     }
-    if (!config.groupId) {
-      return res.status(400).json({ message: 'LINE group ID is not configured.' });
-    }
+    const limit = clampAiCount(req.query?.limit, AI_THREAD_LIST_LIMIT, 1, AI_THREAD_LIST_LIMIT);
+    const snapshot = await aiThreadRef.where('userId', '==', userId).get();
+    const threads = snapshot.docs
+      .map((doc) => toAiThreadPublicResponse(doc.id, doc.data() || {}))
+      .sort((left, right) => String(right?.updatedAt || '').localeCompare(String(left?.updatedAt || '')))
+      .slice(0, limit);
+    return res.json({ threads });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load AI threads.' });
+  }
+});
 
-    const ownerEvents = Array.isArray(ownership.payload?.events) ? ownership.payload.events : [];
-    const allOpenProjectTasks = ownerEvents
-      .filter((event) => {
-        if (!isTaskRecord(event)) return false;
-        if (String(event?.projectId || '').trim() !== projectId) return false;
-        return !isCompletedTaskRecord(event);
-      });
-    const openTasks = selectLineReminderTasksForNotification(allOpenProjectTasks, allOpenProjectTasks);
-
-    if (openTasks.length === 0) {
-      return res.json({
-        ok: true,
-        message: 'No open tasks found for this project.',
-        openTaskCount: 0,
-      });
+app.post('/ai/threads', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.body?.userId);
+    if (!userId) {
+      return res.status(400).json({ message: 'userId is required.' });
     }
-
-    const teamMembers = Array.isArray(ownership.project?.teamMembers) ? ownership.project.teamMembers : [];
-    const teamMembersById = new Map();
-    teamMembers.forEach((member) => {
-      const memberId = String(member?.id || '').trim();
-      if (!memberId) return;
-      const memberName = String(member?.name || member?.username || '').trim() || memberId;
-      const memberAvatarUrl = String(member?.avatarUrl || '').trim();
-      const memberDepartment = String(member?.department || '').trim();
-      teamMembersById.set(memberId, {
-        id: memberId,
-        name: memberName,
-        avatarUrl: memberAvatarUrl,
-        department: memberDepartment,
-      });
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
+    }
+    const nowIso = new Date().toISOString();
+    const title = sanitizeAiThreadTitle(req.body?.title) || 'New chat';
+    const docRef = aiThreadRef.doc(buildAiId());
+    await docRef.set({
+      id: docRef.id,
+      userId,
+      title,
+      lastMessagePreview: '',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      pendingAction: null,
     });
+    return res.status(201).json({
+      thread: toAiThreadPublicResponse(docRef.id, {
+        id: docRef.id,
+        userId,
+        title,
+        lastMessagePreview: '',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        pendingAction: null,
+      }),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to create AI thread.' });
+  }
+});
+
+app.get('/ai/threads/:threadId/messages', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.query?.userId);
+    const threadId = String(req.params?.threadId || '').trim();
+    if (!userId || !threadId) {
+      return res.status(400).json({ message: 'userId and threadId are required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
+    }
+    const threadRecord = await loadAiThreadForUser({ threadId, userId });
+    if (!threadRecord) {
+      return res.status(404).json({ message: 'AI thread not found.' });
+    }
+    const limit = clampAiCount(req.query?.limit, AI_THREAD_MAX_MESSAGES, 10, AI_THREAD_MAX_MESSAGES);
+    const snapshot = await aiThreadMessagesRef(threadId).orderBy('createdAt', 'desc').limit(limit).get();
+    const messages = snapshot.docs
+      .map((doc) => toAiMessagePublicResponse(doc.id, doc.data() || {}))
+      .reverse();
+    return res.json({
+      thread: threadRecord.thread,
+      pendingAction: normalizeAiPendingAction(threadRecord.thread.pendingAction),
+      messages,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load AI messages.' });
+  }
+});
+
+app.post('/ai/threads/:threadId/chat', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.body?.userId);
+    const threadId = String(req.params?.threadId || '').trim();
+    if (!userId || !threadId) {
+      return res.status(400).json({ message: 'userId and threadId are required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
+    }
+    if (!OPENAI_API_KEY) {
+      return res.status(503).json({ message: 'OPENAI_API_KEY is not configured on server.' });
+    }
+    const threadRecord = await loadAiThreadForUser({ threadId, userId });
+    if (!threadRecord) {
+      return res.status(404).json({ message: 'AI thread not found.' });
+    }
+    const userMessage = sanitizeAiMessageContent(req.body?.message, AI_CHAT_MAX_USER_MESSAGE_LENGTH);
+    if (!userMessage) {
+      return res.status(400).json({ message: 'message is required.' });
+    }
 
     const nowIso = new Date().toISOString();
-    const digestMessage = buildLineOpenTasksDigestMessage({
-      projectName: ownership.project?.name || projectId,
-      tasks: openTasks,
-      teamMembersById,
-      departmentColorMap: ownership.project?.departmentColors,
-      timezone: config.timezone,
+    const existingPendingAction = normalizeAiPendingAction(threadRecord.thread.pendingAction);
+    if (existingPendingAction) {
+      await threadRecord.ref.set(
+        {
+          pendingAction: null,
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      );
+    }
+
+    await saveAiThreadMessage({
+      threadId,
+      role: 'user',
+      content: userMessage,
     });
 
-    await sendLinePushMessage({
-      channelAccessToken: config.channelAccessToken,
-      to: config.groupId,
-      messages: [digestMessage],
+    const historySnapshot = await aiThreadMessagesRef(threadId)
+      .orderBy('createdAt', 'desc')
+      .limit(AI_THREAD_HISTORY_LIMIT * 2)
+      .get();
+    const historyMessages = historySnapshot.docs
+      .map((doc) => toAiMessagePublicResponse(doc.id, doc.data() || {}))
+      .reverse();
+    const payload = await readAccountPayloadFromStore(userId);
+    const assistantResult = await runAiAssistant({
+      payload,
+      threadMessages: historyMessages,
+      userMessage,
+      userId,
+      username: req.authUser?.username,
+    });
+    const pendingAction = normalizeAiPendingAction(assistantResult.pendingAction);
+    const assistantMessage = await saveAiThreadMessage({
+      threadId,
+      role: 'assistant',
+      content: assistantResult.assistantText,
+      pendingActionId: pendingAction?.id || '',
     });
 
-    await docRef.set(
+    const defaultTitle = sanitizeAiThreadTitle(threadRecord.thread.title).toLowerCase() === 'new chat';
+    const nextTitle =
+      defaultTitle && userMessage
+        ? sanitizeAiThreadTitle(userMessage.slice(0, 60)) || threadRecord.thread.title
+        : threadRecord.thread.title;
+    await threadRecord.ref.set(
       {
-        lastOpenTaskDigestAt: nowIso,
+        title: nextTitle,
+        lastMessagePreview: buildAiThreadMessagePreview(assistantResult.assistantText || userMessage),
         updatedAt: nowIso,
+        pendingAction: pendingAction || null,
       },
       { merge: true }
     );
-
+    await trimAiThreadMessages(threadId, AI_THREAD_MAX_MESSAGES);
+    const updatedThreadSnapshot = await threadRecord.ref.get();
+    const updatedThread = toAiThreadPublicResponse(
+      updatedThreadSnapshot.id,
+      updatedThreadSnapshot.data() || {}
+    );
     return res.json({
-      ok: true,
-      message: 'Open task summary sent.',
-      openTaskCount: openTasks.length,
-      sentAt: nowIso,
+      thread: updatedThread,
+      pendingAction: normalizeAiPendingAction(updatedThread.pendingAction),
+      message: assistantMessage,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to notify open tasks.' });
+    return res.status(500).json({ message: error.message || 'Failed to process AI chat.' });
+  }
+});
+
+app.post('/ai/threads/:threadId/confirm-action', requireAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.body?.userId);
+    const threadId = String(req.params?.threadId || '').trim();
+    const actionId = String(req.body?.actionId || '').trim();
+    const decision = String(req.body?.decision || '').trim().toLowerCase();
+    if (!userId || !threadId || !actionId) {
+      return res.status(400).json({ message: 'userId, threadId and actionId are required.' });
+    }
+    if (!ensureAuthUserMatches(req, res, userId)) {
+      return;
+    }
+    if (decision !== 'confirm' && decision !== 'cancel') {
+      return res.status(400).json({ message: 'decision must be confirm or cancel.' });
+    }
+    const threadRecord = await loadAiThreadForUser({ threadId, userId });
+    if (!threadRecord) {
+      return res.status(404).json({ message: 'AI thread not found.' });
+    }
+    const pendingAction = normalizeAiPendingAction(threadRecord.thread.pendingAction);
+    if (!pendingAction || pendingAction.id !== actionId) {
+      return res.status(404).json({ message: 'Pending action not found or expired.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    let assistantText = '';
+    let actionResult = null;
+    if (decision === 'cancel') {
+      assistantText = 'ยกเลิกคำสั่งเรียบร้อยแล้ว';
+    } else if (pendingAction.type === AI_ACTION_TYPES.CREATE_TASK) {
+      actionResult = await executeAiCreateTaskAction({
+        userId,
+        actionPayload: pendingAction.payload,
+      });
+      assistantText = `สร้าง Task "${actionResult?.task?.title || ''}" เรียบร้อยแล้ว`;
+    } else if (pendingAction.type === AI_ACTION_TYPES.DELETE_EVENT) {
+      actionResult = await executeAiDeleteEventAction({
+        userId,
+        actionPayload: pendingAction.payload,
+      });
+      assistantText = `ลบรายการ "${actionResult?.removed?.title || ''}" เรียบร้อยแล้ว`;
+    } else if (pendingAction.type === AI_ACTION_TYPES.NOTIFY_OPEN_TASKS) {
+      actionResult = await sendLineOpenTaskDigestForProject({
+        userId,
+        projectId: pendingAction.payload?.projectId,
+        authUsername: req.authUser?.username,
+      });
+      assistantText =
+        actionResult?.openTaskCount > 0
+          ? `ส่ง LINE open task summary แล้ว (${actionResult.openTaskCount} tasks)`
+          : 'ยังไม่มี Open task ที่ต้องส่งในตอนนี้';
+    } else {
+      throw new Error('Unsupported pending action type.');
+    }
+
+    await threadRecord.ref.set(
+      {
+        pendingAction: null,
+        updatedAt: nowIso,
+        lastMessagePreview: buildAiThreadMessagePreview(assistantText),
+      },
+      { merge: true }
+    );
+    const assistantMessage = await saveAiThreadMessage({
+      threadId,
+      role: 'assistant',
+      content: assistantText,
+    });
+    await trimAiThreadMessages(threadId, AI_THREAD_MAX_MESSAGES);
+    const updatedThreadSnapshot = await threadRecord.ref.get();
+    const updatedThread = toAiThreadPublicResponse(
+      updatedThreadSnapshot.id,
+      updatedThreadSnapshot.data() || {}
+    );
+    return res.json({
+      thread: updatedThread,
+      pendingAction: null,
+      message: assistantMessage,
+      actionResult,
+    });
+  } catch (error) {
+    if (Number(error?.status || 0) >= 400 && Number(error?.status || 0) < 500) {
+      return res.status(Number(error.status)).json({ message: error.message || 'Invalid request.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to execute pending action.' });
   }
 });
 
