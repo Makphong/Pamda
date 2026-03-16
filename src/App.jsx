@@ -29,6 +29,8 @@ import {
   Link as LinkIcon,
   Target,
   Activity,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
   MoreHorizontal,
   RefreshCw,
@@ -1460,6 +1462,193 @@ const normalizeTaskAssigneeIds = (taskInput) => {
     normalizedIds.unshift(fallbackSingle);
   }
   return Array.from(new Set(normalizedIds));
+};
+const isTaskRecordEntry = (eventInput) => {
+  const event =
+    eventInput && typeof eventInput === 'object' && !Array.isArray(eventInput)
+      ? eventInput
+      : {};
+  const normalizedRecordType = String(event.recordType || '').trim().toLowerCase();
+  if (normalizedRecordType === 'task') return true;
+  return (
+    !normalizedRecordType &&
+    (Array.isArray(event.assigneeIds) ||
+      typeof event.hasExplicitStartDate === 'boolean' ||
+      typeof event.hasExplicitStartTime === 'boolean')
+  );
+};
+const TASK_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const TASK_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const parseTaskDeadlineToMs = (dateInput, timeInput, useEndOfDayWhenNoTime = true) => {
+  const dateText = String(dateInput || '').trim();
+  const dateMatch = dateText.match(TASK_DATE_PATTERN);
+  if (!dateMatch) return 0;
+  const year = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const day = Number(dateMatch[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return 0;
+  const timeText = String(timeInput || '').trim();
+  const timeMatch = timeText.match(TASK_TIME_PATTERN);
+  let hours = 0;
+  let minutes = 0;
+  if (timeMatch) {
+    hours = Number(timeMatch[1]);
+    minutes = Number(timeMatch[2]);
+  } else if (useEndOfDayWhenNoTime) {
+    hours = 23;
+    minutes = 59;
+  }
+  const parsed = new Date(year, month - 1, day, hours, minutes, 0, 0);
+  const parsedMs = parsed.getTime();
+  if (!Number.isFinite(parsedMs)) return 0;
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return 0;
+  }
+  return parsedMs;
+};
+const resolveTaskOriginalDeadlineFields = (taskInput) => {
+  const task =
+    taskInput && typeof taskInput === 'object' && !Array.isArray(taskInput)
+      ? taskInput
+      : {};
+  const originalDate = String(
+    task.deadlineOriginalEndDate || task.originalEndDate || ''
+  ).trim();
+  const originalTime = String(
+    task.deadlineOriginalEndTime || task.originalEndTime || ''
+  ).trim();
+  const currentDate = String(task.endDate || '').trim();
+  const currentTime = String(task.endTime || '').trim();
+  return {
+    date: originalDate || currentDate,
+    time: originalDate ? originalTime : currentTime,
+  };
+};
+const getTaskOriginalDeadlineMs = (taskInput) => {
+  const deadline = resolveTaskOriginalDeadlineFields(taskInput);
+  return parseTaskDeadlineToMs(deadline.date, deadline.time, true);
+};
+const getTaskCurrentDeadlineMs = (taskInput) =>
+  parseTaskDeadlineToMs(taskInput?.endDate, taskInput?.endTime, true);
+const hasTaskDeadlineExtended = (taskInput) => {
+  if (Boolean(taskInput?.deadlineWasExtended)) return true;
+  const extensionCount = Number(taskInput?.deadlineExtensionCount || 0);
+  if (Number.isFinite(extensionCount) && extensionCount > 0) return true;
+  const originalMs = getTaskOriginalDeadlineMs(taskInput);
+  const currentMs = getTaskCurrentDeadlineMs(taskInput);
+  return Boolean(originalMs > 0 && currentMs > 0 && currentMs > originalMs);
+};
+const isTaskLateByOriginalDeadline = (taskInput, nowMsInput = Date.now()) => {
+  const task =
+    taskInput && typeof taskInput === 'object' && !Array.isArray(taskInput)
+      ? taskInput
+      : {};
+  const originalDeadlineMs = getTaskOriginalDeadlineMs(task);
+  if (!originalDeadlineMs) return false;
+  const normalizedStatus = String(task.status || '').trim();
+  if (normalizedStatus === 'Done') {
+    const completedAtMs = toTimestampMs(task.completedAt);
+    if (completedAtMs <= 0) return false;
+    return completedAtMs > originalDeadlineMs;
+  }
+  const nowMs = Number(nowMsInput);
+  if (!Number.isFinite(nowMs)) return false;
+  return nowMs > originalDeadlineMs;
+};
+const applyTaskDeadlineAndCompletionMetadata = (
+  existingTaskInput,
+  incomingTaskInput,
+  nowIsoInput = new Date().toISOString()
+) => {
+  const existingTask =
+    existingTaskInput && typeof existingTaskInput === 'object' && !Array.isArray(existingTaskInput)
+      ? existingTaskInput
+      : {};
+  const incomingTask =
+    incomingTaskInput && typeof incomingTaskInput === 'object' && !Array.isArray(incomingTaskInput)
+      ? incomingTaskInput
+      : {};
+  const mergedTask = {
+    ...incomingTask,
+  };
+  const nowIso = String(nowIsoInput || '').trim() || new Date().toISOString();
+  const existingEndDate = String(existingTask.endDate || '').trim();
+  const existingEndTime = String(existingTask.endTime || '').trim();
+  const nextEndDate = String(
+    Object.prototype.hasOwnProperty.call(incomingTask, 'endDate')
+      ? incomingTask.endDate
+      : existingTask.endDate
+  ).trim();
+  const nextEndTime = String(
+    Object.prototype.hasOwnProperty.call(incomingTask, 'endTime')
+      ? incomingTask.endTime
+      : existingTask.endTime
+  ).trim();
+  const originalDeadlineDate = String(
+    existingTask.deadlineOriginalEndDate ||
+      existingTask.originalEndDate ||
+      existingEndDate ||
+      nextEndDate
+  ).trim();
+  const originalDeadlineTime = String(
+    existingTask.deadlineOriginalEndTime ||
+      existingTask.originalEndTime ||
+      existingEndTime ||
+      nextEndTime
+  ).trim();
+  mergedTask.deadlineOriginalEndDate = originalDeadlineDate;
+  mergedTask.deadlineOriginalEndTime = originalDeadlineDate ? originalDeadlineTime : '';
+
+  const previousCurrentDueMs = parseTaskDeadlineToMs(existingEndDate, existingEndTime, true);
+  const nextCurrentDueMs = parseTaskDeadlineToMs(nextEndDate, nextEndTime, true);
+  const originalDeadlineMs = parseTaskDeadlineToMs(
+    mergedTask.deadlineOriginalEndDate,
+    mergedTask.deadlineOriginalEndTime,
+    true
+  );
+  const dueExtendedThisUpdate =
+    previousCurrentDueMs > 0 && nextCurrentDueMs > 0 && nextCurrentDueMs > previousCurrentDueMs;
+  const dueBeyondOriginal = originalDeadlineMs > 0 && nextCurrentDueMs > originalDeadlineMs;
+  let deadlineExtensionCount = Number(existingTask.deadlineExtensionCount || 0);
+  if (!Number.isFinite(deadlineExtensionCount) || deadlineExtensionCount < 0) {
+    deadlineExtensionCount = 0;
+  }
+  if (dueExtendedThisUpdate) {
+    deadlineExtensionCount += 1;
+    mergedTask.deadlineLastExtendedAt = nowIso;
+    mergedTask.deadlineFirstExtendedAt = String(existingTask.deadlineFirstExtendedAt || '').trim() || nowIso;
+  } else {
+    mergedTask.deadlineLastExtendedAt = String(existingTask.deadlineLastExtendedAt || '').trim();
+    mergedTask.deadlineFirstExtendedAt = String(existingTask.deadlineFirstExtendedAt || '').trim();
+    if (deadlineExtensionCount === 0 && dueBeyondOriginal) {
+      deadlineExtensionCount = 1;
+    }
+  }
+  mergedTask.deadlineExtensionCount = deadlineExtensionCount;
+  mergedTask.deadlineWasExtended =
+    Boolean(existingTask.deadlineWasExtended) || dueExtendedThisUpdate || dueBeyondOriginal;
+
+  const previousStatus = String(existingTask.status || '').trim();
+  const nextStatus = String(
+    Object.prototype.hasOwnProperty.call(incomingTask, 'status')
+      ? incomingTask.status
+      : existingTask.status
+  ).trim();
+  const existingCompletedAt = String(existingTask.completedAt || '').trim();
+  if (nextStatus === 'Done' && previousStatus !== 'Done') {
+    mergedTask.completedAt = nowIso;
+  } else if (nextStatus === 'Done' && existingCompletedAt) {
+    mergedTask.completedAt = existingCompletedAt;
+  } else if (nextStatus !== 'Done') {
+    mergedTask.completedAt = '';
+  } else {
+    mergedTask.completedAt = '';
+  }
+  return mergedTask;
 };
 const getTaskParentId = (taskInput) =>
   String(taskInput?.parentTaskId || '').trim();
@@ -7536,7 +7725,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       setIsGoogleCalendarEventsLoading(false);
       return;
     }
-    if (!googleCalendarStatus.linked || !effectiveMergeView || !mergeViewRange) {
+    const shouldLoadGoogleEventsForDashboard = Boolean(
+      String(activeDashboardProjectId || '').trim()
+    );
+    if (
+      !googleCalendarStatus.linked ||
+      (!effectiveMergeView && !shouldLoadGoogleEventsForDashboard) ||
+      !mergeViewRange
+    ) {
       setGoogleCalendarEvents([]);
       setIsGoogleCalendarEventsLoading(false);
       return;
@@ -7578,6 +7774,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     googleCalendarStatus.linked,
     googleCalendarSelectedCalendarIds,
     effectiveMergeView,
+    activeDashboardProjectId,
     mergeViewRange,
   ]);
 
@@ -8896,11 +9093,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     let persistedTask = null;
 
     if (isUpdate) {
+      const existingTask = events.find((event) => String(event.id || '').trim() === localTaskId) || null;
+      const normalizedTaskWithTemporalMeta = applyTaskDeadlineAndCompletionMetadata(
+        existingTask,
+        normalizedTaskData,
+        nowIso
+      );
       nextEvents = events.map((event) =>
         String(event.id || '').trim() === localTaskId
           ? {
               ...event,
-              ...normalizedTaskData,
+              ...normalizedTaskWithTemporalMeta,
               projectId: localTaskProjectId,
               recordType: 'task',
               updatedAt: nowIso,
@@ -8910,7 +9113,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       persistedTask =
         nextEvents.find((event) => String(event.id || '').trim() === localTaskId) ||
         {
-          ...normalizedTaskData,
+          ...normalizedTaskWithTemporalMeta,
           id: localTaskId,
           projectId: localTaskProjectId,
           recordType: 'task',
@@ -8919,8 +9122,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       setEvents(nextEvents);
       syncSharedEventsForProjects([localTaskProjectId], nextEvents);
     } else {
+      const normalizedTaskWithTemporalMeta = applyTaskDeadlineAndCompletionMetadata(
+        null,
+        normalizedTaskData,
+        nowIso
+      );
       const createdTask = {
-        ...normalizedTaskData,
+        ...normalizedTaskWithTemporalMeta,
         id: localTaskId,
         projectId: localTaskProjectId,
         recordType: 'task',
@@ -9351,9 +9559,27 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const updateEvent = (eventId, updates) => {
     const nowIso = new Date().toISOString();
     const existingEvent = events.find((event) => event.id === eventId) || null;
-    const nextEvents = events.map((event) =>
-      event.id === eventId ? { ...event, ...updates, updatedAt: nowIso } : event
-    );
+    const nextEvents = events.map((event) => {
+      if (event.id !== eventId) return event;
+      const mergedEvent = { ...event, ...updates };
+      if (isTaskRecordEntry(mergedEvent)) {
+        const mergedWithTemporalMeta = applyTaskDeadlineAndCompletionMetadata(
+          event,
+          mergedEvent,
+          nowIso
+        );
+        return {
+          ...event,
+          ...mergedWithTemporalMeta,
+          updatedAt: nowIso,
+        };
+      }
+      return {
+        ...event,
+        ...updates,
+        updatedAt: nowIso,
+      };
+    });
     setEvents(nextEvents);
     const updatedEvent = nextEvents.find((event) => event.id === eventId) || null;
     syncSharedEventsForProjects([existingEvent?.projectId, updatedEvent?.projectId], nextEvents);
@@ -10585,6 +10811,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             project={activeProject}
             currentUser={currentUser}
             events={events.filter(e => e.projectId === activeProject.id)}
+            googleCalendarEvents={googleCalendarEvents}
             onBack={() => setActiveDashboardProjectId(null)}
             onUpdateEvent={updateEvent}
             onSaveTask={(taskData) => {
@@ -12639,6 +12866,7 @@ function ProjectDashboard({
   project,
   currentUser,
   events,
+  googleCalendarEvents = [],
   onBack,
   onUpdateEvent,
   onSaveTask,
@@ -12667,14 +12895,6 @@ function ProjectDashboard({
     String(project.ownerId || '').trim() === String(currentUser.id || '').trim();
 
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
-  
-  // States for Production-ready Project Organization
-  const [isEditingDesc, setIsEditingDesc] = useState(false);
-  const [editDescText, setEditDescText] = useState('');
-  
-  const [isAddingMilestone, setIsAddingMilestone] = useState(false);
-  const [newMilestoneName, setNewMilestoneName] = useState('');
-  const [newMilestoneDate, setNewMilestoneDate] = useState('');
   
   // Local state for Team Notes
   const normalizePinnedIds = (value) =>
@@ -13714,6 +13934,18 @@ function ProjectDashboard({
     { id: 'month', label: 'Month' },
     { id: 'year', label: 'Year' },
   ];
+  const ORG_PROGRESS_SCOPE_OPTIONS = [
+    { id: 'week', label: 'Week' },
+    { id: 'month', label: 'Month' },
+    { id: 'year', label: 'Year' },
+    { id: 'all', label: 'All' },
+    { id: 'event', label: 'Event' },
+  ];
+  const ORG_PROGRESS_SCOPE_SET = new Set(ORG_PROGRESS_SCOPE_OPTIONS.map((option) => option.id));
+  const normalizeOrgProgressScope = (value) => {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    return ORG_PROGRESS_SCOPE_SET.has(normalizedValue) ? normalizedValue : 'month';
+  };
   const DEFAULT_TASK_TIME_FILTER = 'all';
   const normalizeWorkloadRange = (value) => {
     const normalizedValue = String(value || '').trim().toLowerCase();
@@ -14124,6 +14356,11 @@ function ProjectDashboard({
   const [taskDisplayFilterMode, setTaskDisplayFilterMode] = useState('all');
   const [taskTimeFilter, setTaskTimeFilter] = useState(DEFAULT_TASK_TIME_FILTER);
   const [workloadRange, setWorkloadRange] = useState(DEFAULT_WORKLOAD_RANGE);
+  const [orgProgressScope, setOrgProgressScope] = useState('month');
+  const [orgProgressEventKey, setOrgProgressEventKey] = useState('');
+  const [orgProgressDepartment, setOrgProgressDepartment] = useState('all');
+  const [orgProgressMemberId, setOrgProgressMemberId] = useState('all');
+  const [showOrgProgressFilterPopup, setShowOrgProgressFilterPopup] = useState(false);
   const defaultTaskAssigneeFilterIds = useMemo(() => {
     const normalizedCurrentUserId = String(currentUser?.id || '').trim();
     return normalizedCurrentUserId ? [normalizedCurrentUserId] : [];
@@ -14138,6 +14375,7 @@ function ProjectDashboard({
   // Slide-over Pane State
   const [paneTask, setPaneTask] = useState(null);
   const [isPaneOpen, setIsPaneOpen] = useState(false);
+  const orgProgressFilterPopupRef = useRef(null);
   useEffect(() => {
     hasHydratedTaskFiltersRef.current = false;
   }, [project.id, currentUser.id]);
@@ -14289,14 +14527,7 @@ function ProjectDashboard({
   const projectTasks = useMemo(
     () =>
       (Array.isArray(events) ? events : []).filter((ev) => {
-        const normalizedRecordType = String(ev.recordType || '').trim().toLowerCase();
-        const isTaskRecordValue =
-          normalizedRecordType === 'task' ||
-          (!normalizedRecordType &&
-            (Array.isArray(ev.assigneeIds) ||
-              typeof ev.hasExplicitStartDate === 'boolean' ||
-              typeof ev.hasExplicitStartTime === 'boolean'));
-        if (!isTaskRecordValue) return false;
+        if (!isTaskRecordEntry(ev)) return false;
         return String(ev?.projectId || '').trim() === String(project?.id || '').trim();
       }),
     [events, project?.id]
@@ -14369,14 +14600,7 @@ function ProjectDashboard({
     [taskTimeFilter]
   );
   const filteredTasks = projectTasks.filter((ev) => {
-    const normalizedRecordType = String(ev.recordType || '').trim().toLowerCase();
-    const isTaskRecord =
-      normalizedRecordType === 'task' ||
-      (!normalizedRecordType &&
-        (Array.isArray(ev.assigneeIds) ||
-          typeof ev.hasExplicitStartDate === 'boolean' ||
-          typeof ev.hasExplicitStartTime === 'boolean'));
-    if (!isTaskRecord) return false;
+    if (!isTaskRecordEntry(ev)) return false;
     const normalizedStatus = normalizeTaskStatus(ev.status);
     const matchStatus = statusFilter.length === 0 || statusFilter.includes(normalizedStatus);
     const matchDept = deptFilter.length === 0 || deptFilter.includes(ev.department || 'Unassigned');
@@ -14406,6 +14630,125 @@ function ProjectDashboard({
     }
     return matchStatus && matchDept && matchAssignee && matchDisplayMode && matchTaskTimeFilter;
   });
+  const organizationTaskEventOptions = useMemo(() => {
+    const optionMap = new Map();
+    projectTasks.forEach((task) => {
+      const source = String(task?.taskOfEventSource || '').trim().toLowerCase();
+      const eventId = String(task?.taskOfEventId || '').trim();
+      if (!source || !eventId) return;
+      const key = `${source}:${eventId}`;
+      if (optionMap.has(key)) return;
+      const title = String(task?.taskOfEventTitle || '').trim() || 'Untitled event';
+      optionMap.set(key, {
+        key,
+        source,
+        eventId,
+        title,
+        label: `${title} (${source === 'google' ? 'Google' : 'Project'})`,
+      });
+    });
+    return [...optionMap.values()].sort((left, right) =>
+      String(left.title || '').localeCompare(String(right.title || ''), undefined, {
+        sensitivity: 'base',
+      })
+    );
+  }, [projectTasks]);
+  const normalizedOrgProgressScope = useMemo(
+    () => normalizeOrgProgressScope(orgProgressScope),
+    [orgProgressScope]
+  );
+  useEffect(() => {
+    if (normalizedOrgProgressScope !== 'event') return;
+    const hasCurrent = organizationTaskEventOptions.some(
+      (option) => option.key === String(orgProgressEventKey || '').trim()
+    );
+    if (hasCurrent) return;
+    setOrgProgressEventKey(organizationTaskEventOptions[0]?.key || '');
+  }, [normalizedOrgProgressScope, orgProgressEventKey, organizationTaskEventOptions]);
+  const organizationProgressTimeWindow = useMemo(() => {
+    if (normalizedOrgProgressScope === 'event') return null;
+    return resolveTaskTimeFilterWindow(normalizedOrgProgressScope);
+  }, [normalizedOrgProgressScope]);
+  const organizationProgressTasks = useMemo(() => {
+    const normalizedDepartmentFilter = String(orgProgressDepartment || '').trim();
+    const normalizedMemberFilter = String(orgProgressMemberId || '').trim();
+    const normalizedEventKey = String(orgProgressEventKey || '').trim();
+    return projectTasks.filter((task) => {
+      if (normalizedOrgProgressScope === 'event') {
+        if (!normalizedEventKey) return false;
+        const taskSource = String(task?.taskOfEventSource || '').trim().toLowerCase();
+        const taskEventId = String(task?.taskOfEventId || '').trim();
+        if (!taskSource || !taskEventId) return false;
+        if (`${taskSource}:${taskEventId}` !== normalizedEventKey) return false;
+      } else if (organizationProgressTimeWindow) {
+        const dueDate = parseTaskDueDate(task?.endDate);
+        if (!dueDate) return false;
+        if (
+          dueDate < organizationProgressTimeWindow.startDate ||
+          dueDate > organizationProgressTimeWindow.endDate
+        ) {
+          return false;
+        }
+      }
+
+      if (isProjectHost) {
+        if (normalizedDepartmentFilter && normalizedDepartmentFilter !== 'all') {
+          const taskDepartment = String(task?.department || 'Unassigned').trim() || 'Unassigned';
+          if (taskDepartment !== normalizedDepartmentFilter) return false;
+        }
+
+        const assigneeIds = normalizeTaskAssigneeIds(task);
+        if (normalizedMemberFilter === '__unassigned__') {
+          if (assigneeIds.length > 0) return false;
+        } else if (normalizedMemberFilter && normalizedMemberFilter !== 'all') {
+          if (!assigneeIds.includes(normalizedMemberFilter)) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [
+    projectTasks,
+    normalizedOrgProgressScope,
+    orgProgressDepartment,
+    orgProgressMemberId,
+    orgProgressEventKey,
+    organizationProgressTimeWindow,
+    isProjectHost,
+  ]);
+  const organizationProgressStats = useMemo(() => {
+    const totalTasks = organizationProgressTasks.length;
+    const doneTasks = organizationProgressTasks.filter(
+      (task) => normalizeTaskStatus(task?.status) === 'Done'
+    ).length;
+    const remainingTasks = Math.max(0, totalTasks - doneTasks);
+    const nowMs = Date.now();
+    const lateTasks = organizationProgressTasks.filter((task) =>
+      isTaskLateByOriginalDeadline(task, nowMs)
+    );
+    const extendedTasks = organizationProgressTasks.filter((task) => hasTaskDeadlineExtended(task));
+    const riskTaskCount = organizationProgressTasks.filter(
+      (task) => isTaskLateByOriginalDeadline(task, nowMs) || hasTaskDeadlineExtended(task)
+    ).length;
+    const donePercent = totalTasks > 0 ? (doneTasks / totalTasks) * 100 : 0;
+    const riskPercent = totalTasks > 0 ? (riskTaskCount / totalTasks) * 100 : 0;
+    return {
+      totalTasks,
+      doneTasks,
+      remainingTasks,
+      lateTaskCount: lateTasks.length,
+      extendedTaskCount: extendedTasks.length,
+      riskTaskCount,
+      donePercent,
+      riskPercent,
+    };
+  }, [organizationProgressTasks]);
+  const isOrgProgressFilterActive =
+    normalizedOrgProgressScope !== 'month' ||
+    (normalizedOrgProgressScope === 'event' && Boolean(String(orgProgressEventKey || '').trim())) ||
+    (isProjectHost &&
+      (String(orgProgressDepartment || '').trim() !== 'all' ||
+        String(orgProgressMemberId || '').trim() !== 'all'));
 
   const handleStatusChange = (eventId, newStatus) => {
     if (onUpdateEvent) {
@@ -14869,6 +15212,29 @@ function ProjectDashboard({
     }
   }, [activeTab]);
   useEffect(() => {
+    if (activeTab !== 'organization') {
+      setShowOrgProgressFilterPopup(false);
+    }
+  }, [activeTab]);
+  useEffect(() => {
+    if (!showOrgProgressFilterPopup) return undefined;
+    const handlePointerDown = (event) => {
+      if (
+        orgProgressFilterPopupRef.current &&
+        orgProgressFilterPopupRef.current.contains(event.target)
+      ) {
+        return;
+      }
+      setShowOrgProgressFilterPopup(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [showOrgProgressFilterPopup]);
+  useEffect(() => {
     if (!activeProjectLogMenuEntryId) return undefined;
     const closeMenuIfClickedOutside = (event) => {
       const target = event.target;
@@ -14961,6 +15327,36 @@ function ProjectDashboard({
     );
   };
 
+  const [organizationCalendarDate, setOrganizationCalendarDate] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  });
+  const organizationCalendarLabel = useMemo(
+    () =>
+      organizationCalendarDate.toLocaleDateString('th-TH', {
+        month: 'long',
+        year: 'numeric',
+      }),
+    [organizationCalendarDate]
+  );
+  const organizationCalendarEvents = useMemo(
+    () =>
+      (Array.isArray(events) ? events : []).filter(
+        (eventItem) =>
+          String(eventItem?.projectId || '').trim() === String(project?.id || '').trim()
+      ),
+    [events, project?.id]
+  );
+  const moveOrganizationCalendarMonth = useCallback((step) => {
+    const numericStep = Number(step) || 0;
+    if (!numericStep) return;
+    setOrganizationCalendarDate((prev) => {
+      const current = prev instanceof Date ? prev : new Date();
+      return new Date(current.getFullYear(), current.getMonth() + numericStep, 1, 0, 0, 0, 0);
+    });
+  }, []);
+  const noopCalendarAction = useCallback(() => {}, []);
+
   return (
     <div className="pm-management-scroll-hidden flex flex-col h-screen bg-white font-sans relative" style={{ height: '100dvh' }}>
       {/* Dashboard Header */}
@@ -15040,9 +15436,7 @@ function ProjectDashboard({
           <div className="max-w-6xl mx-auto">
             
             <div
-              className={`mb-4 md:mb-6 pb-2 md:pb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4 ${
-                activeTab === 'organization' ? '' : 'border-b'
-              }`}
+              className="mb-4 md:mb-6 pb-2 md:pb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4 border-b border-gray-200"
             >
               <h2 className="text-xl md:text-2xl font-bold text-gray-800">
                 {TABS.find(t => t.id === activeTab)?.label}
@@ -15089,180 +15483,51 @@ function ProjectDashboard({
                 {/* Main Content (Left) */}
                 <div className="order-2 lg:order-1 flex-1 space-y-4 md:space-y-6">
                   
-                  {/* Vision Section */}
-                  <EditableSection 
-                    title="วิสัยทัศน์" 
-                    icon={Target} 
-                    value={project.vision} 
-                    placeholder="กรอกวิสัยทัศน์ของโครงการที่นี่..."
-                    onSave={(newVision) => onUpdateProject(project.id, { vision: newVision })}
-                  />
-
-                  {/* Mission Section */}
-                  <EditableSection 
-                    title="พันธกิจ" 
-                    icon={Flag} 
-                    value={project.mission} 
-                    placeholder="กรอกพันธกิจของโครงการที่นี่..."
-                    onSave={(newMission) => onUpdateProject(project.id, { mission: newMission })}
-                  />
-
-                  {/* Description Section */}
-                  <div className="group bg-white p-4 md:p-6 rounded-xl">
-                    <div className="flex justify-between items-start mb-3 md:mb-4 gap-2">
-                      <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
-                        <AlignLeft className="w-5 h-5 text-gray-500" />
-                        รายละเอียดโปรเจกต์
-                      </h3>
-                      {!isEditingDesc && (
-                        <button 
-                          onClick={() => {
-                            setEditDescText(project.description || '');
-                            setIsEditingDesc(true);
-                          }}
-                          className="opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto group-active:opacity-100 group-active:pointer-events-auto text-gray-400 hover:text-blue-600 p-1.5 rounded-md hover:bg-blue-50 transition-all"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                    
-                    {isEditingDesc ? (
-                      <div className="flex flex-col gap-3">
-                        <textarea 
-                          value={editDescText}
-                          onChange={e => setEditDescText(e.target.value)}
-                          placeholder="เพิ่มรายละเอียดและเป้าหมายของโปรเจกต์ที่นี่..."
-                          className="w-full rounded-lg border-0 p-3 text-sm text-gray-700 min-h-[120px] outline-none focus:ring-0 resize-y bg-gray-50"
-                          autoFocus
-                        ></textarea>
-                        <div className="flex gap-2 justify-end">
-                          <button onClick={() => setIsEditingDesc(false)} className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition-colors">ยกเลิก</button>
-                          <button 
-                            onClick={() => {
-                              onUpdateProject(project.id, { description: editDescText });
-                              setIsEditingDesc(false);
-                            }} 
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                          >
-                            บันทึก
-                          </button>
-                        </div>
+                  {/* Project Organization Calendar */}
+                  <section className="bg-white p-3 md:p-4 rounded-xl">
+                    <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                      <div>
+                        <h3 className="text-base md:text-lg font-semibold text-gray-800">
+                          {organizationCalendarLabel}
+                        </h3>
                       </div>
-                    ) : (
-                      <div className="prose prose-sm text-gray-600 leading-relaxed max-w-none whitespace-pre-wrap">
-                        {project.description ? <p>{project.description}</p> : null}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Milestones / Goals Section */}
-                  <div className="bg-white p-4 md:p-6 rounded-xl">
-                    <div className="flex justify-between items-start md:items-center gap-3 mb-3 md:mb-4">
-                      <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 leading-snug">
-                        <Target className="w-5 h-5 text-gray-500" />
-                        เป้าหมายหลัก
-                      </h3>
-                      {!isAddingMilestone && (
-                        <button 
-                          onClick={() => setIsAddingMilestone(true)}
-                          className="text-blue-600 hover:text-blue-800 text-xs md:text-sm font-medium flex items-center gap-1 bg-blue-50 hover:bg-blue-100 px-2.5 md:px-3 py-1.5 rounded-lg transition-colors shrink-0"
+                      <div className="inline-flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => moveOrganizationCalendarMonth(-1)}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                          aria-label="เดือนก่อนหน้า"
+                          title="เดือนก่อนหน้า"
                         >
-                          <Plus className="w-4 h-4" /> เพิ่มเป้าหมาย
+                          <ChevronLeft className="w-4 h-4" />
                         </button>
-                      )}
+                        <button
+                          type="button"
+                          onClick={() => moveOrganizationCalendarMonth(1)}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                          aria-label="เดือนถัดไป"
+                          title="เดือนถัดไป"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                    
-                    <div className="space-y-3">
-                      {(project.milestones || []).map((m, i) => (
-                        <div key={m.id || i} className="flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors group">
-                          <div className="flex items-center gap-3 flex-1 cursor-pointer" onClick={() => {
-                            const updatedMilestones = (project.milestones || []).map(ms => ms.id === m.id ? { ...ms, status: ms.status === 'completed' ? 'pending' : 'completed' } : ms);
-                            onUpdateProject(project.id, { milestones: updatedMilestones });
-                          }}>
-                            <div className={`w-5 h-5 rounded-full flex items-center justify-center transition-colors ${m.status === 'completed' ? 'bg-green-500' : 'bg-gray-300 group-hover:bg-blue-300'}`}>
-                              {m.status === 'completed' && <Check className="w-3 h-3 text-white" />}
-                            </div>
-                            <span className={`font-medium ${m.status === 'completed' ? 'text-gray-500 line-through' : 'text-gray-800'}`}>{m.name}</span>
-                          </div>
-                          <div className="flex items-center gap-3 md:gap-4">
-                            <span className={`text-sm ${m.status === 'completed' ? 'text-gray-400' : 'text-blue-600 font-medium'}`}>{m.date}</span>
-                            <button 
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                const shouldDelete = await popup.confirm({
-                                  title: 'Delete milestone',
-                                  message: 'ลบเป้าหมายนี้?',
-                                  confirmText: 'Delete',
-                                  tone: 'danger',
-                                });
-                                if (shouldDelete) {
-                                  const updatedMilestones = (project.milestones || []).filter(ms => ms.id !== m.id);
-                                  onUpdateProject(project.id, { milestones: updatedMilestones });
-                                }
-                              }}
-                              className="p-1.5 text-gray-400 hover:text-red-600 rounded-md hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                      
-                      {(project.milestones || []).length === 0 && !isAddingMilestone && (
-                        <div className="text-center py-6 text-gray-400 text-sm italic bg-gray-50 rounded-lg">
-                          ยังไม่มีเป้าหมายของโปรเจกต์
-                        </div>
-                      )}
-
-                      {/* Add Milestone Form */}
-                      {isAddingMilestone && (
-                        <div className="p-3 md:p-4 bg-blue-50/50 rounded-lg flex flex-col gap-3 mt-4">
-                          <input 
-                            type="text" 
-                            placeholder="ชื่อเป้าหมาย / Milestone..." 
-                            value={newMilestoneName}
-                            onChange={e => setNewMilestoneName(e.target.value)}
-                            className="rounded-md border-0 px-3 py-2 text-sm w-full outline-none focus:ring-0 bg-white"
-                            autoFocus
-                          />
-                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                            <input 
-                              type="date" 
-                              value={newMilestoneDate}
-                              onChange={e => setNewMilestoneDate(e.target.value)}
-                              className="rounded-md border-0 px-3 py-2 text-sm outline-none focus:ring-0 flex-1 bg-white"
-                            />
-                            <button 
-                              onClick={() => {
-                                if (!newMilestoneName || !newMilestoneDate) {
-                                  void popup.alert({
-                                    title: 'Incomplete form',
-                                    message: 'Please provide milestone name and date.',
-                                  });
-                                  return;
-                                }
-                                const updatedMilestones = [...(project.milestones || []), { id: generateId(), name: newMilestoneName, date: newMilestoneDate, status: 'pending' }];
-                                onUpdateProject(project.id, { milestones: updatedMilestones });
-                                setNewMilestoneName('');
-                                setNewMilestoneDate('');
-                                setIsAddingMilestone(false);
-                              }}
-                              className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 transition-colors"
-                            >
-                              เพิ่ม
-                            </button>
-                            <button 
-                              onClick={() => setIsAddingMilestone(false)}
-                              className="text-gray-600 hover:bg-gray-100 px-4 py-2 rounded-md text-sm font-medium transition-colors"
-                            >
-                              ยกเลิก
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                    <div className="rounded-xl p-2 md:p-3">
+                      <MonthGrid
+                        year={organizationCalendarDate.getFullYear()}
+                        month={organizationCalendarDate.getMonth()}
+                        projects={[project]}
+                        allProjects={[project]}
+                        events={organizationCalendarEvents}
+                        showEventTime={false}
+                        hidePastWeeks={false}
+                        currentWeekStart={organizationCalendarDate}
+                        calendarColumnCount={1}
+                        onDayClick={noopCalendarAction}
+                        onEventClick={noopCalendarAction}
+                      />
                     </div>
-                  </div>
+                  </section>
 
                 </div>
 
@@ -15302,6 +15567,156 @@ function ProjectDashboard({
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  <div className="bg-white p-4 md:p-5 rounded-xl">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                        Task Progress Card
+                      </h3>
+                      <div className="relative" ref={orgProgressFilterPopupRef}>
+                        <button
+                          type="button"
+                          onClick={() => setShowOrgProgressFilterPopup((prev) => !prev)}
+                          className="relative h-8 w-8 inline-flex items-center justify-center rounded-lg bg-white text-gray-600 hover:bg-gray-50"
+                          title="Filter"
+                          aria-label="Filter task progress"
+                        >
+                          <Filter className="w-4 h-4" />
+                          {isOrgProgressFilterActive && (
+                            <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-blue-500" />
+                          )}
+                        </button>
+                        {showOrgProgressFilterPopup && (
+                          <div className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white shadow-xl p-3 z-[140]">
+                            <div className="flex items-center justify-between mb-3">
+                              <p className="text-sm font-semibold text-gray-800">ตั้งค่าฟิลเตอร์</p>
+                              <button
+                                type="button"
+                                onClick={() => setShowOrgProgressFilterPopup(false)}
+                                className="h-7 w-7 inline-flex items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                                aria-label="Close progress filter"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                            <div className="space-y-3">
+                              <div>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">
+                                  Filter
+                                </label>
+                                <select
+                                  value={normalizedOrgProgressScope}
+                                  onChange={(event) =>
+                                    setOrgProgressScope(normalizeOrgProgressScope(event.target.value))
+                                  }
+                                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                  {ORG_PROGRESS_SCOPE_OPTIONS.map((option) => (
+                                    <option key={`org-progress-scope-${option.id}`} value={option.id}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              {normalizedOrgProgressScope === 'event' && (
+                                <div>
+                                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">
+                                    Event
+                                  </label>
+                                  <select
+                                    value={orgProgressEventKey}
+                                    onChange={(event) => setOrgProgressEventKey(event.target.value)}
+                                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                  >
+                                    {organizationTaskEventOptions.length === 0 ? (
+                                      <option value="">No linked event</option>
+                                    ) : (
+                                      organizationTaskEventOptions.map((option) => (
+                                        <option key={`org-progress-event-${option.key}`} value={option.key}>
+                                          {option.label}
+                                        </option>
+                                      ))
+                                    )}
+                                  </select>
+                                </div>
+                              )}
+
+                              {isProjectHost && (
+                                <>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">
+                                      Department
+                                    </label>
+                                    <select
+                                      value={orgProgressDepartment}
+                                      onChange={(event) => setOrgProgressDepartment(event.target.value)}
+                                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                    >
+                                      <option value="all">All departments</option>
+                                      {DEPARTMENTS.map((department) => (
+                                        <option key={`org-progress-dept-${department}`} value={department}>
+                                          {department}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 block">
+                                      Member
+                                    </label>
+                                    <select
+                                      value={orgProgressMemberId}
+                                      onChange={(event) => setOrgProgressMemberId(event.target.value)}
+                                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+                                    >
+                                      <option value="all">All members</option>
+                                      <option value="__unassigned__">Unassigned</option>
+                                      {sortedTaskFilterMembers.map((member) => (
+                                        <option key={`org-progress-member-${member.id}`} value={member.id}>
+                                          {member.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 space-y-2">
+                      <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2.5">
+                        <p className="text-[11px] font-semibold text-blue-700">1. งานที่เสร็จแล้ว</p>
+                        <p className="text-lg font-bold text-blue-800 leading-tight">
+                          {organizationProgressStats.donePercent.toFixed(1)}%
+                        </p>
+                        <p className="text-xs text-blue-700">
+                          {organizationProgressStats.doneTasks}/{organizationProgressStats.totalTasks} Tasks
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2.5">
+                        <p className="text-[11px] font-semibold text-amber-700">2. งานที่ยังไม่เสร็จ</p>
+                        <p className="text-lg font-bold text-amber-800 leading-tight">
+                          {organizationProgressStats.remainingTasks} Tasks
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-rose-100 bg-rose-50/60 px-3 py-2.5">
+                        <p className="text-[11px] font-semibold text-rose-700">
+                          3. งานเสี่ยงล่าช้า / ขยาย Deadline
+                        </p>
+                        <p className="text-lg font-bold text-rose-800 leading-tight">
+                          {organizationProgressStats.riskTaskCount} Tasks (
+                          {organizationProgressStats.riskPercent.toFixed(1)}%)
+                        </p>
+                        <p className="text-xs text-rose-700">
+                          Late {organizationProgressStats.lateTaskCount} | Extended {organizationProgressStats.extendedTaskCount}
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
                 </div>
@@ -15711,6 +16126,7 @@ function ProjectDashboard({
                                         String(parentTask?.title || '').trim();
                                       const subtaskCount = Number(subtaskCountByParentId.get(String(task?.id || '').trim()) || 0);
                                       const taskCommentCount = normalizeTaskCommentEntries(task?.comments).length;
+                                      const isLateTask = isTaskLateByOriginalDeadline(task, Date.now());
                                       return (
                                         <article
 	                                          key={task.id}
@@ -15735,9 +16151,16 @@ function ProjectDashboard({
                                                 <p className="mt-1 text-[10px] text-gray-500 truncate">{subtaskCount} subtasks</p>
                                               ) : null}
                                             </div>
-		                                            <span className="text-[10px] text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded shrink-0">
-		                                              {task.department || 'Unassigned'}
-		                                            </span>
+		                                            <div className="flex flex-col items-end gap-1 shrink-0">
+		                                              <span className="text-[10px] text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded">
+		                                                {task.department || 'Unassigned'}
+		                                              </span>
+		                                              {isLateTask && (
+		                                                <span className="text-[10px] font-semibold text-red-600">
+		                                                  Late
+		                                                </span>
+		                                              )}
+		                                            </div>
 		                                          </div>
 	                                          <p className="mt-2 text-[11px] text-gray-500 flex items-center gap-1.5">
 	                                            <Clock className="w-3.5 h-3.5" />
@@ -15940,6 +16363,7 @@ function ProjectDashboard({
                               String(parentTask?.title || '').trim();
                             const subtaskCount = Number(subtaskCountByParentId.get(String(task?.id || '').trim()) || 0);
                             const taskCommentCount = normalizeTaskCommentEntries(task?.comments).length;
+                            const isLateTask = isTaskLateByOriginalDeadline(task, Date.now());
                             const normalizedTaskStatus = normalizeTaskStatus(task.status);
                             const taskStatusToneClass =
                               normalizedTaskStatus === 'Done'
@@ -15964,9 +16388,14 @@ function ProjectDashboard({
                                       <p className="mt-1 text-[10px] text-gray-500 truncate">{subtaskCount} subtasks</p>
                                     ) : null}
                                   </div>
-                                  <span className="text-[10px] text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded shrink-0">
-                                    {task.department || 'Unassigned'}
-                                  </span>
+                                  <div className="flex flex-col items-end gap-1 shrink-0">
+                                    <span className="text-[10px] text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded">
+                                      {task.department || 'Unassigned'}
+                                    </span>
+                                    {isLateTask && (
+                                      <span className="text-[10px] font-semibold text-red-600">Late</span>
+                                    )}
+                                  </div>
                                 </div>
                                 <p className="mt-2 text-[11px] text-gray-500 flex items-center gap-1.5">
                                   <Clock className="w-3.5 h-3.5" />
@@ -17206,6 +17635,8 @@ function ProjectDashboard({
 			        currentUserProfile={currentUser}
 			        isProjectHost={isProjectHost}
               projectTasks={projectTasks}
+              projectEvents={events}
+              googleCalendarEvents={googleCalendarEvents}
 			        teamMembers={teamMembers}
 			        TASK_STATUSES={TASK_STATUSES}
 			        DEPARTMENTS={DEPARTMENTS}
@@ -17525,6 +17956,8 @@ function TaskDetailPane({
   currentUserProfile = null,
   isProjectHost = false,
   projectTasks = [],
+  projectEvents = [],
+  googleCalendarEvents = [],
   teamMembers,
   TASK_STATUSES,
   DEPARTMENTS = [],
@@ -17552,6 +17985,7 @@ function TaskDetailPane({
   const [hasStartTime, setHasStartTime] = useState(false);
   const [endTime, setEndTime] = useState('');
   const [description, setDescription] = useState('');
+  const [linkedTaskEventKey, setLinkedTaskEventKey] = useState('');
   const [taskTodos, setTaskTodos] = useState([]);
   const [newTodoText, setNewTodoText] = useState('');
   const [isTaskTodoComposerOpen, setIsTaskTodoComposerOpen] = useState(false);
@@ -17622,6 +18056,104 @@ function TaskDetailPane({
       ),
     [assigneeIds, teamMembers]
   );
+  const taskEventOptions = useMemo(() => {
+    const normalizeEventId = (eventInput) =>
+      String(
+        eventInput?.id ||
+          eventInput?.googleEventId ||
+          eventInput?.googleCalendarLinkedEventId ||
+          ''
+      ).trim();
+    const isTaskRecord = (eventInput) => {
+      const normalizedRecordType = String(eventInput?.recordType || '').trim().toLowerCase();
+      return normalizedRecordType === 'task';
+    };
+    const formatEventMetaText = (eventInput, sourceLabel) => {
+      const startDateText = String(eventInput?.startDate || '').trim();
+      const endDateText = String(eventInput?.endDate || '').trim();
+      const startTimeText = String(eventInput?.startTime || '').trim();
+      const endTimeText = String(eventInput?.endTime || '').trim();
+      const dateText =
+        startDateText && endDateText && startDateText !== endDateText
+          ? `${startDateText} - ${endDateText}`
+          : startDateText || endDateText || '';
+      const timeText =
+        startTimeText && endTimeText
+          ? `${startTimeText}-${endTimeText}`
+          : startTimeText || endTimeText || '';
+      if (dateText && timeText) return `${sourceLabel} | ${dateText} ${timeText}`;
+      if (dateText) return `${sourceLabel} | ${dateText}`;
+      if (timeText) return `${sourceLabel} | ${timeText}`;
+      return sourceLabel;
+    };
+
+    const nextOptions = [];
+    const usedKeySet = new Set();
+    const linkedGoogleEventIdSet = new Set();
+
+    (Array.isArray(projectEvents) ? projectEvents : []).forEach((eventItem) => {
+      if (isTaskRecord(eventItem)) return;
+      const eventId = normalizeEventId(eventItem);
+      if (!eventId) return;
+      const key = `project:${eventId}`;
+      if (usedKeySet.has(key)) return;
+      usedKeySet.add(key);
+      const linkedGoogleEventId = String(
+        eventItem?.googleCalendarLinkedEventId || eventItem?.googleEventId || ''
+      ).trim();
+      if (linkedGoogleEventId) linkedGoogleEventIdSet.add(linkedGoogleEventId);
+      nextOptions.push({
+        key,
+        source: 'project',
+        eventId,
+        title: String(eventItem?.title || '').trim() || 'Untitled event',
+        meta: formatEventMetaText(eventItem, 'Project'),
+      });
+    });
+
+    (Array.isArray(googleCalendarEvents) ? googleCalendarEvents : []).forEach((eventItem) => {
+      if (String(eventItem?.source || '').trim().toLowerCase() !== 'google') return;
+      const eventId = normalizeEventId(eventItem);
+      if (!eventId) return;
+      if (linkedGoogleEventIdSet.has(eventId)) return;
+      const key = `google:${eventId}`;
+      if (usedKeySet.has(key)) return;
+      usedKeySet.add(key);
+      nextOptions.push({
+        key,
+        source: 'google',
+        eventId,
+        title: String(eventItem?.title || '').trim() || 'Untitled event',
+        meta: formatEventMetaText(eventItem, 'Google Calendar'),
+      });
+    });
+
+    const sorted = [...nextOptions].sort((left, right) =>
+      String(left.title || '').localeCompare(String(right.title || ''), undefined, {
+        sensitivity: 'base',
+      })
+    );
+    const selectedSource = String(task?.taskOfEventSource || '').trim().toLowerCase();
+    const selectedId = String(task?.taskOfEventId || '').trim();
+    const selectedTitle = String(task?.taskOfEventTitle || '').trim();
+    if (selectedSource && selectedId) {
+      const selectedKey = `${selectedSource}:${selectedId}`;
+      if (!sorted.some((option) => option.key === selectedKey)) {
+        sorted.unshift({
+          key: selectedKey,
+          source: selectedSource,
+          eventId: selectedId,
+          title: selectedTitle || 'Linked event',
+          meta: selectedSource === 'google' ? 'Google Calendar' : 'Project',
+        });
+      }
+    }
+    return sorted;
+  }, [projectEvents, googleCalendarEvents, task?.taskOfEventSource, task?.taskOfEventId, task?.taskOfEventTitle]);
+  const taskEventOptionMap = useMemo(
+    () => new Map(taskEventOptions.map((option) => [option.key, option])),
+    [taskEventOptions]
+  );
   const currentTaskComments = useMemo(
     () => normalizeTaskCommentEntries(task?.comments),
     [task?.comments]
@@ -17630,6 +18162,16 @@ function TaskDetailPane({
   const currentTaskId = String(task?.id || '').trim();
   const parentTaskId = getTaskParentId(task);
   const parentTaskTitle = String(task?.parentTaskTitle || '').trim();
+  const parentTaskRecord = useMemo(() => {
+    if (!parentTaskId) return null;
+    return (
+      (Array.isArray(projectTasks) ? projectTasks : []).find(
+        (candidateTask) => String(candidateTask?.id || '').trim() === parentTaskId
+      ) || null
+    );
+  }, [projectTasks, parentTaskId]);
+  const parentTaskDisplayTitle =
+    String(parentTaskTitle || parentTaskRecord?.title || parentTaskId || '').trim() || 'Untitled task';
   const childSubtasks = useMemo(() => {
     if (!currentTaskId) return [];
     return (Array.isArray(projectTasks) ? projectTasks : [])
@@ -18457,6 +18999,13 @@ function TaskDetailPane({
         setStartTime(hasTaskStartTime ? taskStartTime : '');
         setEndTime(String(task.endTime || '').trim());
         setDescription(task.description || '');
+        const mappedTaskEventSource = String(task.taskOfEventSource || '').trim().toLowerCase();
+        const mappedTaskEventId = String(task.taskOfEventId || '').trim();
+        setLinkedTaskEventKey(
+          mappedTaskEventSource && mappedTaskEventId
+            ? `${mappedTaskEventSource}:${mappedTaskEventId}`
+            : ''
+        );
         setTaskTodos(normalizeTaskTodoEntries(task.taskTodos));
         setIsTaskTodoComposerOpen(false);
         setTaskAttachments(normalizeTaskAttachmentEntries(task.attachments));
@@ -18480,6 +19029,7 @@ function TaskDetailPane({
         setStartTime('');
         setEndTime('');
         setDescription('');
+        setLinkedTaskEventKey('');
         setTaskTodos([]);
         setIsTaskTodoComposerOpen(false);
         setTaskAttachments([]);
@@ -18494,6 +19044,7 @@ function TaskDetailPane({
       setNewCommentText('');
       setReplyTargetCommentId('');
       setReplyDraftText('');
+      setLinkedTaskEventKey('');
       setTaskTodos([]);
       setTaskAttachments([]);
       setAttachmentUploadIssues([]);
@@ -18542,6 +19093,7 @@ function TaskDetailPane({
       hasStartDate && String(startDate || '').trim() ? String(startDate || '').trim() : String(endDate || '').trim();
     const normalizedStartTime =
       hasStartTime && String(startTime || '').trim() ? String(startTime || '').trim() : '';
+    const selectedTaskEventOption = taskEventOptionMap.get(linkedTaskEventKey) || null;
 
     onSave({
       id: task?.id,
@@ -18559,6 +19111,9 @@ function TaskDetailPane({
       description,
       taskTodos: normalizeTaskTodoEntries(taskTodos),
       attachments: normalizeTaskAttachmentEntries(taskAttachments),
+      taskOfEventSource: String(selectedTaskEventOption?.source || '').trim(),
+      taskOfEventId: String(selectedTaskEventOption?.eventId || '').trim(),
+      taskOfEventTitle: String(selectedTaskEventOption?.title || '').trim(),
       parentTaskId,
       parentTaskTitle,
       isSubtask: Boolean(parentTaskId),
@@ -18568,6 +19123,8 @@ function TaskDetailPane({
   if (!isOpen) return null;
 
   const currentAssignees = selectedAssignees;
+  const projectTaskEventOptions = taskEventOptions.filter((option) => option.source === 'project');
+  const googleTaskEventOptions = taskEventOptions.filter((option) => option.source === 'google');
 
   return (
     <>
@@ -18659,8 +19216,19 @@ function TaskDetailPane({
                 {parentTaskId ? (
                   <>
                     <div className="text-gray-500 flex items-center gap-2"><Layers className="w-4 h-4" /> Task หลัก</div>
-                    <div className="text-sm font-medium text-blue-700">
-                      {parentTaskTitle || parentTaskId}
+                    <div>
+                      {parentTaskRecord && typeof onOpenTask === 'function' ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenTask(parentTaskRecord)}
+                          className="text-sm font-medium text-blue-700 hover:text-blue-800 hover:underline transition-colors"
+                          title="เปิด Task หลัก"
+                        >
+                          {parentTaskDisplayTitle}
+                        </button>
+                      ) : (
+                        <div className="text-sm font-medium text-blue-700">{parentTaskDisplayTitle}</div>
+                      )}
                     </div>
                   </>
                 ) : null}
@@ -18772,6 +19340,37 @@ function TaskDetailPane({
                   <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 w-28" />
                 </div>
 
+                <div className="text-gray-500 flex items-center gap-2">
+                  <LinkIcon className="w-4 h-4" /> Task ของ Event ใด
+                </div>
+                <div>
+                  <select
+                    value={linkedTaskEventKey}
+                    onChange={(event) => setLinkedTaskEventKey(event.target.value)}
+                    className="w-full border-gray-300 rounded-lg p-2 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 border"
+                  >
+                    <option value="">ไม่เชื่อมกับ Event</option>
+                    {projectTaskEventOptions.length > 0 && (
+                      <optgroup label="Project events">
+                        {projectTaskEventOptions.map((option) => (
+                          <option key={`task-event-project-option-${option.key}`} value={option.key}>
+                            {option.title} ({option.meta})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {googleTaskEventOptions.length > 0 && (
+                      <optgroup label="Google Calendar events">
+                        {googleTaskEventOptions.map((option) => (
+                          <option key={`task-event-google-option-${option.key}`} value={option.key}>
+                            {option.title} ({option.meta})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+
                 <div className="text-gray-500 flex items-center gap-2"><Activity className="w-4 h-4" /> สถานะ</div>
                 <div>
                   <select value={status} onChange={e => setStatus(e.target.value)} className="w-full border-gray-300 rounded-lg p-2 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 border">
@@ -18825,7 +19424,20 @@ function TaskDetailPane({
                 {parentTaskId ? (
                   <>
                     <div className="text-gray-500">Task หลัก</div>
-                    <div className="text-blue-700 font-medium">{parentTaskTitle || parentTaskId}</div>
+                    <div>
+                      {parentTaskRecord && typeof onOpenTask === 'function' ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenTask(parentTaskRecord)}
+                          className="text-blue-700 font-medium hover:text-blue-800 hover:underline transition-colors"
+                          title="เปิด Task หลัก"
+                        >
+                          {parentTaskDisplayTitle}
+                        </button>
+                      ) : (
+                        <div className="text-blue-700 font-medium">{parentTaskDisplayTitle}</div>
+                      )}
+                    </div>
                   </>
                 ) : null}
 	                <div className="text-gray-500">ผู้รับผิดชอบ</div>
@@ -31131,7 +31743,7 @@ function MonthGrid({
 	                        </div>
 	                      )}
                       {!dayData.empty && hiddenEventCount > 0 && (
-                        <div className="mt-auto text-[10px] text-gray-500 px-0.5">+ อีก {hiddenEventCount} รายการ</div>
+                        <div className="mt-auto text-[10px] text-gray-500 px-0.5">+{hiddenEventCount}</div>
                       )}
                       {isDayQuickPanelOpen && (
                         <div
