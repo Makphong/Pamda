@@ -941,6 +941,26 @@ const buildAiAttachmentPayloadFromFile = async (file) => {
     previewDataUrl,
   };
 };
+const normalizeAiMessageAttachments = (attachmentsInput) =>
+  (Array.isArray(attachmentsInput) ? attachmentsInput : [])
+    .slice(0, 10)
+    .map((item, index) => {
+      const name = String(item?.name || 'attachment').trim().slice(0, 180) || 'attachment';
+      const mimeType = String(item?.mimeType || '').trim().slice(0, 120);
+      const size = Math.max(0, Number(item?.size) || 0);
+      const textPreview = String(item?.textPreview || '').trim().slice(0, AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT);
+      const previewDataUrlRaw = String(item?.previewDataUrl || '').trim();
+      const previewDataUrl = /^data:image\//i.test(previewDataUrlRaw) ? previewDataUrlRaw : '';
+      return {
+        id: String(item?.id || '').trim() || `ai-attachment-${index}-${name}`,
+        name,
+        mimeType,
+        size,
+        textPreview,
+        previewDataUrl,
+      };
+    })
+    .filter((attachment) => attachment.name || attachment.previewDataUrl || attachment.textPreview);
 const PROFILE_COMPLAINT_STATUS = {
   OPEN: 'open',
   IN_REVIEW: 'in_review',
@@ -7300,6 +7320,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       content: String(message.content || '').trim(),
       createdAt: String(message.createdAt || '').trim() || null,
       pendingActionId: String(message.pendingActionId || '').trim(),
+      attachments: normalizeAiMessageAttachments(message.attachments),
     };
   }, []);
 
@@ -7574,7 +7595,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const handleSendAiMessage = useCallback(async () => {
     if (!AUTH_API_BASE_URL) return;
     const messageText = String(aiInput || '').trim();
-    const attachmentPayload = (Array.isArray(aiInputAttachments) ? aiInputAttachments : []).map((item) => ({
+    const queuedAttachments = Array.isArray(aiInputAttachments) ? aiInputAttachments : [];
+    const attachmentPayload = queuedAttachments.map((item) => ({
       name: String(item?.name || '').trim(),
       mimeType: String(item?.mimeType || '').trim(),
       size: Math.max(0, Number(item?.size) || 0),
@@ -7603,6 +7625,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       `ช่วยวิเคราะห์ไฟล์แนบ ${attachmentPayload.length} ไฟล์ และสรุปสาระสำคัญแบบกระชับ`;
     setAiErrorMessage('');
     setIsAiSending(true);
+    setAiInput('');
+    setAiInputAttachments([]);
     try {
       let threadId = String(activeAiThreadId || '').trim();
       if (!threadId) {
@@ -7618,7 +7642,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         setActiveAiThreadId(createdThread.id);
         threadId = createdThread.id;
       }
-      setAiInput('');
+      const optimisticUserAttachments = normalizeAiMessageAttachments(queuedAttachments);
       const optimisticUserMessage = {
         id: `temp-user-${Date.now()}`,
         role: 'user',
@@ -7627,6 +7651,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           `แนบไฟล์ ${attachmentPayload.length} ไฟล์ • ขอบเขต: ${aiProjectScopeLabel}`,
         createdAt: new Date().toISOString(),
         pendingActionId: '',
+        attachments: optimisticUserAttachments,
       };
       setAiMessages((prev) => [...prev, optimisticUserMessage]);
       const result = await requestCloudDataApi(`/ai/threads/${encodeURIComponent(threadId)}/chat`, {
@@ -7650,9 +7675,13 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       } else {
         void handleLoadAiThreads();
       }
-      setAiInputAttachments([]);
     } catch (error) {
       setAiErrorMessage(formatAiAssistantError(error, 'Failed to send AI message.'));
+      setAiInputAttachments((prev) => {
+        const current = Array.isArray(prev) ? prev : [];
+        if (current.length > 0 || queuedAttachments.length === 0) return current;
+        return queuedAttachments;
+      });
       setAiMessages((prev) => prev.filter((msg) => !String(msg.id || '').startsWith('temp-user-')));
     } finally {
       setIsAiSending(false);
@@ -11998,27 +12027,89 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
               <div className="text-xs text-gray-500">
                 เริ่มคุยกับ AI ได้เลย เช่น "วันนี้ฉันติดอะไรบ้าง" หรือ "ช่วยเสนอเวลาประชุมสัปดาห์นี้"
               </div>
-            ) : (
-              aiMessages.map((message) => {
-                const isAssistant = message.role === 'assistant';
-                return (
-                  <div
-                    key={message.id}
-                    className={`flex ${isAssistant ? 'justify-start' : 'justify-end'}`}
-                  >
+	            ) : (
+	              aiMessages.map((message) => {
+	                const isAssistant = message.role === 'assistant';
+	                const messageAttachments = normalizeAiMessageAttachments(message?.attachments);
+	                const hasMessageText = String(message?.content || '').trim().length > 0;
+	                return (
+	                  <div
+	                    key={message.id}
+	                    className={`flex ${isAssistant ? 'justify-start' : 'justify-end'}`}
+	                  >
                     <div
-                      className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
-                        isAssistant
-                          ? 'bg-white border border-gray-200 text-gray-700'
-                          : 'bg-blue-600 text-white'
-                      }`}
-                    >
-                      {message.content}
-                    </div>
-                  </div>
-                );
-              })
-            )}
+	                      className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+	                        isAssistant
+	                          ? 'bg-white border border-gray-200 text-gray-700'
+	                          : 'bg-blue-600 text-white'
+	                      }`}
+	                    >
+	                      {messageAttachments.length > 0 && (
+	                        <div className={`grid grid-cols-2 gap-2 ${hasMessageText ? 'mb-2' : ''}`}>
+	                          {messageAttachments.map((attachment, attachmentIndex) => {
+	                            const mimeType = String(attachment?.mimeType || '').toLowerCase();
+	                            const isImage = mimeType.startsWith('image/');
+	                            const previewDataUrl = String(attachment?.previewDataUrl || '').trim();
+	                            return (
+	                              <div
+	                                key={`ai-message-attachment-${message.id}-${attachment.id || attachmentIndex}`}
+	                                className={`relative rounded-lg overflow-hidden ${
+	                                  isAssistant
+	                                    ? 'bg-gray-50 border border-gray-200'
+	                                    : 'bg-blue-500/60 border border-blue-300/60'
+	                                }`}
+	                              >
+	                                {isImage && previewDataUrl ? (
+	                                  <img
+	                                    src={previewDataUrl}
+	                                    alt={attachment.name || 'attachment'}
+	                                    className="w-full h-28 object-cover"
+	                                  />
+	                                ) : (
+	                                  <div className="h-20 px-2 py-2 flex items-center gap-2">
+	                                    <FileText
+	                                      className={`w-4 h-4 shrink-0 ${
+	                                        isAssistant ? 'text-gray-400' : 'text-blue-100'
+	                                      }`}
+	                                    />
+	                                    <div className="min-w-0">
+	                                      <div
+	                                        className={`text-xs truncate ${
+	                                          isAssistant ? 'text-gray-700' : 'text-white'
+	                                        }`}
+	                                      >
+	                                        {attachment.name}
+	                                      </div>
+	                                      <div
+	                                        className={`text-[10px] ${
+	                                          isAssistant ? 'text-gray-500' : 'text-blue-100'
+	                                        }`}
+	                                      >
+	                                        {formatTaskAttachmentSize(attachment.size)}
+	                                      </div>
+	                                    </div>
+	                                  </div>
+	                                )}
+	                                <div
+	                                  className={`px-2 py-1 text-[10px] truncate ${
+	                                    isAssistant
+	                                      ? 'bg-white/90 text-gray-600'
+	                                      : 'bg-blue-700/90 text-blue-50'
+	                                  }`}
+	                                >
+	                                  {attachment.name}
+	                                </div>
+	                              </div>
+	                            );
+	                          })}
+	                        </div>
+	                      )}
+	                      {hasMessageText ? message.content : null}
+	                    </div>
+	                  </div>
+	                );
+	              })
+	            )}
             <div ref={aiMessagesEndRef} />
           </div>
 

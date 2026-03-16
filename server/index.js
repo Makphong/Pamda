@@ -2036,6 +2036,7 @@ const toAiMessagePublicResponse = (docId, dataInput) => {
     content: sanitizeAiMessageContent(data.content || '', 12000),
     createdAt: String(data.createdAt || '').trim() || null,
     pendingActionId: String(data.pendingActionId || '').trim(),
+    attachments: normalizeAiInputAttachments(data.attachments),
   };
 };
 
@@ -2084,12 +2085,19 @@ const deleteAiThreadMessages = async (threadIdInput, pageSize = 250) => {
   return deletedCount;
 };
 
-const saveAiThreadMessage = async ({ threadId, role, content, pendingActionId = '' }) => {
+const saveAiThreadMessage = async ({
+  threadId,
+  role,
+  content,
+  pendingActionId = '',
+  attachments = [],
+}) => {
   const normalizedThreadId = String(threadId || '').trim();
   if (!normalizedThreadId) return null;
   const safeRole = String(role || '').trim().toLowerCase() === 'assistant' ? 'assistant' : 'user';
   const safeContent = sanitizeAiMessageContent(content, 12000);
   if (!safeContent) return null;
+  const safeAttachments = normalizeAiInputAttachments(attachments);
   const createdAt = new Date().toISOString();
   const docRef = aiThreadMessagesRef(normalizedThreadId).doc(buildAiId());
   await docRef.set({
@@ -2098,6 +2106,7 @@ const saveAiThreadMessage = async ({ threadId, role, content, pendingActionId = 
     role: safeRole,
     content: safeContent,
     pendingActionId: String(pendingActionId || '').trim(),
+    attachments: safeAttachments,
     createdAt,
   });
   return toAiMessagePublicResponse(docRef.id, {
@@ -2106,6 +2115,7 @@ const saveAiThreadMessage = async ({ threadId, role, content, pendingActionId = 
     role: safeRole,
     content: safeContent,
     pendingActionId,
+    attachments: safeAttachments,
     createdAt,
   });
 };
@@ -6283,10 +6293,12 @@ app.post('/ai/threads/:threadId/chat', requireAuth, async (req, res) => {
       );
     }
 
+    const attachments = normalizeAiInputAttachments(req.body?.attachments);
     await saveAiThreadMessage({
       threadId,
       role: 'user',
       content: userMessage,
+      attachments,
     });
 
     const historySnapshot = await aiThreadMessagesRef(threadId)
@@ -6305,7 +6317,6 @@ app.post('/ai/threads/:threadId/chat', requireAuth, async (req, res) => {
       payload,
       scope: projectScope,
     });
-    const attachments = normalizeAiInputAttachments(req.body?.attachments);
     const userContextNote = buildAiRequestContextNote({
       payload,
       scope: projectScope,
