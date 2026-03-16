@@ -7579,6 +7579,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       mimeType: String(item?.mimeType || '').trim(),
       size: Math.max(0, Number(item?.size) || 0),
       textPreview: String(item?.textPreview || '').trim(),
+      previewDataUrl: String(item?.previewDataUrl || '').trim(),
     }));
     if (!messageText && attachmentPayload.length === 0) return;
     if (!aiProjectScopeMergeAll && (Array.isArray(aiProjectScopeProjectIds) ? aiProjectScopeProjectIds : []).length === 0) {

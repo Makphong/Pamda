@@ -167,6 +167,14 @@ const AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT = Math.max(
   200,
   Math.min(10000, Number(process.env.AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT || 2500))
 );
+const AI_INPUT_IMAGE_PREVIEW_MAX_CHARS = Math.max(
+  2000,
+  Math.min(8_000_000, Number(process.env.AI_INPUT_IMAGE_PREVIEW_MAX_CHARS || 2_400_000))
+);
+const AI_INPUT_IMAGE_MAX_COUNT = Math.max(
+  0,
+  Math.min(6, Number(process.env.AI_INPUT_IMAGE_MAX_COUNT || 3))
+);
 
 const loadGoogleOauthConfigFromJson = (filePath) => {
   const emptyConfig = { clientId: '', clientSecret: '', redirectUris: [] };
@@ -2192,15 +2200,24 @@ const normalizeAiInputAttachments = (attachmentsInput) =>
     .slice(0, AI_INPUT_ATTACHMENT_MAX_COUNT)
     .map((item) => (item && typeof item === 'object' && !Array.isArray(item) ? item : null))
     .filter(Boolean)
-    .map((attachment) => ({
-      name: String(attachment.name || 'attachment').trim().slice(0, 180) || 'attachment',
-      mimeType: String(attachment.mimeType || '').trim().slice(0, 120),
-      size: Math.max(0, Number.parseInt(String(attachment.size || 0), 10) || 0),
-      textPreview: sanitizeAiMessageContent(
-        String(attachment.textPreview || '').trim(),
-        AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT
-      ),
-    }));
+    .map((attachment) => {
+      const mimeType = String(attachment.mimeType || '').trim().slice(0, 120);
+      const previewDataUrlRaw = String(attachment.previewDataUrl || '').trim();
+      const isImagePreview = /^data:image\//i.test(previewDataUrlRaw);
+      return {
+        name: String(attachment.name || 'attachment').trim().slice(0, 180) || 'attachment',
+        mimeType,
+        size: Math.max(0, Number.parseInt(String(attachment.size || 0), 10) || 0),
+        textPreview: sanitizeAiMessageContent(
+          String(attachment.textPreview || '').trim(),
+          AI_INPUT_ATTACHMENT_TEXT_PREVIEW_LIMIT
+        ),
+        previewDataUrl:
+          isImagePreview && previewDataUrlRaw.length <= AI_INPUT_IMAGE_PREVIEW_MAX_CHARS
+            ? previewDataUrlRaw
+            : '',
+      };
+    });
 
 const buildAiRequestContextNote = ({ payload, scope, attachments }) => {
   const lines = [];
@@ -2218,7 +2235,13 @@ const buildAiRequestContextNote = ({ payload, scope, attachments }) => {
   }
   const safeAttachments = Array.isArray(attachments) ? attachments : [];
   if (safeAttachments.length > 0) {
+    const imageAttachmentCount = safeAttachments.filter((attachment) =>
+      /^data:image\//i.test(String(attachment?.previewDataUrl || '').trim())
+    ).length;
     lines.push('User attached files (metadata and optional text preview):');
+    if (imageAttachmentCount > 0) {
+      lines.push(`Image attachments available for model vision: ${imageAttachmentCount}`);
+    }
     safeAttachments.forEach((attachment, index) => {
       const name = String(attachment?.name || 'attachment').trim() || 'attachment';
       const mimeType = String(attachment?.mimeType || '').trim() || 'unknown';
@@ -2808,6 +2831,45 @@ const buildOpenAiInputMessage = (roleInput, textInput) => {
   };
 };
 
+const getAiImageInputPartsFromAttachments = (attachmentsInput) => {
+  const attachments = Array.isArray(attachmentsInput) ? attachmentsInput : [];
+  const imageParts = [];
+  for (const attachment of attachments) {
+    if (imageParts.length >= AI_INPUT_IMAGE_MAX_COUNT) break;
+    const previewDataUrl = String(attachment?.previewDataUrl || '').trim();
+    const mimeType = String(attachment?.mimeType || '').trim().toLowerCase();
+    const isImageMime = mimeType.startsWith('image/');
+    const isImageDataUrl = /^data:image\//i.test(previewDataUrl);
+    if (!isImageMime || !isImageDataUrl) continue;
+    if (previewDataUrl.length > AI_INPUT_IMAGE_PREVIEW_MAX_CHARS) continue;
+    imageParts.push({
+      type: 'input_image',
+      image_url: previewDataUrl,
+    });
+  }
+  return imageParts;
+};
+
+const buildOpenAiUserMessageWithAttachments = ({ textInput, attachmentsInput }) => {
+  const text =
+    sanitizeAiMessageContent(textInput, 12000) ||
+    'โปรดวิเคราะห์รูปที่ผู้ใช้แนบมาพร้อมบริบทของโปรเจกต์';
+  const imageParts = getAiImageInputPartsFromAttachments(attachmentsInput);
+  if (imageParts.length === 0) {
+    return buildOpenAiInputMessage('user', text);
+  }
+  return {
+    role: 'user',
+    content: [
+      {
+        type: 'input_text',
+        text,
+      },
+      ...imageParts,
+    ],
+  };
+};
+
 const executeAiToolCall = async ({ payload, args, toolName }) => {
   const toolArgs = args && typeof args === 'object' ? args : {};
   if (toolName === 'get_today_agenda') {
@@ -2948,8 +3010,11 @@ const runAiAssistant = async ({
   userId,
   username,
   userContextNote = '',
+  attachments = [],
 }) => {
   const history = Array.isArray(threadMessages) ? threadMessages : [];
+  const safeAttachments = Array.isArray(attachments) ? attachments : [];
+  const attachedImageParts = getAiImageInputPartsFromAttachments(safeAttachments);
   const compactHistory = history
     .filter((message) => ['user', 'assistant'].includes(String(message?.role || '').trim()))
     .slice(-AI_THREAD_HISTORY_LIMIT)
@@ -2977,14 +3042,48 @@ const runAiAssistant = async ({
   } else {
     lastHistoryText = String(lastHistoryItem?.content?.text || '').trim();
   }
-  if (lastHistoryRole !== 'user' || lastHistoryText !== String(userMessage || '').trim()) {
-    initialInput.push(buildOpenAiInputMessage('user', userMessage));
+  const shouldAppendCurrentUserMessage =
+    attachedImageParts.length > 0 ||
+    lastHistoryRole !== 'user' ||
+    lastHistoryText !== String(userMessage || '').trim();
+  if (shouldAppendCurrentUserMessage) {
+    initialInput.push(
+      buildOpenAiUserMessageWithAttachments({
+        textInput: userMessage,
+        attachmentsInput: safeAttachments,
+      })
+    );
   }
 
-  let response = await callOpenAiResponsesApi({
-    input: initialInput,
-    tools: AI_TOOL_DEFINITIONS,
-  });
+  let response;
+  try {
+    response = await callOpenAiResponsesApi({
+      input: initialInput,
+      tools: AI_TOOL_DEFINITIONS,
+    });
+  } catch (error) {
+    const errorMessage = String(error?.message || '').trim().toLowerCase();
+    const shouldRetryTextOnly =
+      attachedImageParts.length > 0 &&
+      Number(error?.status || 0) === 400 &&
+      (errorMessage.includes('input_image') ||
+        errorMessage.includes('input_text') ||
+        errorMessage.includes('content'));
+    if (!shouldRetryTextOnly) {
+      throw error;
+    }
+    const fallbackInput = initialInput.slice();
+    if (shouldAppendCurrentUserMessage) {
+      fallbackInput.pop();
+      const imageCount = attachedImageParts.length;
+      const fallbackText = `${String(userMessage || '').trim()}\n\n[แนบรูป ${imageCount} ไฟล์]`;
+      fallbackInput.push(buildOpenAiInputMessage('user', fallbackText));
+    }
+    response = await callOpenAiResponsesApi({
+      input: fallbackInput,
+      tools: AI_TOOL_DEFINITIONS,
+    });
+  }
   let pendingAction = null;
 
   for (let round = 0; round < AI_MAX_TOOL_CALL_ROUNDS; round += 1) {
@@ -6219,6 +6318,7 @@ app.post('/ai/threads/:threadId/chat', requireAuth, async (req, res) => {
       userId,
       username: req.authUser?.username,
       userContextNote,
+      attachments,
     });
     const pendingAction = normalizeAiPendingAction(assistantResult.pendingAction);
     const assistantMessage = await saveAiThreadMessage({
