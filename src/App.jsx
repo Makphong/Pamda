@@ -2287,6 +2287,9 @@ const serializeStoredNoteDocument = (documentPayload) => {
 };
 const NOTE_PRESENCE_TTL_MS = 60000;
 const NOTE_PRESENCE_TYPING_MAX = 120;
+const NOTE_PRESENCE_HEARTBEAT_INTERVAL_MS = 15000;
+const NOTE_PRESENCE_ACTIVE_SYNC_MIN_INTERVAL_MS = 900;
+const NOTE_PRESENCE_IDLE_SYNC_MIN_INTERVAL_MS = 12000;
 const NOTE_PRESENCE_CURSOR_COLORS = [
   '#2563eb',
   '#16a34a',
@@ -2379,6 +2382,27 @@ const normalizeNotePresenceEntry = (value) => {
     updatedAt,
   };
 };
+const toPresenceComparableEntry = (entryInput) => {
+  const entry = normalizeNotePresenceEntry(entryInput);
+  const normalizeRatio = (value) => {
+    if (!Number.isFinite(value)) return null;
+    return Math.round(value * 100) / 100;
+  };
+  return {
+    userId: entry.userId,
+    username: entry.username,
+    displayName: entry.displayName,
+    avatarUrl: entry.avatarUrl,
+    pageId: entry.pageId,
+    pageType: entry.pageType,
+    line: entry.line,
+    typingText: entry.typingText,
+    cursorXRatio: normalizeRatio(entry.cursorXRatio),
+    cursorYRatio: normalizeRatio(entry.cursorYRatio),
+  };
+};
+const isSameNotePresenceEntry = (leftInput, rightInput) =>
+  isJsonEqual(toPresenceComparableEntry(leftInput), toPresenceComparableEntry(rightInput));
 const normalizeProjectNotesPresence = (value, nowMs = Date.now()) => {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const result = {};
@@ -9790,6 +9814,14 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       notePresencePatch: normalizeProjectNotesPresence(safePatch.notePresencePatch),
     };
   };
+  const isPresenceOnlyNotePatch = (patchInput) => {
+    const patch = normalizeNotePatchPayload(patchInput);
+    return (
+      Object.keys(patch.notePresencePatch).length > 0 &&
+      Object.keys(patch.noteContentPatch).length === 0 &&
+      Object.keys(patch.noteRevisionPatch).length === 0
+    );
+  };
   const hasNotePatchPayload = (patchInput) => {
     const patch = normalizeNotePatchPayload(patchInput);
     return (
@@ -9827,6 +9859,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!normalizedProjectId) return;
     const notePatch = normalizeNotePatchPayload(notePatchInput);
     if (!hasNotePatchPayload(notePatch)) return;
+    const shouldPreferLocalPayload = isPresenceOnlyNotePatch(notePatch);
     const targetProject = (Array.isArray(nextProjectsSnapshot) ? nextProjectsSnapshot : []).find(
       (project) => String(project?.id || '').trim() === normalizedProjectId
     );
@@ -9834,9 +9867,11 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (String(targetProject.ownerId || '').trim() !== currentUser.id) return;
 
     try {
-      const remotePayload = await loadAccountDbPayload(currentUser.id, {
-        allowStaleWhilePendingQueue: false,
-      });
+      const remotePayload = shouldPreferLocalPayload
+        ? readAccountDbPayload(currentUser.id)
+        : await loadAccountDbPayload(currentUser.id, {
+            allowStaleWhilePendingQueue: false,
+          });
       const remoteProjects = Array.isArray(remotePayload.projects) ? remotePayload.projects : [];
       const projectIndex = remoteProjects.findIndex(
         (project) => String(project?.id || '').trim() === normalizedProjectId
@@ -11040,13 +11075,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           syncSharedProjectDetailsForProjects([normalizedProjectId], nextProjects);
         }
         if (hasNotePatch) {
+          const notePatchSyncDelayMs = isPresenceOnlyNotePatch(notePatchToSync) ? 900 : 220;
           if (targetProjectOwnerId === currentUser.id) {
-            queueOwnerProjectNotePatchSync(normalizedProjectId, notePatchToSync);
+            queueOwnerProjectNotePatchSync(normalizedProjectId, notePatchToSync, notePatchSyncDelayMs);
           } else {
             queueSharedProjectNotePatchSyncToOwner(
               normalizedProjectId,
               targetProjectOwnerId,
-              notePatchToSync
+              notePatchToSync,
+              notePatchSyncDelayMs
             );
           }
         }
@@ -15932,6 +15969,7 @@ function ProjectDashboard({
     const normalizedNoteId = String(noteId || '').trim();
     if (!normalizedNoteId) return;
 
+    const nowMs = Date.now();
     const normalizedPresence = normalizeNotePresenceEntry({
       ...(payload && typeof payload === 'object' ? payload : {}),
       userId: currentUser.id,
@@ -15940,6 +15978,23 @@ function ProjectDashboard({
       avatarUrl: currentUser.avatarUrl || '',
       updatedAt: new Date().toISOString(),
     });
+    const currentPresenceEntry = normalizeNotePresenceEntry(
+      notesPresence?.[normalizedNoteId]?.[currentUser.id]
+    );
+    const hasPresenceChanged = !isSameNotePresenceEntry(currentPresenceEntry, normalizedPresence);
+    const elapsedSinceLastUpdateMs = nowMs - toTimestampMs(currentPresenceEntry.updatedAt);
+    const hasTypingText = String(normalizedPresence.typingText || '').trim().length > 0;
+    const minSyncIntervalMs = hasPresenceChanged
+      ? hasTypingText
+        ? NOTE_PRESENCE_ACTIVE_SYNC_MIN_INTERVAL_MS
+        : Math.max(
+            NOTE_PRESENCE_ACTIVE_SYNC_MIN_INTERVAL_MS,
+            Math.floor(NOTE_PRESENCE_HEARTBEAT_INTERVAL_MS * 0.6)
+          )
+      : NOTE_PRESENCE_IDLE_SYNC_MIN_INTERVAL_MS;
+    if (elapsedSinceLastUpdateMs > 0 && elapsedSinceLastUpdateMs < minSyncIntervalMs) {
+      return;
+    }
 
     const nextPresence = normalizeProjectNotesPresence({
       ...notesPresence,
@@ -15953,7 +16008,7 @@ function ProjectDashboard({
       [normalizedNoteId]: {
         [currentUser.id]: normalizedPresence,
       },
-    });
+    }, hasPresenceChanged ? 160 : 320);
   };
 
   const activeNotePresenceItems = useMemo(() => {
@@ -15988,7 +16043,7 @@ function ProjectDashboard({
     handleNotePresenceUpdate(activeNoteId, { typingText: '' });
     const heartbeat = window.setInterval(() => {
       handleNotePresenceUpdate(activeNoteId, { typingText: '' });
-    }, 2600);
+    }, NOTE_PRESENCE_HEARTBEAT_INTERVAL_MS);
     return () => window.clearInterval(heartbeat);
   }, [activeTab, activeNoteId, noteSection]);
 
