@@ -1,4 +1,4 @@
-import cors from 'cors';
+﻿import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import nodemailer from 'nodemailer';
@@ -871,7 +871,7 @@ const buildLineScamActionFlexMessage = ({
   title,
   subtitle = '',
   bodyText = '',
-  actionLabel = 'เปิด LIFF',
+  actionLabel = 'à¹€à¸›à¸´à¸” LIFF',
   actionUrl = '',
   accentColor = '#0ea5e9',
   altText = '',
@@ -948,7 +948,7 @@ const buildLineScamActionFlexMessage = ({
           : [
               {
                 type: 'text',
-                text: 'LIFF URL ยังไม่ถูกตั้งค่า โปรดแจ้งผู้ดูแลระบบ',
+                text: 'LIFF URL à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸–à¸¹à¸à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸² à¹‚à¸›à¸£à¸”à¹à¸ˆà¹‰à¸‡à¸œà¸¹à¹‰à¸”à¸¹à¹à¸¥à¸£à¸°à¸šà¸š',
                 size: 'xs',
                 color: '#991b1b',
                 wrap: true,
@@ -961,31 +961,31 @@ const buildLineScamActionFlexMessage = ({
 
 const buildLineScamHelpFlexMessage = () =>
   buildLineScamActionFlexMessage({
-    title: 'คำแนะนำเมื่อถูกโกง',
-    subtitle: 'หยุดโอนเพิ่ม และเก็บหลักฐานทันที',
+    title: 'à¸„à¸³à¹à¸™à¸°à¸™à¸³à¹€à¸¡à¸·à¹ˆà¸­à¸–à¸¹à¸à¹‚à¸à¸‡',
+    subtitle: 'à¸«à¸¢à¸¸à¸”à¹‚à¸­à¸™à¹€à¸žà¸´à¹ˆà¸¡ à¹à¸¥à¸°à¹€à¸à¹‡à¸šà¸«à¸¥à¸±à¸à¸à¸²à¸™à¸—à¸±à¸™à¸—à¸µ',
     bodyText:
-      '1) แคปแชท/สลิป/โปรไฟล์ผู้ขาย\\n2) โทรอายัดบัญชีปลายทางผ่านธนาคาร\\n3) แจ้งความออนไลน์ผ่าน Thaipoliceonline\\n4) แจ้งความคืบหน้าในช่องทางทางการเท่านั้น',
-    actionLabel: 'เปิดเว็บแจ้งความ',
+      '1) à¹à¸„à¸›à¹à¸Šà¸—/à¸ªà¸¥à¸´à¸›/à¹‚à¸›à¸£à¹„à¸Ÿà¸¥à¹Œà¸œà¸¹à¹‰à¸‚à¸²à¸¢\\n2) à¹‚à¸—à¸£à¸­à¸²à¸¢à¸±à¸”à¸šà¸±à¸à¸Šà¸µà¸›à¸¥à¸²à¸¢à¸—à¸²à¸‡à¸œà¹ˆà¸²à¸™à¸˜à¸™à¸²à¸„à¸²à¸£\\n3) à¹à¸ˆà¹‰à¸‡à¸„à¸§à¸²à¸¡à¸­à¸­à¸™à¹„à¸¥à¸™à¹Œà¸œà¹ˆà¸²à¸™ Thaipoliceonline\\n4) à¹à¸ˆà¹‰à¸‡à¸„à¸§à¸²à¸¡à¸„à¸·à¸šà¸«à¸™à¹‰à¸²à¹ƒà¸™à¸Šà¹ˆà¸­à¸‡à¸—à¸²à¸‡à¸—à¸²à¸‡à¸à¸²à¸£à¹€à¸—à¹ˆà¸²à¸™à¸±à¹‰à¸™',
+    actionLabel: 'à¹€à¸›à¸´à¸”à¹€à¸§à¹‡à¸šà¹à¸ˆà¹‰à¸‡à¸„à¸§à¸²à¸¡',
     actionUrl: 'https://www.thaipoliceonline.go.th',
     accentColor: '#dc2626',
-    altText: 'คำแนะนำเมื่อถูกโกง',
+    altText: 'à¸„à¸³à¹à¸™à¸°à¸™à¸³à¹€à¸¡à¸·à¹ˆà¸­à¸–à¸¹à¸à¹‚à¸à¸‡',
   });
 
 const buildLineScamUsageFlexMessage = () =>
   buildLineScamActionFlexMessage({
-    title: 'วิธีใช้งาน LINE Scam Bot',
-    subtitle: 'เลือกเมนูจาก Rich Menu ได้ 5 ฟังก์ชัน',
+    title: 'à¸§à¸´à¸˜à¸µà¹ƒà¸Šà¹‰à¸‡à¸²à¸™ LINE Scam Bot',
+    subtitle: 'à¹€à¸¥à¸·à¸­à¸à¹€à¸¡à¸™à¸¹à¸ˆà¸²à¸ Rich Menu à¹„à¸”à¹‰ 5 à¸Ÿà¸±à¸‡à¸à¹Œà¸Šà¸±à¸™',
     bodyText:
-      'ตรวจสอบมิจฉาชีพ: ค้นฐานข้อมูลเคสโกง\\nตรวจสอบข่าวปลอม: วิเคราะห์ข่าวและแหล่งอ้างอิง\\nประเมินความเสี่ยง: อัปโหลดรูปแชทเพื่อวิเคราะห์\\nเมนูคำแนะนำ: อ่านขั้นตอนป้องกันโดนโกง',
-    actionLabel: 'เปิดหน้าตรวจสอบมิจฉาชีพ',
+      'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸¡à¸´à¸ˆà¸‰à¸²à¸Šà¸µà¸ž: à¸„à¹‰à¸™à¸à¸²à¸™à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹€à¸„à¸ªà¹‚à¸à¸‡\\nà¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸‚à¹ˆà¸²à¸§à¸›à¸¥à¸­à¸¡: à¸§à¸´à¹€à¸„à¸£à¸²à¸°à¸«à¹Œà¸‚à¹ˆà¸²à¸§à¹à¸¥à¸°à¹à¸«à¸¥à¹ˆà¸‡à¸­à¹‰à¸²à¸‡à¸­à¸´à¸‡\\nà¸›à¸£à¸°à¹€à¸¡à¸´à¸™à¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡: à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¹à¸Šà¸—à¹€à¸žà¸·à¹ˆà¸­à¸§à¸´à¹€à¸„à¸£à¸²à¸°à¸«à¹Œ\\nà¹€à¸¡à¸™à¸¹à¸„à¸³à¹à¸™à¸°à¸™à¸³: à¸­à¹ˆà¸²à¸™à¸‚à¸±à¹‰à¸™à¸•à¸­à¸™à¸›à¹‰à¸­à¸‡à¸à¸±à¸™à¹‚à¸”à¸™à¹‚à¸à¸‡',
+    actionLabel: 'à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸²à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸¡à¸´à¸ˆà¸‰à¸²à¸Šà¸µà¸ž',
     actionUrl: LINE_SCAM_LIFF_SCAMMER_CHECK_URL,
     accentColor: '#0369a1',
-    altText: 'แนะนำวิธีการใช้งาน',
+    altText: 'à¹à¸™à¸°à¸™à¸³à¸§à¸´à¸˜à¸µà¸à¸²à¸£à¹ƒà¸Šà¹‰à¸‡à¸²à¸™',
   });
 
 const buildLineScamUnknownCommandText = () =>
   [
-    'รองรับคำสั่งจาก Rich Menu ดังนี้:',
+    'à¸£à¸­à¸‡à¸£à¸±à¸šà¸„à¸³à¸ªà¸±à¹ˆà¸‡à¸ˆà¸²à¸ Rich Menu à¸”à¸±à¸‡à¸™à¸µà¹‰:',
     `- ${LINE_SCAM_RICH_MENU_COMMANDS.HELP_WHEN_SCAMMED}`,
     `- ${LINE_SCAM_RICH_MENU_COMMANDS.CHECK_SCAMMER}`,
     `- ${LINE_SCAM_RICH_MENU_COMMANDS.CHECK_FAKE_NEWS}`,
@@ -1001,39 +1001,39 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
   if (commandKey === 'check_scammer') {
     return [
       buildLineScamActionFlexMessage({
-        title: 'ตรวจสอบมิจฉาชีพ',
-        subtitle: 'ค้นหาประวัติโกงจากฐานข้อมูล',
-        bodyText: 'กดปุ่มด้านล่างเพื่อเปิด LIFF แล้วกรอกชื่อ/บัญชี/เบอร์โทรเพื่อค้นหา',
-        actionLabel: 'เปิด LIFF ตรวจสอบมิจฉาชีพ',
+        title: 'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸¡à¸´à¸ˆà¸‰à¸²à¸Šà¸µà¸ž',
+        subtitle: 'à¸„à¹‰à¸™à¸«à¸²à¸›à¸£à¸°à¸§à¸±à¸•à¸´à¹‚à¸à¸‡à¸ˆà¸²à¸à¸à¸²à¸™à¸‚à¹‰à¸­à¸¡à¸¹à¸¥',
+        bodyText: 'à¸à¸”à¸›à¸¸à¹ˆà¸¡à¸”à¹‰à¸²à¸™à¸¥à¹ˆà¸²à¸‡à¹€à¸žà¸·à¹ˆà¸­à¹€à¸›à¸´à¸” LIFF à¹à¸¥à¹‰à¸§à¸à¸£à¸­à¸à¸Šà¸·à¹ˆà¸­/à¸šà¸±à¸à¸Šà¸µ/à¹€à¸šà¸­à¸£à¹Œà¹‚à¸—à¸£à¹€à¸žà¸·à¹ˆà¸­à¸„à¹‰à¸™à¸«à¸²',
+        actionLabel: 'à¹€à¸›à¸´à¸” LIFF à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸¡à¸´à¸ˆà¸‰à¸²à¸Šà¸µà¸ž',
         actionUrl: urls.scammerCheck || '',
         accentColor: '#b91c1c',
-        altText: 'ตรวจสอบมิจฉาชีพ',
+        altText: 'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸¡à¸´à¸ˆà¸‰à¸²à¸Šà¸µà¸ž',
       }),
     ];
   }
   if (commandKey === 'check_fake_news') {
     return [
       buildLineScamActionFlexMessage({
-        title: 'ตรวจสอบข่าวปลอม',
-        subtitle: 'วิเคราะห์ข้อความข่าวหรือรูปข่าว',
-        bodyText: 'ระบบจะให้เปอร์เซ็นต์ข่าวปลอม พร้อมเหตุผลและแหล่งอ้างอิงที่ควรตรวจซ้ำ',
-        actionLabel: 'เปิด LIFF ตรวจสอบข่าวปลอม',
+        title: 'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸‚à¹ˆà¸²à¸§à¸›à¸¥à¸­à¸¡',
+        subtitle: 'à¸§à¸´à¹€à¸„à¸£à¸²à¸°à¸«à¹Œà¸‚à¹‰à¸­à¸„à¸§à¸²à¸¡à¸‚à¹ˆà¸²à¸§à¸«à¸£à¸·à¸­à¸£à¸¹à¸›à¸‚à¹ˆà¸²à¸§',
+        bodyText: 'à¸£à¸°à¸šà¸šà¸ˆà¸°à¹ƒà¸«à¹‰à¹€à¸›à¸­à¸£à¹Œà¹€à¸‹à¹‡à¸™à¸•à¹Œà¸‚à¹ˆà¸²à¸§à¸›à¸¥à¸­à¸¡ à¸žà¸£à¹‰à¸­à¸¡à¹€à¸«à¸•à¸¸à¸œà¸¥à¹à¸¥à¸°à¹à¸«à¸¥à¹ˆà¸‡à¸­à¹‰à¸²à¸‡à¸­à¸´à¸‡à¸—à¸µà¹ˆà¸„à¸§à¸£à¸•à¸£à¸§à¸ˆà¸‹à¹‰à¸³',
+        actionLabel: 'à¹€à¸›à¸´à¸” LIFF à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸‚à¹ˆà¸²à¸§à¸›à¸¥à¸­à¸¡',
         actionUrl: urls.fakeNews || '',
         accentColor: '#0f766e',
-        altText: 'ตรวจสอบข่าวปลอม',
+        altText: 'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸‚à¹ˆà¸²à¸§à¸›à¸¥à¸­à¸¡',
       }),
     ];
   }
   if (commandKey === 'assess_risk') {
     return [
       buildLineScamActionFlexMessage({
-        title: 'ประเมินความเสี่ยงการโดนโกง',
-        subtitle: 'อัปโหลดรูปแชทให้ AI วิเคราะห์',
-        bodyText: 'ระบบจะแสดงเปอร์เซ็นต์ความเสี่ยง สัญญาณเตือน และคำแนะนำที่ควรทำต่อ',
-        actionLabel: 'เปิด LIFF ประเมินความเสี่ยง',
+        title: 'à¸›à¸£à¸°à¹€à¸¡à¸´à¸™à¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡à¸à¸²à¸£à¹‚à¸”à¸™à¹‚à¸à¸‡',
+        subtitle: 'à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¹à¸Šà¸—à¹ƒà¸«à¹‰ AI à¸§à¸´à¹€à¸„à¸£à¸²à¸°à¸«à¹Œ',
+        bodyText: 'à¸£à¸°à¸šà¸šà¸ˆà¸°à¹à¸ªà¸”à¸‡à¹€à¸›à¸­à¸£à¹Œà¹€à¸‹à¹‡à¸™à¸•à¹Œà¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡ à¸ªà¸±à¸à¸à¸²à¸“à¹€à¸•à¸·à¸­à¸™ à¹à¸¥à¸°à¸„à¸³à¹à¸™à¸°à¸™à¸³à¸—à¸µà¹ˆà¸„à¸§à¸£à¸—à¸³à¸•à¹ˆà¸­',
+        actionLabel: 'à¹€à¸›à¸´à¸” LIFF à¸›à¸£à¸°à¹€à¸¡à¸´à¸™à¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡',
         actionUrl: urls.riskAssess || '',
         accentColor: '#a16207',
-        altText: 'ประเมินความเสี่ยง',
+        altText: 'à¸›à¸£à¸°à¹€à¸¡à¸´à¸™à¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡',
       }),
     ];
   }
@@ -1051,7 +1051,7 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
             color: '#0369a1',
             action: {
               type: 'uri',
-              label: 'เริ่มใช้งานตอนนี้',
+              label: 'à¹€à¸£à¸´à¹ˆà¸¡à¹ƒà¸Šà¹‰à¸‡à¸²à¸™à¸•à¸­à¸™à¸™à¸µà¹‰',
               uri: firstUrl,
             },
           },
@@ -1726,7 +1726,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
           ? [
               {
                 type: 'text',
-                text: clampLineText(`Task ใหญ่: ${parentTaskTitle}`, 180),
+                text: clampLineText(`Task à¹ƒà¸«à¸à¹ˆ: ${parentTaskTitle}`, 180),
                 size: 'xs',
                 color: '#64748b',
                 wrap: true,
@@ -2077,11 +2077,11 @@ const isLineEscrowStartCommand = (value) => {
 };
 
 const LINE_SCAM_RICH_MENU_COMMANDS = Object.freeze({
-  HELP_WHEN_SCAMMED: 'คำแนะนำเมื่อถูกโกง',
-  CHECK_SCAMMER: 'ตรวจสอบมิจฉาชีพ',
-  CHECK_FAKE_NEWS: 'ตรวจสอบข่าวปลอม',
-  ASSESS_RISK: 'ประเมินความเสี่ยง',
-  HOW_TO_USE: 'เเนะนำวิธีการใช้งาน',
+  HELP_WHEN_SCAMMED: 'à¸„à¸³à¹à¸™à¸°à¸™à¸³à¹€à¸¡à¸·à¹ˆà¸­à¸–à¸¹à¸à¹‚à¸à¸‡',
+  CHECK_SCAMMER: 'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸¡à¸´à¸ˆà¸‰à¸²à¸Šà¸µà¸ž',
+  CHECK_FAKE_NEWS: 'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸‚à¹ˆà¸²à¸§à¸›à¸¥à¸­à¸¡',
+  ASSESS_RISK: 'à¸›à¸£à¸°à¹€à¸¡à¸´à¸™à¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡',
+  HOW_TO_USE: 'à¹€à¹€à¸™à¸°à¸™à¸³à¸§à¸´à¸˜à¸µà¸à¸²à¸£à¹ƒà¸Šà¹‰à¸‡à¸²à¸™',
 });
 const LINE_SCAM_COMMAND_KEY_BY_TEXT = new Map([
   [LINE_SCAM_RICH_MENU_COMMANDS.HELP_WHEN_SCAMMED, 'help_when_scammed'],
@@ -2089,7 +2089,7 @@ const LINE_SCAM_COMMAND_KEY_BY_TEXT = new Map([
   [LINE_SCAM_RICH_MENU_COMMANDS.CHECK_FAKE_NEWS, 'check_fake_news'],
   [LINE_SCAM_RICH_MENU_COMMANDS.ASSESS_RISK, 'assess_risk'],
   [LINE_SCAM_RICH_MENU_COMMANDS.HOW_TO_USE, 'how_to_use'],
-  ['แนะนำวิธีการใช้งาน', 'how_to_use'],
+  ['à¹à¸™à¸°à¸™à¸³à¸§à¸´à¸˜à¸µà¸à¸²à¸£à¹ƒà¸Šà¹‰à¸‡à¸²à¸™', 'how_to_use'],
 ]);
 const LINE_SCAM_LIFF_DEFAULT_PATHS = Object.freeze({
   scammerCheck: '/line/scam/liff/scammer-check',
@@ -2203,7 +2203,15 @@ const loadLineScamBotConfigRecord = async () => {
   return normalizeLineScamBotConfigRecord(doc.data() || {});
 };
 
-const LINE_ESCROW_COMMAND_KEYWORDS = new Set(['เริ่ม', 'เริ่มกลาง', 'กลาง', 'start', 'escrow', 'escrowbot']);
+const LINE_ESCROW_COMMAND_KEYWORDS = new Set([
+  'à¹€à¸£à¸´à¹ˆà¸¡',
+  'à¹€à¸£à¸´à¹ˆà¸¡à¸•à¹‰à¸™',
+  'à¹€à¸£à¸´à¹ˆà¸¡à¸à¸¥à¸²à¸‡',
+  'à¸à¸¥à¸²à¸‡',
+  'start',
+  'escrow',
+  'escrowbot',
+]);
 const LINE_ESCROW_LIFF_DEFAULT_PATHS = Object.freeze({
   deal: '/line/escrow/liff/deal',
   seller: '/line/escrow/liff/seller',
@@ -2258,7 +2266,7 @@ const toLineEscrowBotPublicConfig = (req, configInput = {}) => {
     liffUrls,
     richMenuId: normalized.richMenuId,
     trackingCourierDefault: normalized.trackingCourierDefault,
-    commandStart: 'เริ่ม',
+    commandStart: 'à¹€à¸£à¸´à¹ˆà¸¡',
     channelSecretConfigured: Boolean(LINE_ESCROW_EFFECTIVE_CHANNEL_SECRET),
     channelAccessTokenConfigured: Boolean(LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN),
     sharedChannelWithScam: LINE_ESCROW_SHARED_WITH_SCAM_CHANNEL,
@@ -2319,17 +2327,17 @@ const normalizeEscrowBankBrand = (bankInput) => {
   if (!raw) return '';
   const key = raw.replace(/\s+/g, '');
   const mappings = [
-    ['bbl', ['bbl', 'bangkokbank', 'ธนาคารกรุงเทพ', 'กรุงเทพ']],
-    ['kbank', ['kbank', 'kasikornbank', 'กสิกรไทย', 'ธนาคารกสิกรไทย']],
-    ['ktb', ['ktb', 'krungthaibank', 'กรุงไทย', 'ธนาคารกรุงไทย']],
-    ['scb', ['scb', 'siamcommercialbank', 'ไทยพาณิชย์', 'ธนาคารไทยพาณิชย์']],
-    ['bay', ['bay', 'krungsri', 'กรุงศรีอยุธยา', 'ธนาคารกรุงศรีอยุธยา']],
-    ['ttb', ['ttb', 'tmbthanachart', 'ทีทีบี', 'ทหารไทยธนชาต', 'ธนาคารทหารไทยธนชาต']],
-    ['gsb', ['gsb', 'governmentsavingsbank', 'ออมสิน', 'ธนาคารออมสิน']],
-    ['baac', ['baac', 'ธกส', 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร']],
-    ['cimb', ['cimb', 'cimbthai', 'ซีไอเอ็มบี', 'ธนาคารซีไอเอ็มบี']],
-    ['uob', ['uob', 'ยูโอบี', 'ธนาคารยูโอบี']],
-    ['lhb', ['lhb', 'แลนด์แอนด์เฮ้าส์', 'แลนด์แอนด์เฮาส์']],
+    ['bbl', ['bbl', 'bangkokbank', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¸à¸£à¸¸à¸‡à¹€à¸—à¸ž', 'à¸à¸£à¸¸à¸‡à¹€à¸—à¸ž']],
+    ['kbank', ['kbank', 'kasikornbank', 'à¸à¸ªà¸´à¸à¸£à¹„à¸—à¸¢', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¸à¸ªà¸´à¸à¸£à¹„à¸—à¸¢']],
+    ['ktb', ['ktb', 'krungthaibank', 'à¸à¸£à¸¸à¸‡à¹„à¸—à¸¢', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¸à¸£à¸¸à¸‡à¹„à¸—à¸¢']],
+    ['scb', ['scb', 'siamcommercialbank', 'à¹„à¸—à¸¢à¸žà¸²à¸“à¸´à¸Šà¸¢à¹Œ', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¹„à¸—à¸¢à¸žà¸²à¸“à¸´à¸Šà¸¢à¹Œ']],
+    ['bay', ['bay', 'krungsri', 'à¸à¸£à¸¸à¸‡à¸¨à¸£à¸µà¸­à¸¢à¸¸à¸˜à¸¢à¸²', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¸à¸£à¸¸à¸‡à¸¨à¸£à¸µà¸­à¸¢à¸¸à¸˜à¸¢à¸²']],
+    ['ttb', ['ttb', 'tmbthanachart', 'à¸—à¸µà¸—à¸µà¸šà¸µ', 'à¸—à¸«à¸²à¸£à¹„à¸—à¸¢à¸˜à¸™à¸Šà¸²à¸•', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¸—à¸«à¸²à¸£à¹„à¸—à¸¢à¸˜à¸™à¸Šà¸²à¸•']],
+    ['gsb', ['gsb', 'governmentsavingsbank', 'à¸­à¸­à¸¡à¸ªà¸´à¸™', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¸­à¸­à¸¡à¸ªà¸´à¸™']],
+    ['baac', ['baac', 'à¸˜à¸à¸ª', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¹€à¸žà¸·à¹ˆà¸­à¸à¸²à¸£à¹€à¸à¸©à¸•à¸£à¹à¸¥à¸°à¸ªà¸«à¸à¸£à¸“à¹Œà¸à¸²à¸£à¹€à¸à¸©à¸•à¸£']],
+    ['cimb', ['cimb', 'cimbthai', 'à¸‹à¸µà¹„à¸­à¹€à¸­à¹‡à¸¡à¸šà¸µ', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¸‹à¸µà¹„à¸­à¹€à¸­à¹‡à¸¡à¸šà¸µ']],
+    ['uob', ['uob', 'à¸¢à¸¹à¹‚à¸­à¸šà¸µ', 'à¸˜à¸™à¸²à¸„à¸²à¸£à¸¢à¸¹à¹‚à¸­à¸šà¸µ']],
+    ['lhb', ['lhb', 'à¹à¸¥à¸™à¸”à¹Œà¹à¸­à¸™à¸”à¹Œà¹€à¸®à¹‰à¸²à¸ªà¹Œ', 'à¹à¸¥à¸™à¸”à¹Œà¹à¸­à¸™à¸”à¹Œà¹€à¸®à¸²à¸ªà¹Œ']],
   ];
   for (const [brand, aliases] of mappings) {
     if (aliases.some((alias) => key.includes(alias))) {
@@ -2689,12 +2697,15 @@ const queryEscrowTrackingStatus = async ({
   };
 };
 
-const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {} } = {}) => {
+const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all', groupId = '' } = {}) => {
   const liffUrls =
     liffUrlsInput && typeof liffUrlsInput === 'object' && !Array.isArray(liffUrlsInput) ? liffUrlsInput : {};
   const dealUrl = normalizeOptionalHttpUrl(liffUrls.deal || '', 1000);
   const sellerUrl = normalizeOptionalHttpUrl(liffUrls.seller || '', 1000);
   const buyerUrl = normalizeOptionalHttpUrl(liffUrls.buyer || '', 1000);
+  const currentStage = normalizeOptionalString(stage || '', 40).toLowerCase() || 'all';
+  const isStartStage = currentStage === 'start';
+  const safeGroupId = normalizeOptionalString(groupId || '', 120);
   const footerButtons = [];
   if (dealUrl) {
     footerButtons.push({
@@ -2704,7 +2715,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {} } = {}) => {
       action: { type: 'uri', label: '1) ผู้ซื้อสร้างดีลและชำระ', uri: dealUrl },
     });
   }
-  if (sellerUrl) {
+  if (!isStartStage && sellerUrl) {
     footerButtons.push({
       type: 'button',
       style: 'primary',
@@ -2712,7 +2723,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {} } = {}) => {
       action: { type: 'uri', label: '2) ผู้ขายส่งเลขพัสดุ', uri: sellerUrl },
     });
   }
-  if (buyerUrl) {
+  if (!isStartStage && buyerUrl) {
     footerButtons.push({
       type: 'button',
       style: 'primary',
@@ -2749,10 +2760,18 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {} } = {}) => {
           },
           {
             type: 'text',
-            text:
-              'Flow: ผู้ซื้อชำระเงินเข้าบอท -> ผู้ขายส่งของและเลขพัสดุ -> ผู้ซื้อยืนยันรับของ (หรือครบเวลาอัตโนมัติ) -> บอทปล่อยเงินให้ผู้ขาย',
+            text: isStartStage
+              ? 'เริ่มต้น: ให้ผู้ซื้อกดปุ่มขั้นตอนที่ 1 เพื่อสร้างดีลและชำระเงินก่อน เมื่อชำระสำเร็จระบบจะส่งปุ่มขั้นตอนถัดไปอัตโนมัติ'
+              : 'Flow: ผู้ซื้อชำระเงินเข้าบอท -> ผู้ขายส่งของและเลขพัสดุ -> ผู้ซื้อยืนยันรับของ (หรือครบเวลาอัตโนมัติ) -> บอทปล่อยเงินให้ผู้ขาย',
             size: 'sm',
             color: '#334155',
+            wrap: true,
+          },
+          {
+            type: 'text',
+            text: safeGroupId ? `Group ID: ${safeGroupId}` : 'Group ID: -',
+            size: 'xs',
+            color: '#1d4ed8',
             wrap: true,
           },
           {
@@ -2773,14 +2792,13 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {} } = {}) => {
     },
   };
 };
-
 const buildLineEscrowTrackingArrivedFlexMessage = (dealInput) => {
   const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
   const amountThb = toEscrowAmountThb(deal.paymentAmountSatang || 0);
   const buyerUrl = normalizeOptionalHttpUrl(deal.buyerLiffUrl || '', 1200);
   return {
     type: 'flex',
-    altText: `พัสดุดีล ${String(deal.id || '').trim()} ถึงปลายทางแล้ว`,
+    altText: `à¸žà¸±à¸ªà¸”à¸¸à¸”à¸µà¸¥ ${String(deal.id || '').trim()} à¸–à¸¶à¸‡à¸›à¸¥à¸²à¸¢à¸—à¸²à¸‡à¹à¸¥à¹‰à¸§`,
     contents: {
       type: 'bubble',
       body: {
@@ -2790,35 +2808,35 @@ const buildLineEscrowTrackingArrivedFlexMessage = (dealInput) => {
         contents: [
           {
             type: 'text',
-            text: 'พัสดุถึงปลายทางแล้ว',
+            text: 'à¸žà¸±à¸ªà¸”à¸¸à¸–à¸¶à¸‡à¸›à¸¥à¸²à¸¢à¸—à¸²à¸‡à¹à¸¥à¹‰à¸§',
             weight: 'bold',
             size: 'lg',
             color: '#166534',
           },
           {
             type: 'text',
-            text: `ดีล: ${String(deal.id || '-').trim()}`,
+            text: `à¸”à¸µà¸¥: ${String(deal.id || '-').trim()}`,
             size: 'sm',
             color: '#334155',
             wrap: true,
           },
           {
             type: 'text',
-            text: `สินค้า: ${normalizeOptionalString(deal.itemName || '-', 80)}`,
+            text: `à¸ªà¸´à¸™à¸„à¹‰à¸²: ${normalizeOptionalString(deal.itemName || '-', 80)}`,
             size: 'sm',
             color: '#334155',
             wrap: true,
           },
           {
             type: 'text',
-            text: `ยอดคุ้มครอง: ${Number(amountThb || 0).toLocaleString()} THB`,
+            text: `à¸¢à¸­à¸”à¸„à¸¸à¹‰à¸¡à¸„à¸£à¸­à¸‡: ${Number(amountThb || 0).toLocaleString()} THB`,
             size: 'sm',
             color: '#334155',
             wrap: true,
           },
           {
             type: 'text',
-            text: `กดยืนยันรับของภายใน ${LINE_ESCROW_AUTO_RELEASE_HOURS} ชั่วโมง มิฉะนั้นระบบจะยืนยันอัตโนมัติ`,
+            text: `à¸à¸”à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸‚à¸­à¸‡à¸ à¸²à¸¢à¹ƒà¸™ ${LINE_ESCROW_AUTO_RELEASE_HOURS} à¸Šà¸±à¹ˆà¸§à¹‚à¸¡à¸‡ à¸¡à¸´à¸‰à¸°à¸™à¸±à¹‰à¸™à¸£à¸°à¸šà¸šà¸ˆà¸°à¸¢à¸·à¸™à¸¢à¸±à¸™à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´`,
             size: 'xs',
             color: '#6b7280',
             wrap: true,
@@ -2837,7 +2855,7 @@ const buildLineEscrowTrackingArrivedFlexMessage = (dealInput) => {
                 color: '#7c3aed',
                 action: {
                   type: 'uri',
-                  label: 'เปิดหน้ายืนยันรับของ',
+                  label: 'à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸²à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸‚à¸­à¸‡',
                   uri: buyerUrl,
                 },
               },
@@ -2845,7 +2863,7 @@ const buildLineEscrowTrackingArrivedFlexMessage = (dealInput) => {
           : [
               {
                 type: 'text',
-                text: 'ไม่พบ LIFF URL สำหรับผู้ซื้อ',
+                text: 'à¹„à¸¡à¹ˆà¸žà¸š LIFF URL à¸ªà¸³à¸«à¸£à¸±à¸šà¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­',
                 size: 'xs',
                 color: '#991b1b',
                 wrap: true,
@@ -4493,7 +4511,7 @@ const getAiImageInputPartsFromAttachments = (attachmentsInput) => {
 const buildOpenAiUserMessageWithAttachments = ({ textInput, attachmentsInput }) => {
   const text =
     sanitizeAiMessageContent(textInput, 12000) ||
-    'โปรดวิเคราะห์รูปที่ผู้ใช้แนบมาพร้อมบริบทของโปรเจกต์';
+    'à¹‚à¸›à¸£à¸”à¸§à¸´à¹€à¸„à¸£à¸²à¸°à¸«à¹Œà¸£à¸¹à¸›à¸—à¸µà¹ˆà¸œà¸¹à¹‰à¹ƒà¸Šà¹‰à¹à¸™à¸šà¸¡à¸²à¸žà¸£à¹‰à¸­à¸¡à¸šà¸£à¸´à¸šà¸—à¸‚à¸­à¸‡à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ';
   const imageParts = getAiImageInputPartsFromAttachments(attachmentsInput);
   if (imageParts.length === 0) {
     return buildOpenAiInputMessage('user', text);
@@ -4716,7 +4734,7 @@ const runAiAssistant = async ({
     if (shouldAppendCurrentUserMessage) {
       fallbackInput.pop();
       const imageCount = attachedImageParts.length;
-      const fallbackText = `${String(userMessage || '').trim()}\n\n[แนบรูป ${imageCount} ไฟล์]`;
+      const fallbackText = `${String(userMessage || '').trim()}\n\n[à¹à¸™à¸šà¸£à¸¹à¸› ${imageCount} à¹„à¸Ÿà¸¥à¹Œ]`;
       fallbackInput.push(buildOpenAiInputMessage('user', fallbackText));
     }
     response = await callOpenAiResponsesApi({
@@ -4758,8 +4776,8 @@ const runAiAssistant = async ({
   const assistantText =
     assistantTextRaw ||
     (pendingAction
-      ? 'ร่างคำสั่งพร้อมแล้ว กรุณากดยืนยันเพื่อให้ระบบดำเนินการ'
-      : 'ขออภัย ระบบยังไม่สามารถสร้างคำตอบได้ในขณะนี้');
+      ? 'à¸£à¹ˆà¸²à¸‡à¸„à¸³à¸ªà¸±à¹ˆà¸‡à¸žà¸£à¹‰à¸­à¸¡à¹à¸¥à¹‰à¸§ à¸à¸£à¸¸à¸“à¸²à¸à¸”à¸¢à¸·à¸™à¸¢à¸±à¸™à¹€à¸žà¸·à¹ˆà¸­à¹ƒà¸«à¹‰à¸£à¸°à¸šà¸šà¸”à¸³à¹€à¸™à¸´à¸™à¸à¸²à¸£'
+      : 'à¸‚à¸­à¸­à¸ à¸±à¸¢ à¸£à¸°à¸šà¸šà¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸ªà¸£à¹‰à¸²à¸‡à¸„à¸³à¸•à¸­à¸šà¹„à¸”à¹‰à¹ƒà¸™à¸‚à¸“à¸°à¸™à¸µà¹‰');
   return {
     assistantText: sanitizeAiMessageContent(assistantText, 12000),
     pendingAction,
@@ -6952,21 +6970,21 @@ app.post('/line/scam/liff/api/fake-news', async (req, res) => {
     }
 
     const analysisPrompt = [
-      'คุณคือผู้ช่วยตรวจสอบข่าวปลอมสำหรับผู้ใช้ไทย',
-      'วิเคราะห์ข่าวจากข้อมูลที่ได้รับ แล้วตอบเป็น JSON เท่านั้นโดยไม่ใส่ markdown',
-      'โครงสร้าง JSON:',
+      'à¸„à¸¸à¸“à¸„à¸·à¸­à¸œà¸¹à¹‰à¸Šà¹ˆà¸§à¸¢à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸‚à¹ˆà¸²à¸§à¸›à¸¥à¸­à¸¡à¸ªà¸³à¸«à¸£à¸±à¸šà¸œà¸¹à¹‰à¹ƒà¸Šà¹‰à¹„à¸—à¸¢',
+      'à¸§à¸´à¹€à¸„à¸£à¸²à¸°à¸«à¹Œà¸‚à¹ˆà¸²à¸§à¸ˆà¸²à¸à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸—à¸µà¹ˆà¹„à¸”à¹‰à¸£à¸±à¸š à¹à¸¥à¹‰à¸§à¸•à¸­à¸šà¹€à¸›à¹‡à¸™ JSON à¹€à¸—à¹ˆà¸²à¸™à¸±à¹‰à¸™à¹‚à¸”à¸¢à¹„à¸¡à¹ˆà¹ƒà¸ªà¹ˆ markdown',
+      'à¹‚à¸„à¸£à¸‡à¸ªà¸£à¹‰à¸²à¸‡ JSON:',
       '{',
       '  "verdict": "true|likely_true|uncertain|likely_fake|fake",',
       '  "fakePercent": 0-100,',
       '  "confidencePercent": 0-100,',
-      '  "summary": "สรุปสั้นภาษาไทย",',
-      '  "reasons": ["เหตุผลหลัก 2-6 ข้อ"],',
-      '  "references": [{"title":"ชื่อแหล่ง","url":"https://..."}],',
-      '  "trustedChannels": ["ช่องทางข่าวจริงที่น่าเชื่อถือ"]',
+      '  "summary": "à¸ªà¸£à¸¸à¸›à¸ªà¸±à¹‰à¸™à¸ à¸²à¸©à¸²à¹„à¸—à¸¢",',
+      '  "reasons": ["à¹€à¸«à¸•à¸¸à¸œà¸¥à¸«à¸¥à¸±à¸ 2-6 à¸‚à¹‰à¸­"],',
+      '  "references": [{"title":"à¸Šà¸·à¹ˆà¸­à¹à¸«à¸¥à¹ˆà¸‡","url":"https://..."}],',
+      '  "trustedChannels": ["à¸Šà¹ˆà¸­à¸‡à¸—à¸²à¸‡à¸‚à¹ˆà¸²à¸§à¸ˆà¸£à¸´à¸‡à¸—à¸µà¹ˆà¸™à¹ˆà¸²à¹€à¸Šà¸·à¹ˆà¸­à¸–à¸·à¸­"]',
       '}',
-      'ห้ามใส่ข้อมูลเกินโครงสร้างนี้',
+      'à¸«à¹‰à¸²à¸¡à¹ƒà¸ªà¹ˆà¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹€à¸à¸´à¸™à¹‚à¸„à¸£à¸‡à¸ªà¸£à¹‰à¸²à¸‡à¸™à¸µà¹‰',
       '',
-      `ข้อความข่าวจากผู้ใช้: ${text || '(ผู้ใช้ส่งเฉพาะรูปภาพ)'}`,
+      `à¸‚à¹‰à¸­à¸„à¸§à¸²à¸¡à¸‚à¹ˆà¸²à¸§à¸ˆà¸²à¸à¸œà¸¹à¹‰à¹ƒà¸Šà¹‰: ${text || '(à¸œà¸¹à¹‰à¹ƒà¸Šà¹‰à¸ªà¹ˆà¸‡à¹€à¸‰à¸žà¸²à¸°à¸£à¸¹à¸›à¸ à¸²à¸ž)'}`,
     ].join('\n');
 
     const gemini = await callGeminiStructuredJson({
@@ -6988,7 +7006,7 @@ app.post('/line/scam/liff/api/fake-news', async (req, res) => {
     );
     const verdict = normalizeOptionalString(json.verdict || json.label || 'uncertain', 40).toLowerCase();
     const summary = normalizeOptionalString(
-      json.summary || json.brief || 'ยังไม่สามารถยืนยันความจริงของข่าวได้ชัดเจน',
+      json.summary || json.brief || 'à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸¢à¸·à¸™à¸¢à¸±à¸™à¸„à¸§à¸²à¸¡à¸ˆà¸£à¸´à¸‡à¸‚à¸­à¸‡à¸‚à¹ˆà¸²à¸§à¹„à¸”à¹‰à¸Šà¸±à¸”à¹€à¸ˆà¸™',
       1200
     );
     const reasons = normalizeGeminiStringList(
@@ -7033,20 +7051,20 @@ app.post('/line/scam/liff/api/risk-assess', async (req, res) => {
     }
 
     const analysisPrompt = [
-      'คุณคือผู้ช่วยประเมินความเสี่ยงโดนโกงจากรูปแชท',
-      'อ่านข้อมูลจากภาพและข้อความเสริม แล้วตอบเป็น JSON เท่านั้นโดยไม่ใส่ markdown',
-      'โครงสร้าง JSON:',
+      'à¸„à¸¸à¸“à¸„à¸·à¸­à¸œà¸¹à¹‰à¸Šà¹ˆà¸§à¸¢à¸›à¸£à¸°à¹€à¸¡à¸´à¸™à¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡à¹‚à¸”à¸™à¹‚à¸à¸‡à¸ˆà¸²à¸à¸£à¸¹à¸›à¹à¸Šà¸—',
+      'à¸­à¹ˆà¸²à¸™à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸ˆà¸²à¸à¸ à¸²à¸žà¹à¸¥à¸°à¸‚à¹‰à¸­à¸„à¸§à¸²à¸¡à¹€à¸ªà¸£à¸´à¸¡ à¹à¸¥à¹‰à¸§à¸•à¸­à¸šà¹€à¸›à¹‡à¸™ JSON à¹€à¸—à¹ˆà¸²à¸™à¸±à¹‰à¸™à¹‚à¸”à¸¢à¹„à¸¡à¹ˆà¹ƒà¸ªà¹ˆ markdown',
+      'à¹‚à¸„à¸£à¸‡à¸ªà¸£à¹‰à¸²à¸‡ JSON:',
       '{',
       '  "riskPercent": 0-100,',
       '  "riskLevel": "low|medium|high",',
-      '  "summary": "สรุปความเสี่ยงภาษาไทย",',
-      '  "signals": ["สัญญาณเตือนที่พบ"],',
-      '  "recommendations": ["วิธีป้องกันหรือการกระทำถัดไป"],',
+      '  "summary": "à¸ªà¸£à¸¸à¸›à¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡à¸ à¸²à¸©à¸²à¹„à¸—à¸¢",',
+      '  "signals": ["à¸ªà¸±à¸à¸à¸²à¸“à¹€à¸•à¸·à¸­à¸™à¸—à¸µà¹ˆà¸žà¸š"],',
+      '  "recommendations": ["à¸§à¸´à¸˜à¸µà¸›à¹‰à¸­à¸‡à¸à¸±à¸™à¸«à¸£à¸·à¸­à¸à¸²à¸£à¸à¸£à¸°à¸—à¸³à¸–à¸±à¸”à¹„à¸›"],',
       '  "shouldReport": true/false',
       '}',
-      'หากข้อมูลไม่ชัดเจน ให้ประเมินแบบระมัดระวังและแนะนำผู้ใช้ตรวจสอบเพิ่ม',
+      'à¸«à¸²à¸à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹„à¸¡à¹ˆà¸Šà¸±à¸”à¹€à¸ˆà¸™ à¹ƒà¸«à¹‰à¸›à¸£à¸°à¹€à¸¡à¸´à¸™à¹à¸šà¸šà¸£à¸°à¸¡à¸±à¸”à¸£à¸°à¸§à¸±à¸‡à¹à¸¥à¸°à¹à¸™à¸°à¸™à¸³à¸œà¸¹à¹‰à¹ƒà¸Šà¹‰à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¹€à¸žà¸´à¹ˆà¸¡',
       '',
-      `ข้อความเสริมจากผู้ใช้: ${contextText || '(ไม่มีข้อความเสริม)'}`,
+      `à¸‚à¹‰à¸­à¸„à¸§à¸²à¸¡à¹€à¸ªà¸£à¸´à¸¡à¸ˆà¸²à¸à¸œà¸¹à¹‰à¹ƒà¸Šà¹‰: ${contextText || '(à¹„à¸¡à¹ˆà¸¡à¸µà¸‚à¹‰à¸­à¸„à¸§à¸²à¸¡à¹€à¸ªà¸£à¸´à¸¡)'}`,
     ].join('\n');
 
     const gemini = await callGeminiStructuredJson({
@@ -7064,7 +7082,7 @@ app.post('/line/scam/liff/api/risk-assess', async (req, res) => {
         ? riskLevelRaw
         : resolveLineScamRiskLevel(riskPercent);
     const summary = normalizeOptionalString(
-      json.summary || json.brief || 'ยังไม่สามารถประเมินความเสี่ยงได้ชัดเจน',
+      json.summary || json.brief || 'à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸›à¸£à¸°à¹€à¸¡à¸´à¸™à¸„à¸§à¸²à¸¡à¹€à¸ªà¸µà¹ˆà¸¢à¸‡à¹„à¸”à¹‰à¸Šà¸±à¸”à¹€à¸ˆà¸™',
       1200
     );
     const signals = normalizeGeminiStringList(
@@ -7397,7 +7415,7 @@ app.post('/line/escrow/payment/webhook', async (req, res) => {
       const dealWithLiff = buildEscrowDealQueryWithLiffUrls(req, updatedDeal, config);
       const paidCard = {
         type: 'flex',
-        altText: `ดีล ${updatedDeal.id} ชำระเงินแล้ว`,
+        altText: `à¸”à¸µà¸¥ ${updatedDeal.id} à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™à¹à¸¥à¹‰à¸§`,
         contents: {
           type: 'bubble',
           body: {
@@ -7405,18 +7423,18 @@ app.post('/line/escrow/payment/webhook', async (req, res) => {
             layout: 'vertical',
             spacing: '8px',
             contents: [
-              { type: 'text', text: 'ชำระเงินสำเร็จแล้ว', size: 'lg', weight: 'bold', color: '#166534' },
-              { type: 'text', text: `ดีล: ${updatedDeal.id}`, size: 'sm', color: '#334155' },
+              { type: 'text', text: 'à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™à¸ªà¸³à¹€à¸£à¹‡à¸ˆà¹à¸¥à¹‰à¸§', size: 'lg', weight: 'bold', color: '#166534' },
+              { type: 'text', text: `à¸”à¸µà¸¥: ${updatedDeal.id}`, size: 'sm', color: '#334155' },
               {
                 type: 'text',
-                text: `ยอดคุ้มครอง ${Number(toEscrowAmountThb(updatedDeal.paymentAmountSatang || 0)).toLocaleString()} THB`,
+                text: `à¸¢à¸­à¸”à¸„à¸¸à¹‰à¸¡à¸„à¸£à¸­à¸‡ ${Number(toEscrowAmountThb(updatedDeal.paymentAmountSatang || 0)).toLocaleString()} THB`,
                 size: 'sm',
                 color: '#334155',
                 wrap: true,
               },
               {
                 type: 'text',
-                text: 'ขั้นตอนถัดไป: ผู้ขายกดส่งเลขพัสดุพร้อมสลิปที่หน้า LIFF ผู้ขาย',
+                text: 'à¸‚à¸±à¹‰à¸™à¸•à¸­à¸™à¸–à¸±à¸”à¹„à¸›: à¸œà¸¹à¹‰à¸‚à¸²à¸¢à¸à¸”à¸ªà¹ˆà¸‡à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸à¸žà¸£à¹‰à¸­à¸¡à¸ªà¸¥à¸´à¸›à¸—à¸µà¹ˆà¸«à¸™à¹‰à¸² LIFF à¸œà¸¹à¹‰à¸‚à¸²à¸¢',
                 size: 'xs',
                 color: '#6b7280',
                 wrap: true,
@@ -7435,7 +7453,7 @@ app.post('/line/escrow/payment/webhook', async (req, res) => {
                     color: '#0f766e',
                     action: {
                       type: 'uri',
-                      label: 'เปิดหน้า LIFF ผู้ขาย',
+                      label: 'à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸² LIFF à¸œà¸¹à¹‰à¸‚à¸²à¸¢',
                       uri: dealWithLiff.sellerLiffUrl,
                     },
                   },
@@ -7443,7 +7461,7 @@ app.post('/line/escrow/payment/webhook', async (req, res) => {
               : [
                   {
                     type: 'text',
-                    text: 'ยังไม่ตั้งค่า LIFF ผู้ขาย',
+                    text: 'à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸² LIFF à¸œà¸¹à¹‰à¸‚à¸²à¸¢',
                     size: 'xs',
                     color: '#991b1b',
                     wrap: true,
@@ -7554,7 +7572,7 @@ app.post('/line/escrow/liff/api/deals/submit-shipment', async (req, res) => {
     if (String(refreshedDeal.groupId || '').trim()) {
       const statusCard = {
         type: 'flex',
-        altText: `ผู้ขายส่งพัสดุแล้ว ดีล ${dealId}`,
+        altText: `à¸œà¸¹à¹‰à¸‚à¸²à¸¢à¸ªà¹ˆà¸‡à¸žà¸±à¸ªà¸”à¸¸à¹à¸¥à¹‰à¸§ à¸”à¸µà¸¥ ${dealId}`,
         contents: {
           type: 'bubble',
           body: {
@@ -7562,12 +7580,12 @@ app.post('/line/escrow/liff/api/deals/submit-shipment', async (req, res) => {
             layout: 'vertical',
             spacing: '8px',
             contents: [
-              { type: 'text', text: 'ผู้ขายส่งพัสดุแล้ว', size: 'lg', weight: 'bold', color: '#0f766e' },
-              { type: 'text', text: `ดีล: ${dealId}`, size: 'sm', color: '#334155', wrap: true },
-              { type: 'text', text: `เลขพัสดุ: ${trackingNumber}`, size: 'sm', color: '#334155', wrap: true },
+              { type: 'text', text: 'à¸œà¸¹à¹‰à¸‚à¸²à¸¢à¸ªà¹ˆà¸‡à¸žà¸±à¸ªà¸”à¸¸à¹à¸¥à¹‰à¸§', size: 'lg', weight: 'bold', color: '#0f766e' },
+              { type: 'text', text: `à¸”à¸µà¸¥: ${dealId}`, size: 'sm', color: '#334155', wrap: true },
+              { type: 'text', text: `à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸: ${trackingNumber}`, size: 'sm', color: '#334155', wrap: true },
               {
                 type: 'text',
-                text: `สินค้า: ${normalizeOptionalString(refreshedDeal.itemName || '-', 120)}`,
+                text: `à¸ªà¸´à¸™à¸„à¹‰à¸²: ${normalizeOptionalString(refreshedDeal.itemName || '-', 120)}`,
                 size: 'sm',
                 color: '#334155',
                 wrap: true,
@@ -7586,7 +7604,7 @@ app.post('/line/escrow/liff/api/deals/submit-shipment', async (req, res) => {
                     color: '#7c3aed',
                     action: {
                       type: 'uri',
-                      label: 'เปิดหน้าเช็กสถานะและยืนยันรับของ',
+                      label: 'à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸²à¹€à¸Šà¹‡à¸à¸ªà¸–à¸²à¸™à¸°à¹à¸¥à¸°à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸‚à¸­à¸‡',
                       uri: buyerDeal.buyerLiffUrl,
                     },
                   },
@@ -7594,7 +7612,7 @@ app.post('/line/escrow/liff/api/deals/submit-shipment', async (req, res) => {
               : [
                   {
                     type: 'text',
-                    text: 'ไม่พบ LIFF URL สำหรับผู้ซื้อ',
+                    text: 'à¹„à¸¡à¹ˆà¸žà¸š LIFF URL à¸ªà¸³à¸«à¸£à¸±à¸šà¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­',
                     size: 'xs',
                     color: '#991b1b',
                     wrap: true,
@@ -7683,7 +7701,7 @@ app.post('/line/escrow/liff/api/deals/:dealId/confirm-delivery', async (req, res
     if (String(deal.groupId || '').trim()) {
       const payoutCard = {
         type: 'flex',
-        altText: `ดีล ${deal.id} ปล่อยเงินสำเร็จ`,
+        altText: `à¸”à¸µà¸¥ ${deal.id} à¸›à¸¥à¹ˆà¸­à¸¢à¹€à¸‡à¸´à¸™à¸ªà¸³à¹€à¸£à¹‡à¸ˆ`,
         contents: {
           type: 'bubble',
           body: {
@@ -7691,11 +7709,11 @@ app.post('/line/escrow/liff/api/deals/:dealId/confirm-delivery', async (req, res
             layout: 'vertical',
             spacing: '8px',
             contents: [
-              { type: 'text', text: 'ยืนยันรับของเรียบร้อย', size: 'lg', weight: 'bold', color: '#166534' },
-              { type: 'text', text: `ดีล: ${deal.id}`, size: 'sm', color: '#334155' },
+              { type: 'text', text: 'à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸‚à¸­à¸‡à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢', size: 'lg', weight: 'bold', color: '#166534' },
+              { type: 'text', text: `à¸”à¸µà¸¥: ${deal.id}`, size: 'sm', color: '#334155' },
               {
                 type: 'text',
-                text: `โอนเงินให้ผู้ขายแล้ว ${Number(finalDeal.payoutAmountThb || 0).toLocaleString()} THB`,
+                text: `à¹‚à¸­à¸™à¹€à¸‡à¸´à¸™à¹ƒà¸«à¹‰à¸œà¸¹à¹‰à¸‚à¸²à¸¢à¹à¸¥à¹‰à¸§ ${Number(finalDeal.payoutAmountThb || 0).toLocaleString()} THB`,
                 size: 'sm',
                 color: '#334155',
                 wrap: true,
@@ -8597,6 +8615,8 @@ app.post('/line/scam/webhook', async (req, res) => {
       const sourceType = normalizeOptionalString(source.type, 40);
       const isGroupContext = sourceType === 'group' || sourceType === 'room';
       const groupId = normalizeOptionalString(source.groupId, 80);
+      const roomId = normalizeOptionalString(source.roomId, 80);
+      const contextId = groupId || roomId;
       const userId = normalizeOptionalString(source.userId, 80);
       const eventType = normalizeOptionalString(event?.type, 40);
       const messageType = normalizeOptionalString(event?.message?.type, 40);
@@ -8606,10 +8626,10 @@ app.post('/line/scam/webhook', async (req, res) => {
       const eventTimestamp = Number(event?.timestamp || Date.now());
       const replyToken = String(event?.replyToken || '').trim();
 
-      if (groupId || userId) {
+      if (groupId || roomId || userId) {
         const logId = crypto
           .createHash('sha256')
-          .update(`${groupId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
+          .update(`${groupId}|${roomId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
           .digest('hex');
         writes.push(
           lineScamWebhookLogRef.doc(logId).set(
@@ -8617,6 +8637,7 @@ app.post('/line/scam/webhook', async (req, res) => {
               destination,
               sourceType,
               groupId,
+              roomId,
               userId,
               eventType,
               messageType,
@@ -8630,10 +8651,10 @@ app.post('/line/scam/webhook', async (req, res) => {
         );
       }
 
-      if (sharedEscrowInScamWebhook && (groupId || userId)) {
+      if (sharedEscrowInScamWebhook && (groupId || roomId || userId)) {
         const logId = crypto
           .createHash('sha256')
-          .update(`${groupId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
+          .update(`${groupId}|${roomId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
           .digest('hex');
         writes.push(
           lineEscrowWebhookLogRef.doc(logId).set(
@@ -8641,6 +8662,7 @@ app.post('/line/scam/webhook', async (req, res) => {
               destination,
               sourceType,
               groupId,
+              roomId,
               userId,
               eventType,
               messageType,
@@ -8659,7 +8681,6 @@ app.post('/line/scam/webhook', async (req, res) => {
           eventType === 'join' ||
           eventType === 'memberJoined';
         if (shouldReplyStartMenu && replyToken) {
-          const contextId = groupId || userId;
           const scopedLiffUrls = {
             deal: addQueryParamToHttpUrl(escrowLiffUrls.deal, 'groupId', contextId),
             seller: addQueryParamToHttpUrl(escrowLiffUrls.seller, 'groupId', contextId),
@@ -8669,7 +8690,13 @@ app.post('/line/scam/webhook', async (req, res) => {
             sendLineReplyMessages({
               channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
               replyToken,
-              messages: [buildLineEscrowMainMenuFlexMessage({ liffUrlsInput: scopedLiffUrls })],
+              messages: [
+                buildLineEscrowMainMenuFlexMessage({
+                  liffUrlsInput: scopedLiffUrls,
+                  stage: 'start',
+                  groupId: contextId,
+                }),
+              ],
             }).catch((error) => {
               console.warn('Failed to reply LINE escrow bot message from shared webhook:', error.message);
             })
@@ -8743,6 +8770,8 @@ app.post('/line/escrow/webhook', async (req, res) => {
       const source = event?.source && typeof event.source === 'object' ? event.source : {};
       const sourceType = normalizeOptionalString(source.type, 40);
       const groupId = normalizeOptionalString(source.groupId, 80);
+      const roomId = normalizeOptionalString(source.roomId, 80);
+      const contextId = groupId || roomId;
       const userId = normalizeOptionalString(source.userId, 80);
       const eventType = normalizeOptionalString(event?.type, 40);
       const messageType = normalizeOptionalString(event?.message?.type, 40);
@@ -8750,10 +8779,10 @@ app.post('/line/escrow/webhook', async (req, res) => {
         messageType === 'text' ? normalizeOptionalString(event?.message?.text, 500) : '';
       const eventTimestamp = Number(event?.timestamp || Date.now());
 
-      if (groupId || userId) {
+      if (groupId || roomId || userId) {
         const logId = crypto
           .createHash('sha256')
-          .update(`${groupId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
+          .update(`${groupId}|${roomId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
           .digest('hex');
         writes.push(
           lineEscrowWebhookLogRef.doc(logId).set(
@@ -8761,6 +8790,7 @@ app.post('/line/escrow/webhook', async (req, res) => {
               destination,
               sourceType,
               groupId,
+              roomId,
               userId,
               eventType,
               messageType,
@@ -8779,15 +8809,21 @@ app.post('/line/escrow/webhook', async (req, res) => {
         eventType === 'memberJoined';
       if (shouldReplyStartMenu && String(event?.replyToken || '').trim()) {
         const scopedLiffUrls = {
-          deal: addQueryParamToHttpUrl(liffUrls.deal, 'groupId', groupId),
-          seller: addQueryParamToHttpUrl(liffUrls.seller, 'groupId', groupId),
-          buyer: addQueryParamToHttpUrl(liffUrls.buyer, 'groupId', groupId),
+          deal: addQueryParamToHttpUrl(liffUrls.deal, 'groupId', contextId),
+          seller: addQueryParamToHttpUrl(liffUrls.seller, 'groupId', contextId),
+          buyer: addQueryParamToHttpUrl(liffUrls.buyer, 'groupId', contextId),
         };
         writes.push(
           sendLineReplyMessages({
             channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
             replyToken: String(event.replyToken || '').trim(),
-            messages: [buildLineEscrowMainMenuFlexMessage({ liffUrlsInput: scopedLiffUrls })],
+            messages: [
+              buildLineEscrowMainMenuFlexMessage({
+                liffUrlsInput: scopedLiffUrls,
+                stage: 'start',
+                groupId: contextId,
+              }),
+            ],
           }).catch((error) => {
             console.warn('Failed to reply LINE escrow bot message:', error.message);
           })
@@ -9387,19 +9423,19 @@ app.post('/ai/threads/:threadId/confirm-action', requireAuth, async (req, res) =
     let assistantText = '';
     let actionResult = null;
     if (decision === 'cancel') {
-      assistantText = 'ยกเลิกคำสั่งเรียบร้อยแล้ว';
+      assistantText = 'à¸¢à¸à¹€à¸¥à¸´à¸à¸„à¸³à¸ªà¸±à¹ˆà¸‡à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§';
     } else if (pendingAction.type === AI_ACTION_TYPES.CREATE_TASK) {
       actionResult = await executeAiCreateTaskAction({
         userId,
         actionPayload: pendingAction.payload,
       });
-      assistantText = `สร้าง Task "${actionResult?.task?.title || ''}" เรียบร้อยแล้ว`;
+      assistantText = `à¸ªà¸£à¹‰à¸²à¸‡ Task "${actionResult?.task?.title || ''}" à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§`;
     } else if (pendingAction.type === AI_ACTION_TYPES.DELETE_EVENT) {
       actionResult = await executeAiDeleteEventAction({
         userId,
         actionPayload: pendingAction.payload,
       });
-      assistantText = `ลบรายการ "${actionResult?.removed?.title || ''}" เรียบร้อยแล้ว`;
+      assistantText = `à¸¥à¸šà¸£à¸²à¸¢à¸à¸²à¸£ "${actionResult?.removed?.title || ''}" à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§`;
     } else if (pendingAction.type === AI_ACTION_TYPES.NOTIFY_OPEN_TASKS) {
       actionResult = await sendLineOpenTaskDigestForProject({
         userId,
@@ -9408,8 +9444,8 @@ app.post('/ai/threads/:threadId/confirm-action', requireAuth, async (req, res) =
       });
       assistantText =
         actionResult?.openTaskCount > 0
-          ? `ส่ง LINE open task summary แล้ว (${actionResult.openTaskCount} tasks)`
-          : 'ยังไม่มี Open task ที่ต้องส่งในตอนนี้';
+          ? `à¸ªà¹ˆà¸‡ LINE open task summary à¹à¸¥à¹‰à¸§ (${actionResult.openTaskCount} tasks)`
+          : 'à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µ Open task à¸—à¸µà¹ˆà¸•à¹‰à¸­à¸‡à¸ªà¹ˆà¸‡à¹ƒà¸™à¸•à¸­à¸™à¸™à¸µà¹‰';
     } else {
       throw new Error('Unsupported pending action type.');
     }
@@ -9656,3 +9692,4 @@ const port = Number(process.env.PORT || 8080);
 app.listen(port, () => {
   console.log(`Auth server listening on port ${port}`);
 });
+
