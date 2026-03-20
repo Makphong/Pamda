@@ -1029,9 +1029,10 @@ const toScamReportSearchableText = (reportInput) => {
 const setLineScamLiffHtmlHeaders = (res) => {
   res.set(
     'Content-Security-Policy',
-    "default-src 'self'; img-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self' https://liff.line.me"
+    "default-src 'self'; img-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self' https://line.me https://*.line.me"
   );
-  res.set('X-Frame-Options', 'SAMEORIGIN');
+  // LIFF can be embedded by LINE domains, so avoid restrictive X-Frame-Options here.
+  res.removeHeader('X-Frame-Options');
 };
 const SUPPORT_TICKET_STATUS = {
   OPEN: 'open',
