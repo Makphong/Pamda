@@ -2335,22 +2335,32 @@ const normalizeEscrowSlipImage = (imageInput) => {
 const normalizeEscrowBankBrand = (bankInput) => {
   const raw = String(bankInput || '').trim().toLowerCase();
   if (!raw) return '';
-  const key = raw.replace(/\s+/g, '');
+  const key = raw.replace(/\s+/g, '').replace(/[^a-z0-9\u0E00-\u0E7F]/g, '');
   const mappings = [
-    ['bbl', ['bbl', 'bangkokbank', 'ธนาคารกรุงเทพ', 'กรุงเทพ']],
-    ['kbank', ['kbank', 'kasikornbank', 'กสิกรไทย', 'ธนาคารกสิกรไทย']],
-    ['ktb', ['ktb', 'krungthaibank', 'กรุงไทย', 'ธนาคารกรุงไทย']],
-    ['scb', ['scb', 'siamcommercialbank', 'ไทยพาณิชย์', 'ธนาคารไทยพาณิชย์']],
-    ['bay', ['bay', 'krungsri', 'กรุงศรีอยุธยา', 'ธนาคารกรุงศรีอยุธยา']],
-    ['ttb', ['ttb', 'tmbthanachart', 'ทีทีบี', 'ทหารไทยธนชาต', 'ธนาคารทหารไทยธนชาต']],
+    ['bbl', ['bbl', 'bangkokbank', 'bualuang', 'ธนาคารกรุงเทพ', 'กรุงเทพ', 'บัวหลวง']],
+    ['kbank', ['kbank', 'kasikornbank', 'kasikorn', 'กสิกรไทย', 'ธนาคารกสิกรไทย', 'กสิกร']],
+    ['ktb', ['ktb', 'krungthaibank', 'krungthai', 'กรุงไทย', 'ธนาคารกรุงไทย']],
+    ['scb', ['scb', 'siamcommercialbank', 'siamcommercial', 'ไทยพาณิชย์', 'ไทยพานิชย์', 'ธนาคารไทยพาณิชย์']],
+    ['bay', ['bay', 'krungsri', 'กรุงศรีอยุธยา', 'กรุงศรี', 'ธนาคารกรุงศรีอยุธยา']],
+    ['ttb', ['ttb', 'tmbthanachart', 'tmb', 'thanachart', 'ทีทีบี', 'ทหารไทยธนชาต', 'ธนาคารทหารไทยธนชาต', 'ธนชาต']],
     ['gsb', ['gsb', 'governmentsavingsbank', 'ออมสิน', 'ธนาคารออมสิน']],
-    ['baac', ['baac', 'ธกส', 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร']],
-    ['cimb', ['cimb', 'cimbthai', 'ซีไอเอ็มบี', 'ธนาคารซีไอเอ็มบี']],
+    ['baac', ['baac', 'ธกส', 'ธ.ก.ส', 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร', 'เพื่อการเกษตร']],
+    ['cimb', ['cimb', 'cimbthai', 'ซีไอเอ็มบี', 'ซีไอเอ็มบีไทย', 'ธนาคารซีไอเอ็มบี']],
     ['uob', ['uob', 'ยูโอบี', 'ธนาคารยูโอบี']],
-    ['lhb', ['lhb', 'แลนด์แอนด์เฮ้าส์', 'แลนด์แอนด์เฮาส์']],
+    ['lhb', ['lhb', 'lhbank', 'แลนด์แอนด์เฮ้าส์', 'แลนด์แอนด์เฮาส์', 'แลนด์แอนด์เฮ้าส์แบงก์']],
   ];
   for (const [brand, aliases] of mappings) {
-    if (aliases.some((alias) => key.includes(alias))) {
+    if (
+      aliases.some((alias) =>
+        key.includes(
+          String(alias || '')
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, '')
+            .replace(/[^a-z0-9\u0E00-\u0E7F]/g, '')
+        )
+      )
+    ) {
       return brand;
     }
   }
@@ -7227,9 +7237,17 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
       });
     }
     if (!sellerBankBrand || !sellerBankAccount || !sellerBankAccountName) {
+      const missing = [];
+      if (!sellerBankBrand) missing.push('sellerBankBrand/sellerBankName');
+      if (!sellerBankAccount) missing.push('sellerBankAccount');
+      if (!sellerBankAccountName) missing.push('sellerBankAccountName');
       return res.status(400).json({
         message:
-          'sellerBankBrand/sellerBankName, sellerBankAccount, sellerBankAccountName are required for auto payout.',
+          `${missing.join(', ')} are required for auto payout.`,
+        details: {
+          sellerBankName,
+          supportedBankBrands: ['bbl', 'kbank', 'ktb', 'scb', 'bay', 'ttb', 'gsb', 'baac', 'cimb', 'uob', 'lhb'],
+        },
       });
     }
 

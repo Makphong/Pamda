@@ -60,6 +60,7 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
       label { display: block; font-size: 0.8rem; margin-bottom: 5px; color: #334155; font-weight: 600; }
       input[type="text"],
       input[type="number"],
+      select,
       textarea {
         width: 100%;
         border: 1px solid #cfd8e3;
@@ -70,7 +71,7 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
         background: #fff;
       }
       textarea { min-height: 90px; resize: vertical; }
-      input:focus, textarea:focus {
+      input:focus, select:focus, textarea:focus {
         outline: none;
         border-color: #60a5fa;
         box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
@@ -233,8 +234,21 @@ export const renderLineEscrowDealPage = () =>
               <input id="deal-amount" type="number" min="1" step="0.01" placeholder="1000" required />
             </div>
             <div>
-              <label for="seller-bank-name">ธนาคารผู้ขาย</label>
-              <input id="seller-bank-name" type="text" placeholder="เช่น กรุงไทย หรือ KTB" required />
+              <label for="seller-bank-brand">ธนาคารผู้ขาย</label>
+              <select id="seller-bank-brand" required>
+                <option value="">เลือกธนาคาร</option>
+                <option value="bbl">ธนาคารกรุงเทพ (BBL)</option>
+                <option value="kbank">ธนาคารกสิกรไทย (KBANK)</option>
+                <option value="ktb">ธนาคารกรุงไทย (KTB)</option>
+                <option value="scb">ธนาคารไทยพาณิชย์ (SCB)</option>
+                <option value="bay">ธนาคารกรุงศรีอยุธยา (BAY)</option>
+                <option value="ttb">ธนาคารทหารไทยธนชาต (TTB)</option>
+                <option value="gsb">ธนาคารออมสิน (GSB)</option>
+                <option value="baac">ธ.ก.ส. (BAAC)</option>
+                <option value="cimb">ธนาคารซีไอเอ็มบีไทย (CIMB)</option>
+                <option value="uob">ธนาคารยูโอบี (UOB)</option>
+                <option value="lhb">ธนาคารแลนด์ แอนด์ เฮ้าส์ (LHB)</option>
+              </select>
             </div>
             <div>
               <label for="seller-bank-account">เลขบัญชีผู้ขาย</label>
@@ -280,7 +294,7 @@ export const renderLineEscrowDealPage = () =>
       var itemInput = document.getElementById('deal-item-name');
       var amountInput = document.getElementById('deal-amount');
       var noteInput = document.getElementById('deal-note');
-      var bankNameInput = document.getElementById('seller-bank-name');
+      var bankBrandInput = document.getElementById('seller-bank-brand');
       var bankAccountInput = document.getElementById('seller-bank-account');
       var bankAccountNameInput = document.getElementById('seller-bank-account-name');
 
@@ -369,6 +383,14 @@ export const renderLineEscrowDealPage = () =>
           if (!groupIdValue) {
             throw new Error('ไม่พบ Group ID กรุณาเปิดหน้านี้จากปุ่มในแชทกลุ่ม LINE เพื่อให้ระบบใส่ Group ID อัตโนมัติ');
           }
+          var bankBrandValue = String(bankBrandInput.value || '').trim().toLowerCase();
+          if (!bankBrandValue) {
+            throw new Error('กรุณาเลือกธนาคารผู้ขาย');
+          }
+          var selectedBankName =
+            bankBrandInput.options && bankBrandInput.selectedIndex >= 0
+              ? String(bankBrandInput.options[bankBrandInput.selectedIndex].text || '').trim()
+              : '';
           var response = await fetch('/line/escrow/liff/api/deals/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -380,7 +402,8 @@ export const renderLineEscrowDealPage = () =>
               itemName: String(itemInput.value || '').trim(),
               amountThb: Number(amountInput.value || 0),
               note: String(noteInput.value || '').trim(),
-              sellerBankName: String(bankNameInput.value || '').trim(),
+              sellerBankBrand: bankBrandValue,
+              sellerBankName: selectedBankName,
               sellerBankAccount: String(bankAccountInput.value || '').trim(),
               sellerBankAccountName: String(bankAccountNameInput.value || '').trim()
             })
