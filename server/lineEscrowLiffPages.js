@@ -1,4 +1,4 @@
-﻿const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!doctype html>
+const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!doctype html>
 <html lang="th">
   <head>
     <meta charset="UTF-8" />
@@ -14,7 +14,6 @@
         --muted: #5b6474;
         --accent: #1d4ed8;
         --accent-2: #0f766e;
-        --accent-3: #7c3aed;
         --danger: #dc2626;
       }
       * { box-sizing: border-box; }
@@ -200,65 +199,65 @@ const commonUtilsScript = `
 
 export const renderLineEscrowDealPage = () =>
   buildShell({
-    title: 'à¸ªà¸£à¹‰à¸²à¸‡à¸”à¸µà¸¥à¸•à¸±à¸§à¸à¸¥à¸²à¸‡à¸‹à¸·à¹‰à¸­à¸‚à¸²à¸¢',
-    subtitle: 'à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¸ªà¸£à¹‰à¸²à¸‡à¸”à¸µà¸¥à¹à¸¥à¸°à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™à¹€à¸‚à¹‰à¸²à¸šà¸­à¸—',
+    title: 'สร้างดีลตัวกลางซื้อขาย',
+    subtitle: 'ผู้ซื้อสร้างดีลและชำระเงินเข้าระบบก่อน',
     description:
-      'à¸£à¸°à¸šà¸šà¸ˆà¸°à¸ªà¸£à¹‰à¸²à¸‡à¸”à¸µà¸¥ + QR PromptPay à¹€à¸žà¸·à¹ˆà¸­à¹ƒà¸«à¹‰à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¹‚à¸­à¸™à¹€à¸‡à¸´à¸™à¹€à¸‚à¹‰à¸²à¸šà¸­à¸—à¸à¹ˆà¸­à¸™ à¸ˆà¸²à¸à¸™à¸±à¹‰à¸™à¸œà¸¹à¹‰à¸‚à¸²à¸¢à¸ªà¹ˆà¸‡à¸žà¸±à¸ªà¸”à¸¸à¹à¸¥à¸°à¹€à¸¥à¸‚à¸•à¸´à¸”à¸•à¸²à¸¡à¹ƒà¸™à¸‚à¸±à¹‰à¸™à¸•à¸­à¸™à¸–à¸±à¸”à¹„à¸›',
+      'ขั้นตอนที่ 1: ผู้ซื้อสร้างดีลและโอนเงินผ่าน QR PromptPay จากนั้นระบบจะส่งขั้นตอนถัดไปให้ในกลุ่มอัตโนมัติ',
     bodyHtml: `
       <section class="card">
         <form id="escrow-create-form" class="row">
           <div class="row two">
             <div>
-              <label for="deal-group-id">Group ID (Auto from LINE group)</label>
-              <input id="deal-group-id" type="text" placeholder="Auto-filled from LINE group context" required />
-              <p class="tiny">If opened from group menu, users do not need to type Group ID manually.</p>
+              <label for="deal-group-id">รหัสกลุ่ม (Group ID ระบบดึงจากกลุ่มอัตโนมัติ)</label>
+              <input id="deal-group-id" type="text" placeholder="เปิดจากปุ่มในกลุ่มแล้วระบบจะใส่ให้เอง" required />
+              <p class="tiny">ถ้าเปิดจากปุ่มในแชทกลุ่ม LINE ผู้ใช้ไม่ต้องกรอกเอง</p>
             </div>
             <div>
-              <label for="deal-buyer-name">à¸Šà¸·à¹ˆà¸­à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­</label>
-              <input id="deal-buyer-name" type="text" placeholder="à¹€à¸Šà¹ˆà¸™ à¸„à¸¸à¸“à¹€à¸­" />
+              <label for="deal-buyer-name">ชื่อผู้ซื้อ</label>
+              <input id="deal-buyer-name" type="text" placeholder="เช่น คุณเอ" />
             </div>
           </div>
           <div class="row two">
             <div>
-              <label for="deal-seller-name">à¸Šà¸·à¹ˆà¸­à¸œà¸¹à¹‰à¸‚à¸²à¸¢</label>
-              <input id="deal-seller-name" type="text" placeholder="à¹€à¸Šà¹ˆà¸™ à¸£à¹‰à¸²à¸™ B" required />
+              <label for="deal-seller-name">ชื่อผู้ขาย</label>
+              <input id="deal-seller-name" type="text" placeholder="เช่น ร้าน B" required />
             </div>
             <div>
-              <label for="deal-item-name">à¸ªà¸´à¸™à¸„à¹‰à¸²</label>
-              <input id="deal-item-name" type="text" placeholder="à¸Šà¸·à¹ˆà¸­à¸ªà¸´à¸™à¸„à¹‰à¸²" required />
+              <label for="deal-item-name">สินค้า</label>
+              <input id="deal-item-name" type="text" placeholder="ชื่อสินค้า" required />
             </div>
           </div>
           <div class="row three">
             <div>
-              <label for="deal-amount">à¸¢à¸­à¸”à¹€à¸‡à¸´à¸™ (THB)</label>
+              <label for="deal-amount">ยอดเงิน (THB)</label>
               <input id="deal-amount" type="number" min="1" step="0.01" placeholder="1000" required />
             </div>
             <div>
-              <label for="seller-bank-name">à¸˜à¸™à¸²à¸„à¸²à¸£à¸œà¸¹à¹‰à¸‚à¸²à¸¢</label>
-              <input id="seller-bank-name" type="text" placeholder="à¹€à¸Šà¹ˆà¸™ à¸à¸£à¸¸à¸‡à¹„à¸—à¸¢ à¸«à¸£à¸·à¸­ KTB" required />
+              <label for="seller-bank-name">ธนาคารผู้ขาย</label>
+              <input id="seller-bank-name" type="text" placeholder="เช่น กรุงไทย หรือ KTB" required />
             </div>
             <div>
-              <label for="seller-bank-account">à¹€à¸¥à¸‚à¸šà¸±à¸à¸Šà¸µà¸œà¸¹à¹‰à¸‚à¸²à¸¢</label>
-              <input id="seller-bank-account" type="text" placeholder="à¹€à¸¥à¸‚à¸šà¸±à¸à¸Šà¸µ" required />
+              <label for="seller-bank-account">เลขบัญชีผู้ขาย</label>
+              <input id="seller-bank-account" type="text" placeholder="เลขบัญชี" required />
             </div>
           </div>
           <div class="row two">
             <div>
-              <label for="seller-bank-account-name">à¸Šà¸·à¹ˆà¸­à¸šà¸±à¸à¸Šà¸µà¸œà¸¹à¹‰à¸‚à¸²à¸¢</label>
-              <input id="seller-bank-account-name" type="text" placeholder="à¸Šà¸·à¹ˆà¸­à¸•à¸£à¸‡à¸à¸±à¸šà¸šà¸±à¸à¸Šà¸µà¸˜à¸™à¸²à¸„à¸²à¸£" required />
+              <label for="seller-bank-account-name">ชื่อบัญชีผู้ขาย</label>
+              <input id="seller-bank-account-name" type="text" placeholder="ชื่อตรงกับบัญชีธนาคาร" required />
             </div>
             <div>
-              <label for="deal-seller-user-id">LINE User ID à¸œà¸¹à¹‰à¸‚à¸²à¸¢ (à¹„à¸¡à¹ˆà¸šà¸±à¸‡à¸„à¸±à¸š)</label>
+              <label for="deal-seller-user-id">LINE User ID ของผู้ขาย (ไม่บังคับ)</label>
               <input id="deal-seller-user-id" type="text" placeholder="Uxxxxxxxx" />
             </div>
           </div>
           <div>
-            <label for="deal-note">à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¹€à¸žà¸´à¹ˆà¸¡à¹€à¸•à¸´à¸¡</label>
-            <textarea id="deal-note" placeholder="à¹€à¸‡à¸·à¹ˆà¸­à¸™à¹„à¸‚à¸ªà¸´à¸™à¸„à¹‰à¸²/à¸«à¸¡à¸²à¸¢à¹€à¸«à¸•à¸¸"></textarea>
+            <label for="deal-note">รายละเอียดเพิ่มเติม</label>
+            <textarea id="deal-note" placeholder="เงื่อนไขสินค้า/หมายเหตุ"></textarea>
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <button id="deal-create-btn" class="btn primary" type="submit">à¸ªà¸£à¹‰à¸²à¸‡à¸”à¸µà¸¥ + à¸ªà¸£à¹‰à¸²à¸‡ QR à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™</button>
-            <button id="deal-check-btn" class="btn ghost" type="button">à¹€à¸Šà¹‡à¸à¸ªà¸–à¸²à¸™à¸°à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™</button>
+            <button id="deal-create-btn" class="btn primary" type="submit">สร้างดีล + สร้าง QR ชำระเงิน</button>
+            <button id="deal-check-btn" class="btn ghost" type="button">เช็กสถานะการชำระเงิน</button>
           </div>
         </form>
         <div id="deal-status" class="status hidden"></div>
@@ -295,33 +294,27 @@ export const renderLineEscrowDealPage = () =>
       function setBusy(isBusy) {
         createBtn.disabled = Boolean(isBusy);
         checkBtn.disabled = Boolean(isBusy);
-        createBtn.textContent = isBusy ? 'à¸à¸³à¸¥à¸±à¸‡à¸ªà¸£à¹‰à¸²à¸‡à¸”à¸µà¸¥...' : 'à¸ªà¸£à¹‰à¸²à¸‡à¸”à¸µà¸¥ + à¸ªà¸£à¹‰à¸²à¸‡ QR à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™';
+        createBtn.textContent = isBusy ? 'กำลังสร้างดีล...' : 'สร้างดีล + สร้าง QR ชำระเงิน';
       }
 
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
-        if (d.id) {
-          dealId = String(d.id);
-        }
+        if (d.id) dealId = String(d.id);
         var qrHtml = d.paymentQrImageUrl
-          ? '<div class="qr"><div style="font-size:0.78rem;color:#334155;">à¸ªà¹à¸à¸™ QR à¸™à¸µà¹‰à¹€à¸žà¸·à¹ˆà¸­à¹‚à¸­à¸™à¹€à¸‡à¸´à¸™à¹€à¸‚à¹‰à¸²à¸šà¸­à¸—</div><img alt="PromptPay QR" src="' + escapeHtml(d.paymentQrImageUrl) + '" /></div>'
-          : '<p class="tiny">à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µ QR (à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸à¸²à¸£à¸•à¸±à¹‰à¸‡à¸„à¹ˆà¸² Payment Provider)</p>';
+          ? '<div class="qr"><div style="font-size:0.78rem;color:#334155;">สแกน QR นี้เพื่อโอนเงินเข้าระบบ</div><img alt="คิวอาร์พร้อมเพย์" src="' + escapeHtml(d.paymentQrImageUrl) + '" /></div>'
+          : '<p class="tiny">ยังไม่มี QR (ตรวจสอบการตั้งค่า Payment Provider)</p>';
         var links = '';
-        if (d.sellerLiffUrl) {
-          links += '<a href="' + escapeHtml(d.sellerLiffUrl) + '" target="_blank" rel="noreferrer">à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸² LIFF à¸œà¸¹à¹‰à¸‚à¸²à¸¢</a><br />';
-        }
-        if (d.buyerLiffUrl) {
-          links += '<a href="' + escapeHtml(d.buyerLiffUrl) + '" target="_blank" rel="noreferrer">à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸² LIFF à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­</a>';
-        }
+        if (d.sellerLiffUrl) links += '<a href="' + escapeHtml(d.sellerLiffUrl) + '" target="_blank" rel="noreferrer">เปิดหน้า LIFF ผู้ขาย</a><br />';
+        if (d.buyerLiffUrl) links += '<a href="' + escapeHtml(d.buyerLiffUrl) + '" target="_blank" rel="noreferrer">เปิดหน้า LIFF ผู้ซื้อ</a>';
         resultBox.innerHTML =
-          '<h3>à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸”à¸µà¸¥</h3>' +
+          '<h3>รายละเอียดดีล</h3>' +
           '<div class="kv">' +
-            '<div class="k">Deal ID</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
-            '<div class="k">Group ID</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
-            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
-            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™</div><div class="v">' + escapeHtml(d.paymentStatus || '-') + '</div>' +
-            '<div class="k">à¸¢à¸­à¸”à¹€à¸‡à¸´à¸™</div><div class="v">' + escapeHtml((Number(d.paymentAmountThb || 0)).toLocaleString()) + ' THB</div>' +
-            '<div class="k">à¸ªà¸´à¸™à¸„à¹‰à¸²</div><div class="v">' + escapeHtml(d.itemName || '-') + '</div>' +
+            '<div class="k">รหัสดีล</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
+            '<div class="k">รหัสกลุ่ม</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
+            '<div class="k">สถานะดีล</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
+            '<div class="k">สถานะชำระเงิน</div><div class="v">' + escapeHtml(d.paymentStatus || '-') + '</div>' +
+            '<div class="k">ยอดเงิน</div><div class="v">' + escapeHtml((Number(d.paymentAmountThb || 0)).toLocaleString()) + ' THB</div>' +
+            '<div class="k">สินค้า</div><div class="v">' + escapeHtml(d.itemName || '-') + '</div>' +
           '</div>' +
           qrHtml +
           (links ? '<div style="margin-top:10px;font-size:0.82rem;">' + links + '</div>' : '');
@@ -330,7 +323,7 @@ export const renderLineEscrowDealPage = () =>
 
       async function checkPayment() {
         if (!dealId) {
-          showStatus(statusBox, 'à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µ dealId à¹ƒà¸«à¹‰à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸š', 'error');
+          showStatus(statusBox, 'ยังไม่มี dealId ให้ตรวจสอบ', 'error');
           return;
         }
         hideStatus(statusBox);
@@ -342,11 +335,11 @@ export const renderLineEscrowDealPage = () =>
             body: JSON.stringify({})
           });
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'ตรวจสอบการชำระเงินไม่สำเร็จ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, 'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸ªà¸–à¸²à¸™à¸°à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™à¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'success');
+          showStatus(statusBox, 'ตรวจสอบสถานะชำระเงินสำเร็จ', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'à¸•à¸£à¸§à¸ˆà¸ªà¸­à¸šà¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
+          showStatus(statusBox, (error && error.message) || 'ตรวจสอบการชำระเงินไม่สำเร็จ', 'error');
         } finally {
           setBusy(false);
         }
@@ -361,9 +354,7 @@ export const renderLineEscrowDealPage = () =>
           try {
             var response = await fetch('/line/escrow/liff/api/deals/' + encodeURIComponent(dealId) + '?refreshPayment=1');
             var payload = await response.json().catch(function () { return null; });
-            if (response.ok && payload && payload.deal) {
-              renderDeal(payload.deal);
-            }
+            if (response.ok && payload && payload.deal) renderDeal(payload.deal);
           } catch (_error) {}
         })();
       }
@@ -395,11 +386,11 @@ export const renderLineEscrowDealPage = () =>
             })
           });
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'à¸ªà¸£à¹‰à¸²à¸‡à¸”à¸µà¸¥à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'สร้างดีลไม่สำเร็จ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, (payload && payload.message) || 'à¸ªà¸£à¹‰à¸²à¸‡à¸”à¸µà¸¥à¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'success');
+          showStatus(statusBox, (payload && payload.message) || 'สร้างดีลสำเร็จ', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'à¸ªà¸£à¹‰à¸²à¸‡à¸”à¸µà¸¥à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
+          showStatus(statusBox, (error && error.message) || 'สร้างดีลไม่สำเร็จ', 'error');
         } finally {
           setBusy(false);
         }
@@ -409,38 +400,38 @@ export const renderLineEscrowDealPage = () =>
 
 export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
   buildShell({
-    title: 'à¸œà¸¹à¹‰à¸‚à¸²à¸¢à¸ªà¹ˆà¸‡à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸',
-    subtitle: 'à¸ªà¹ˆà¸‡à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸ + à¸£à¸¹à¸›à¸ªà¸¥à¸´à¸›à¹ƒà¸«à¹‰à¸šà¸­à¸—à¹€à¸à¹‡à¸šà¸«à¸¥à¸±à¸à¸à¸²à¸™',
+    title: 'ผู้ขายส่งเลขพัสดุ',
+    subtitle: 'ส่งเลขพัสดุ + รูปหลักฐานให้ระบบ',
     description:
-      'à¸‚à¸±à¹‰à¸™à¸•à¸­à¸™à¸™à¸µà¹‰à¸—à¸³à¸«à¸¥à¸±à¸‡à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™à¹à¸¥à¹‰à¸§à¹€à¸—à¹ˆà¸²à¸™à¸±à¹‰à¸™ à¹€à¸¡à¸·à¹ˆà¸­à¸ªà¹ˆà¸‡à¸ªà¸³à¹€à¸£à¹‡à¸ˆ à¸£à¸°à¸šà¸šà¸ˆà¸°à¹à¸ˆà¹‰à¸‡à¹ƒà¸™à¸à¸¥à¸¸à¹ˆà¸¡à¹à¸¥à¸°à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¸ªà¸²à¸¡à¸²à¸£à¸–à¸•à¸´à¸”à¸•à¸²à¸¡à¸ªà¸–à¸²à¸™à¸°/à¹à¸œà¸™à¸—à¸µà¹ˆà¹„à¸”à¹‰',
+      'ขั้นตอนที่ 2: ทำหลังผู้ซื้อชำระเงินแล้ว เมื่อส่งสำเร็จ ระบบจะแจ้งในกลุ่มและผู้ซื้อจะติดตามสถานะได้',
     bodyHtml: `
       <section class="card">
         <form id="seller-form" class="row">
           <div class="row two">
             <div>
-              <label for="seller-deal-id">Deal ID</label>
+              <label for="seller-deal-id">รหัสดีล</label>
               <input id="seller-deal-id" type="text" placeholder="escrow deal id" required />
             </div>
             <div>
-              <label for="seller-tracking-no">à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸</label>
-              <input id="seller-tracking-no" type="text" placeholder="Tracking Number" required />
+              <label for="seller-tracking-no">เลขพัสดุ</label>
+              <input id="seller-tracking-no" type="text" placeholder="เลขพัสดุ" required />
             </div>
           </div>
           <div>
-            <label for="seller-courier-code">Courier Code (à¹„à¸¡à¹ˆà¸šà¸±à¸‡à¸„à¸±à¸š)</label>
-            <input id="seller-courier-code" type="text" placeholder="à¹€à¸Šà¹ˆà¸™ thailand-post, kerry, flash" />
+            <label for="seller-courier-code">Courier Code (ไม่บังคับ)</label>
+            <input id="seller-courier-code" type="text" placeholder="เช่น thailand-post, kerry, flash" />
           </div>
           <div>
-            <label>à¸£à¸¹à¸›à¸ªà¸¥à¸´à¸›à¸ªà¹ˆà¸‡à¸‚à¸­à¸‡</label>
+            <label>รูปหลักฐานการส่ง</label>
             <label class="btn upload" style="display:inline-flex;align-items:center;justify-content:center;" for="seller-slip-input">
-              à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¸ªà¸¥à¸´à¸›
+              อัปโหลดรูปหลักฐาน
             </label>
             <input id="seller-slip-input" type="file" accept="image/*" class="hidden" />
-            <p class="tiny">à¸£à¸­à¸‡à¸£à¸±à¸šà¹€à¸‰à¸žà¸²à¸°à¸ à¸²à¸ž à¸‚à¸™à¸²à¸”à¸ªà¸¹à¸‡à¸ªà¸¸à¸” ${Math.max(0, Number(maxSlipImageBytes || 0))} bytes</p>
-            <div id="seller-slip-preview" class="preview">à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¹„à¸”à¹‰à¹€à¸¥à¸·à¸­à¸à¸£à¸¹à¸›</div>
+            <p class="tiny">รองรับเฉพาะไฟล์ภาพ ขนาดสูงสุด ${Math.max(0, Number(maxSlipImageBytes || 0))} bytes</p>
+            <div id="seller-slip-preview" class="preview">ยังไม่ได้เลือกรูป</div>
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <button id="seller-submit-btn" class="btn secondary" type="submit">à¸¢à¸·à¸™à¸¢à¸±à¸™à¸ªà¹ˆà¸‡à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸à¹à¸¥à¸°à¸ªà¸¥à¸´à¸›</button>
+            <button id="seller-submit-btn" class="btn secondary" type="submit">ยืนยันส่งเลขพัสดุและหลักฐาน</button>
           </div>
         </form>
         <div id="seller-status" class="status hidden"></div>
@@ -459,20 +450,26 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var fileInput = document.getElementById('seller-slip-input');
       var preview = document.getElementById('seller-slip-preview');
       var slipImage = null;
+      var maxBytes = ${Math.max(0, Number(maxSlipImageBytes || 0))};
 
       var presetDealId = parseDealIdFromLocation();
       if (presetDealId) dealInput.value = presetDealId;
 
       function setBusy(isBusy) {
         submitBtn.disabled = Boolean(isBusy);
-        submitBtn.textContent = isBusy ? 'à¸à¸³à¸¥à¸±à¸‡à¸šà¸±à¸™à¸—à¸¶à¸...' : 'à¸¢à¸·à¸™à¸¢à¸±à¸™à¸ªà¹ˆà¸‡à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸à¹à¸¥à¸°à¸ªà¸¥à¸´à¸›';
+        submitBtn.textContent = isBusy ? 'กำลังบันทึก...' : 'ยืนยันส่งเลขพัสดุและหลักฐาน';
       }
 
       fileInput.addEventListener('change', function (event) {
         var file = event.target.files && event.target.files[0];
         if (!file) return;
         if (!String(file.type || '').toLowerCase().startsWith('image/')) {
-          showStatus(statusBox, 'à¸­à¸™à¸¸à¸à¸²à¸•à¹€à¸‰à¸žà¸²à¸°à¹„à¸Ÿà¸¥à¹Œà¸ à¸²à¸žà¹€à¸—à¹ˆà¸²à¸™à¸±à¹‰à¸™', 'error');
+          showStatus(statusBox, 'อนุญาตเฉพาะไฟล์ภาพเท่านั้น', 'error');
+          fileInput.value = '';
+          return;
+        }
+        if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
+          showStatus(statusBox, 'ไฟล์ใหญ่เกินกำหนด (' + maxBytes + ' bytes)', 'error');
           fileInput.value = '';
           return;
         }
@@ -490,7 +487,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
           hideStatus(statusBox);
         };
         reader.onerror = function () {
-          showStatus(statusBox, 'à¸­à¹ˆà¸²à¸™à¹„à¸Ÿà¸¥à¹Œà¸£à¸¹à¸›à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
+          showStatus(statusBox, 'อ่านไฟล์รูปไม่สำเร็จ', 'error');
         };
         reader.readAsDataURL(file);
       });
@@ -498,16 +495,16 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
         resultBox.innerHTML =
-          '<h3>à¸šà¸±à¸™à¸—à¸¶à¸à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸ªà¹ˆà¸‡à¸‚à¸­à¸‡à¸ªà¸³à¹€à¸£à¹‡à¸ˆ</h3>' +
+          '<h3>บันทึกการจัดส่งสำเร็จ</h3>' +
           '<div class="kv">' +
-            '<div class="k">Deal ID</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
-            '<div class="k">Group ID</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
-            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
-            '<div class="k">à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸</div><div class="v">' + escapeHtml(d.trackingNumber || '-') + '</div>' +
-            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸‚à¸™à¸ªà¹ˆà¸‡</div><div class="v">' + escapeHtml(d.trackingStatusText || d.trackingStatus || '-') + '</div>' +
+            '<div class="k">รหัสดีล</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
+            '<div class="k">รหัสกลุ่ม</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
+            '<div class="k">สถานะดีล</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
+            '<div class="k">เลขพัสดุ</div><div class="v">' + escapeHtml(d.trackingNumber || '-') + '</div>' +
+            '<div class="k">สถานะขนส่ง</div><div class="v">' + escapeHtml(d.trackingStatusText || d.trackingStatus || '-') + '</div>' +
           '</div>' +
           (d.buyerLiffUrl
-            ? '<p class="tiny"><a href="' + escapeHtml(d.buyerLiffUrl) + '" target="_blank" rel="noreferrer">à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸² LIFF à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¹€à¸žà¸·à¹ˆà¸­à¸•à¸´à¸”à¸•à¸²à¸¡/à¸¢à¸·à¸™à¸¢à¸±à¸™</a></p>'
+            ? '<p class="tiny"><a href="' + escapeHtml(d.buyerLiffUrl) + '" target="_blank" rel="noreferrer">เปิดหน้า LIFF ผู้ซื้อเพื่อติดตาม/ยืนยันรับของ</a></p>'
             : '');
         resultBox.classList.remove('hidden');
       }
@@ -517,7 +514,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
         hideStatus(statusBox);
         resultBox.classList.add('hidden');
         if (!slipImage) {
-          showStatus(statusBox, 'à¸à¸£à¸¸à¸“à¸²à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¸ªà¸¥à¸´à¸›à¸à¹ˆà¸­à¸™à¸ªà¹ˆà¸‡', 'error');
+          showStatus(statusBox, 'กรุณาอัปโหลดรูปหลักฐานก่อนส่ง', 'error');
           return;
         }
         setBusy(true);
@@ -533,11 +530,11 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
             })
           });
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'à¸ªà¹ˆà¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸žà¸±à¸ªà¸”à¸¸à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'ส่งข้อมูลพัสดุไม่สำเร็จ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, (payload && payload.message) || 'à¸ªà¹ˆà¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸žà¸±à¸ªà¸”à¸¸à¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'success');
+          showStatus(statusBox, (payload && payload.message) || 'ส่งข้อมูลพัสดุสำเร็จ', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'à¸ªà¹ˆà¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸žà¸±à¸ªà¸”à¸¸à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
+          showStatus(statusBox, (error && error.message) || 'ส่งข้อมูลพัสดุไม่สำเร็จ', 'error');
         } finally {
           setBusy(false);
         }
@@ -547,21 +544,21 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
 
 export const renderLineEscrowBuyerPage = () =>
   buildShell({
-    title: 'à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¹€à¸Šà¹‡à¸à¸ªà¸–à¸²à¸™à¸°à¹à¸¥à¸°à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸‚à¸­à¸‡',
-    subtitle: 'à¸”à¸¹à¸ªà¸–à¸²à¸™à¸°à¸à¸²à¸£à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™ à¸‚à¸™à¸ªà¹ˆà¸‡ à¹à¸œà¸™à¸—à¸µà¹ˆ à¹à¸¥à¸°à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²',
+    title: 'ผู้ซื้อเช็กสถานะและยืนยันรับของ',
+    subtitle: 'ดูสถานะชำระเงิน ขนส่ง แผนที่ และยืนยันรับสินค้า',
     description:
-      'à¸–à¹‰à¸²à¸ªà¸–à¸²à¸™à¸°à¸‚à¸¶à¹‰à¸™ delivered à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¸à¸”à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸‚à¸­à¸‡à¹€à¸žà¸·à¹ˆà¸­à¸›à¸¥à¹ˆà¸­à¸¢à¹€à¸‡à¸´à¸™à¹ƒà¸«à¹‰à¸œà¸¹à¹‰à¸‚à¸²à¸¢ à¸«à¸£à¸·à¸­à¸£à¸­à¸„à¸£à¸šà¹€à¸§à¸¥à¸²à¸£à¸°à¸šà¸šà¸¢à¸·à¸™à¸¢à¸±à¸™à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´',
+      'ขั้นตอนที่ 3: เมื่อสถานะขึ้นว่า delivered ผู้ซื้อกดยืนยันรับของเพื่อปล่อยเงินให้ผู้ขาย หรือรอครบเวลาอัตโนมัติ',
     bodyHtml: `
       <section class="card">
         <form id="buyer-form" class="row">
           <div>
-            <label for="buyer-deal-id">Deal ID</label>
+            <label for="buyer-deal-id">รหัสดีล</label>
             <input id="buyer-deal-id" type="text" placeholder="escrow deal id" required />
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <button id="buyer-load-btn" class="btn primary" type="button">à¹‚à¸«à¸¥à¸”à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥</button>
-            <button id="buyer-refresh-track-btn" class="btn ghost" type="button">à¸£à¸µà¹€à¸Ÿà¸£à¸Šà¸ªà¸–à¸²à¸™à¸°à¸‚à¸™à¸ªà¹ˆà¸‡</button>
-            <button id="buyer-confirm-btn" class="btn secondary" type="button">à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²</button>
+            <button id="buyer-load-btn" class="btn primary" type="button">โหลดสถานะดีล</button>
+            <button id="buyer-refresh-track-btn" class="btn ghost" type="button">รีเฟรชสถานะขนส่ง</button>
+            <button id="buyer-confirm-btn" class="btn secondary" type="button">ยืนยันรับสินค้า</button>
           </div>
         </form>
         <div id="buyer-status" class="status hidden"></div>
@@ -589,29 +586,23 @@ export const renderLineEscrowBuyerPage = () =>
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
         var links = '';
-        if (d.trackingPublicUrl) {
-          links += '<a href="' + escapeHtml(d.trackingPublicUrl) + '" target="_blank" rel="noreferrer">à¸”à¸¹ Tracking Public</a><br />';
-        }
-        if (d.trackingMapUrl) {
-          links += '<a href="' + escapeHtml(d.trackingMapUrl) + '" target="_blank" rel="noreferrer">à¸”à¸¹à¸•à¸³à¹à¸«à¸™à¹ˆà¸‡à¸¥à¹ˆà¸²à¸ªà¸¸à¸”à¸šà¸™à¹à¸œà¸™à¸—à¸µà¹ˆ</a><br />';
-        }
-        if (d.paymentQrImageUrl && d.paymentStatus !== 'paid') {
-          links += '<a href="' + escapeHtml(d.paymentQrImageUrl) + '" target="_blank" rel="noreferrer">à¹€à¸›à¸´à¸” QR à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™</a>';
-        }
+        if (d.trackingPublicUrl) links += '<a href="' + escapeHtml(d.trackingPublicUrl) + '" target="_blank" rel="noreferrer">ดูสถานะพัสดุแบบสาธารณะ</a><br />';
+        if (d.trackingMapUrl) links += '<a href="' + escapeHtml(d.trackingMapUrl) + '" target="_blank" rel="noreferrer">ดูตำแหน่งล่าสุดบนแผนที่</a><br />';
+        if (d.paymentQrImageUrl && d.paymentStatus !== 'paid') links += '<a href="' + escapeHtml(d.paymentQrImageUrl) + '" target="_blank" rel="noreferrer">เปิด QR ชำระเงิน</a>';
         resultBox.innerHTML =
-          '<h3>à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥</h3>' +
+          '<h3>สถานะดีล</h3>' +
           '<div class="kv">' +
-            '<div class="k">Deal ID</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
-            '<div class="k">Group ID</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
-            '<div class="k">à¸ªà¸´à¸™à¸„à¹‰à¸²</div><div class="v">' + escapeHtml(d.itemName || '-') + '</div>' +
-            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
-            '<div class="k">à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™</div><div class="v">' + escapeHtml(d.paymentStatus || '-') + '</div>' +
-            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸‚à¸™à¸ªà¹ˆà¸‡</div><div class="v">' + escapeHtml(d.trackingStatusText || d.trackingStatus || '-') + '</div>' +
-            '<div class="k">à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸</div><div class="v">' + escapeHtml(d.trackingNumber || '-') + '</div>' +
-            '<div class="k">à¸ˆà¸¸à¸”à¸¥à¹ˆà¸²à¸ªà¸¸à¸”</div><div class="v">' + escapeHtml(d.trackingLastEventLocation || '-') + '</div>' +
-            '<div class="k">à¹€à¸§à¸¥à¸²à¸¥à¹ˆà¸²à¸ªà¸¸à¸”</div><div class="v">' + escapeHtml(d.trackingLastEventTime || '-') + '</div>' +
-            '<div class="k">à¸¢à¸·à¸™à¸¢à¸±à¸™à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´</div><div class="v">' + escapeHtml(d.autoReleaseAt || '-') + '</div>' +
-            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸›à¸¥à¹ˆà¸­à¸¢à¹€à¸‡à¸´à¸™</div><div class="v">' + escapeHtml(d.payoutStatus || '-') + '</div>' +
+            '<div class="k">รหัสดีล</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
+            '<div class="k">รหัสกลุ่ม</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
+            '<div class="k">สินค้า</div><div class="v">' + escapeHtml(d.itemName || '-') + '</div>' +
+            '<div class="k">สถานะดีล</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
+            '<div class="k">สถานะชำระเงิน</div><div class="v">' + escapeHtml(d.paymentStatus || '-') + '</div>' +
+            '<div class="k">สถานะขนส่ง</div><div class="v">' + escapeHtml(d.trackingStatusText || d.trackingStatus || '-') + '</div>' +
+            '<div class="k">เลขพัสดุ</div><div class="v">' + escapeHtml(d.trackingNumber || '-') + '</div>' +
+            '<div class="k">จุดล่าสุด</div><div class="v">' + escapeHtml(d.trackingLastEventLocation || '-') + '</div>' +
+            '<div class="k">เวลาล่าสุด</div><div class="v">' + escapeHtml(d.trackingLastEventTime || '-') + '</div>' +
+            '<div class="k">ยืนยันอัตโนมัติ</div><div class="v">' + escapeHtml(d.autoReleaseAt || '-') + '</div>' +
+            '<div class="k">สถานะปล่อยเงิน</div><div class="v">' + escapeHtml(d.payoutStatus || '-') + '</div>' +
           '</div>' +
           (links ? '<p class="tiny" style="margin-top:10px;">' + links + '</p>' : '');
         resultBox.classList.remove('hidden');
@@ -620,7 +611,7 @@ export const renderLineEscrowBuyerPage = () =>
       async function loadDeal(refreshPayment) {
         var id = String(dealInput.value || '').trim();
         if (!id) {
-          showStatus(statusBox, 'à¸à¸£à¸¸à¸“à¸²à¸à¸£à¸­à¸ dealId', 'error');
+          showStatus(statusBox, 'กรุณากรอกรหัสดีล', 'error');
           return;
         }
         hideStatus(statusBox);
@@ -630,11 +621,11 @@ export const renderLineEscrowBuyerPage = () =>
           if (refreshPayment) url += '?refreshPayment=1';
           var response = await fetch(url);
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'à¹‚à¸«à¸¥à¸”à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'โหลดสถานะดีลไม่สำเร็จ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, 'à¹‚à¸«à¸¥à¸”à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥à¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'success');
+          showStatus(statusBox, 'โหลดสถานะดีลสำเร็จ', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'à¹‚à¸«à¸¥à¸”à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
+          showStatus(statusBox, (error && error.message) || 'โหลดสถานะดีลไม่สำเร็จ', 'error');
         } finally {
           setBusy(false);
         }
@@ -643,7 +634,7 @@ export const renderLineEscrowBuyerPage = () =>
       async function refreshTracking() {
         var id = String(dealInput.value || '').trim();
         if (!id) {
-          showStatus(statusBox, 'à¸à¸£à¸¸à¸“à¸²à¸à¸£à¸­à¸ dealId', 'error');
+          showStatus(statusBox, 'กรุณากรอกรหัสดีล', 'error');
           return;
         }
         hideStatus(statusBox);
@@ -655,11 +646,11 @@ export const renderLineEscrowBuyerPage = () =>
             body: JSON.stringify({})
           });
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'à¸£à¸µà¹€à¸Ÿà¸£à¸Šà¸‚à¸™à¸ªà¹ˆà¸‡à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'รีเฟรชขนส่งไม่สำเร็จ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, 'à¸£à¸µà¹€à¸Ÿà¸£à¸Šà¸‚à¸™à¸ªà¹ˆà¸‡à¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'success');
+          showStatus(statusBox, 'รีเฟรชขนส่งสำเร็จ', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'à¸£à¸µà¹€à¸Ÿà¸£à¸Šà¸‚à¸™à¸ªà¹ˆà¸‡à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
+          showStatus(statusBox, (error && error.message) || 'รีเฟรชขนส่งไม่สำเร็จ', 'error');
         } finally {
           setBusy(false);
         }
@@ -668,7 +659,7 @@ export const renderLineEscrowBuyerPage = () =>
       async function confirmDelivery() {
         var id = String(dealInput.value || '').trim();
         if (!id) {
-          showStatus(statusBox, 'à¸à¸£à¸¸à¸“à¸²à¸à¸£à¸­à¸ dealId', 'error');
+          showStatus(statusBox, 'กรุณากรอกรหัสดีล', 'error');
           return;
         }
         hideStatus(statusBox);
@@ -680,11 +671,11 @@ export const renderLineEscrowBuyerPage = () =>
             body: JSON.stringify({})
           });
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'ยืนยันรับสินค้าไม่สำเร็จ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, (payload && payload.message) || 'à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢', 'success');
+          showStatus(statusBox, (payload && payload.message) || 'ยืนยันรับสินค้าเรียบร้อย', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
+          showStatus(statusBox, (error && error.message) || 'ยืนยันรับสินค้าไม่สำเร็จ', 'error');
         } finally {
           setBusy(false);
         }
@@ -694,12 +685,6 @@ export const renderLineEscrowBuyerPage = () =>
       refreshBtn.addEventListener('click', function () { void refreshTracking(); });
       confirmBtn.addEventListener('click', function () { void confirmDelivery(); });
 
-      if (presetDealId) {
-        void loadDeal(true);
-      }
+      if (presetDealId) void loadDeal(true);
     `,
   });
-
-
-
-
