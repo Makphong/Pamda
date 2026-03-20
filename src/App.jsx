@@ -63,6 +63,7 @@ import {
   Pin,
   PinOff
 } from 'lucide-react';
+import ScamCheckPage from './Check.jsx';
 
 // --- Constants & Helpers ---
 const THAI_MONTHS = [
@@ -1668,6 +1669,7 @@ const PROFILE_VIEW_MENUS = {
   INVITATIONS: 'invitations',
   SUPPORT: 'support',
   ADMIN: 'admin',
+  SCAM_CHECK: 'scam_check',
 };
 const SUPPORT_TICKET_STATUS = {
   OPEN: 'open',
@@ -3818,6 +3820,14 @@ const saveLocalUsers = (users) => {
 
 const LOCAL_TEST_USERS = [
   {
+    id: 'local-root-admin-1',
+    username: 'admin',
+    email: 'admin@local.pm',
+    password: '123456',
+    avatarUrl: '',
+    isRootAdmin: true,
+  },
+  {
     id: 'local-test-user-1',
     username: 'test_pm_1',
     email: 'test_pm_1@local.pm',
@@ -3867,6 +3877,27 @@ const ensureLocalTestUsers = () => {
   if (hasUpdates) {
     saveLocalUsers(nextUsers);
   }
+};
+const isLocalRootAdminUser = (userInput) => {
+  if (AUTH_API_BASE_URL) return false;
+  const user = userInput && typeof userInput === 'object' ? userInput : null;
+  if (!user) return false;
+  const userId = String(user.id || '').trim();
+  const username = String(user.username || '').trim().toLowerCase();
+  const email = String(user.email || '').trim().toLowerCase();
+  if (!userId && !username && !email) return false;
+  const localUsers = getLocalUsers();
+  const matchedUser = localUsers.find((entry) => {
+    const entryId = String(entry.id || '').trim();
+    const entryUsername = String(entry.username || '').trim().toLowerCase();
+    const entryEmail = String(entry.email || '').trim().toLowerCase();
+    return (
+      (userId && entryId === userId) ||
+      (username && entryUsername === username) ||
+      (email && entryEmail === email)
+    );
+  });
+  return Boolean(matchedUser?.isRootAdmin);
 };
 
 const normalizeAuthUser = (user) => {
@@ -6047,6 +6078,8 @@ function ProfileSettingsView({
   onLoadSupportAdmins,
   onAddSupportAdmin,
   onRemoveSupportAdmin,
+  onLoadScamReports,
+  onCreateScamReport,
 }) {
   const [username, setUsername] = useState(currentUser.username || '');
   const [email, setEmail] = useState(currentUser.email || '');
@@ -6139,7 +6172,10 @@ function ProfileSettingsView({
   }, [currentUser.id, currentUser.username, currentUser.email, currentUser.avatarUrl, isRootAdmin]);
 
   useEffect(() => {
-    if (!isRootAdmin && activeMenu === PROFILE_VIEW_MENUS.ADMIN) {
+    if (
+      !isRootAdmin &&
+      (activeMenu === PROFILE_VIEW_MENUS.ADMIN || activeMenu === PROFILE_VIEW_MENUS.SCAM_CHECK)
+    ) {
       setActiveMenu(PROFILE_VIEW_MENUS.PROFILE);
     }
   }, [isRootAdmin, activeMenu]);
@@ -6918,6 +6954,7 @@ function ProfileSettingsView({
         return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
       });
   }, [supportTicketStatusFilter, supportTickets]);
+  const isScamCheckMenuActive = activeMenu === PROFILE_VIEW_MENUS.SCAM_CHECK && isRootAdmin;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-cyan-50 p-4 md:p-8">
@@ -6970,6 +7007,19 @@ function ProfileSettingsView({
                   แอดมิน
                 </button>
               )}
+              {isRootAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setActiveMenu(PROFILE_VIEW_MENUS.SCAM_CHECK)}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors whitespace-nowrap ${
+                    activeMenu === PROFILE_VIEW_MENUS.SCAM_CHECK
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >
+                  แชทเช็คโกง
+                </button>
+              )}
               {onLogout && (
                 <button
                   type="button"
@@ -6984,25 +7034,27 @@ function ProfileSettingsView({
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[300px,1fr] gap-6">
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 h-fit">
-            <div className="flex flex-col items-center text-center">
-              <UserAvatar
-                user={currentUser}
-                sizeClass="w-24 h-24"
-                textClass="text-2xl"
-                ringClass="ring-4 ring-white shadow-sm"
-              />
-              <h2 className="mt-4 text-lg font-semibold text-gray-800 break-all">
-                {currentUser.username || 'username'}
-              </h2>
-              <p className="text-sm text-gray-500 break-all">{currentUser.email || 'email@example.com'}</p>
-              <p className="text-xs text-gray-400 mt-3 leading-relaxed">
-                Profile fields on this page are read-only. Tap the pencil icon to edit.
-              </p>
+          {!isScamCheckMenuActive && (
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 h-fit">
+              <div className="flex flex-col items-center text-center">
+                <UserAvatar
+                  user={currentUser}
+                  sizeClass="w-24 h-24"
+                  textClass="text-2xl"
+                  ringClass="ring-4 ring-white shadow-sm"
+                />
+                <h2 className="mt-4 text-lg font-semibold text-gray-800 break-all">
+                  {currentUser.username || 'username'}
+                </h2>
+                <p className="text-sm text-gray-500 break-all">{currentUser.email || 'email@example.com'}</p>
+                <p className="text-xs text-gray-400 mt-3 leading-relaxed">
+                  Profile fields on this page are read-only. Tap the pencil icon to edit.
+                </p>
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="space-y-6">
+          <div className={isScamCheckMenuActive ? 'space-y-6 lg:col-span-2' : 'space-y-6'}>
             {activeMenu === PROFILE_VIEW_MENUS.PROFILE && (
               <>
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-5">
@@ -7600,6 +7652,9 @@ function ProfileSettingsView({
                   </p>
                 )}
               </div>
+            )}
+            {activeMenu === PROFILE_VIEW_MENUS.SCAM_CHECK && isRootAdmin && (
+              <ScamCheckPage onLoadReports={onLoadScamReports} onCreateReport={onCreateScamReport} />
             )}
           </div>
         </div>
@@ -8218,6 +8273,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 
     const resolveAdminRole = async () => {
       if (!AUTH_API_BASE_URL) {
+        if (!isCancelled) {
+          setIsRootAdmin(isLocalRootAdminUser(currentUser));
+        }
         return;
       }
       try {
@@ -8236,7 +8294,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     return () => {
       isCancelled = true;
     };
-  }, [currentUser.id, currentUser.authToken]);
+  }, [currentUser, currentUser.id, currentUser.authToken]);
 
   const normalizeAiThread = useCallback((threadInput) => {
     const thread =
@@ -12830,6 +12888,46 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return { ok: false, message: error.message || 'Failed to remove support admin.' };
     }
   }, [isRootAdmin]);
+  const handleLoadScamReports = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Scam check requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    try {
+      const result = await requestCloudDataApi('/admin/scam-reports');
+      return {
+        ok: true,
+        reports: Array.isArray(result?.reports) ? result.reports : [],
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load scam reports.' };
+    }
+  }, [isRootAdmin]);
+  const handleCreateScamReport = useCallback(async (reportInput) => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Scam check requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    const report =
+      reportInput && typeof reportInput === 'object' && !Array.isArray(reportInput) ? reportInput : {};
+    try {
+      const result = await requestCloudDataApi('/admin/scam-reports', {
+        method: 'POST',
+        body: report,
+      });
+      return {
+        ok: true,
+        message: result?.message || 'Scam report submitted.',
+        report: result?.report && typeof result.report === 'object' ? result.report : null,
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to submit scam report.' };
+    }
+  }, [isRootAdmin]);
   const projectUpdatesOverlay = (
     <>
       {projectUpdateToastNotice && !isProjectUpdatesPopupOpen && (
@@ -12891,6 +12989,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         onLoadSupportAdmins={handleLoadSupportAdmins}
         onAddSupportAdmin={handleAddSupportAdmin}
         onRemoveSupportAdmin={handleRemoveSupportAdmin}
+        onLoadScamReports={handleLoadScamReports}
+        onCreateScamReport={handleCreateScamReport}
       />
     );
   }

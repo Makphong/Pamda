@@ -79,6 +79,9 @@ const FIRESTORE_ADMIN_COMPLAINT_COLLECTION = String(
 const FIRESTORE_SUPPORT_TICKET_COLLECTION = String(
   process.env.FIRESTORE_SUPPORT_TICKET_COLLECTION || 'support_tickets'
 ).trim();
+const FIRESTORE_SCAM_REPORT_COLLECTION = String(
+  process.env.FIRESTORE_SCAM_REPORT_COLLECTION || 'admin_scam_reports'
+).trim();
 const FIRESTORE_AI_THREAD_COLLECTION = String(
   process.env.FIRESTORE_AI_THREAD_COLLECTION || 'ai_threads'
 ).trim();
@@ -99,6 +102,10 @@ const SUPPORT_TICKET_MAX_ATTACHMENTS = Math.min(
 const SUPPORT_TICKET_MAX_ATTACHMENT_BYTES = Math.max(
   50_000,
   Number(process.env.SUPPORT_TICKET_MAX_ATTACHMENT_BYTES || 220_000)
+);
+const SCAM_REPORT_IMAGE_MAX_BYTES = Math.max(
+  60_000,
+  Number(process.env.SCAM_REPORT_IMAGE_MAX_BYTES || 600_000)
 );
 const SUPPORT_TICKET_MAX_MESSAGE_LENGTH = Math.max(
   200,
@@ -245,6 +252,7 @@ const lineReminderLogRef = firestore.collection(FIRESTORE_LINE_REMINDER_LOG_COLL
 const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION);
 const adminComplaintRef = firestore.collection(FIRESTORE_ADMIN_COMPLAINT_COLLECTION);
 const supportTicketRef = firestore.collection(FIRESTORE_SUPPORT_TICKET_COLLECTION);
+const scamReportRef = firestore.collection(FIRESTORE_SCAM_REPORT_COLLECTION);
 const aiThreadRef = firestore.collection(FIRESTORE_AI_THREAD_COLLECTION);
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 
@@ -481,6 +489,65 @@ const toAdminComplaintResponse = (docId, dataInput) => {
     adminNote: String(data.adminNote || '').trim(),
     resolvedAt: toEpochMs(data.resolvedAt) > 0 ? String(data.resolvedAt).trim() : null,
     resolvedById: sanitizeUserId(data.resolvedById),
+  };
+};
+const normalizeScamReportTransferDate = (valueInput) => {
+  const value = String(valueInput || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return '';
+  return value;
+};
+const normalizeScamReportAmount = (valueInput) => {
+  const value = Number(valueInput || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(1_000_000_000_000, Math.round(value * 100) / 100);
+};
+const normalizeScamReportEvidenceImage = (imageInput) => {
+  const image = imageInput && typeof imageInput === 'object' && !Array.isArray(imageInput) ? imageInput : {};
+  const id = String(image.id || crypto.randomUUID()).trim();
+  const name = String(image.name || 'evidence-image').trim().slice(0, 180);
+  const mimeType = String(image.mimeType || image.type || '').trim().toLowerCase();
+  const dataUrl = String(image.dataUrl || image.base64 || '').trim();
+  const size = Number(image.size || 0);
+  if (!id || !mimeType || !dataUrl) return null;
+  if (!mimeType.startsWith('image/')) return null;
+  if (!/^data:image\//i.test(dataUrl)) return null;
+  if (!Number.isFinite(size) || size <= 0 || size > SCAM_REPORT_IMAGE_MAX_BYTES) return null;
+  return {
+    id,
+    name,
+    mimeType,
+    size,
+    dataUrl,
+  };
+};
+const toScamReportResponse = (docId, dataInput) => {
+  const data = dataInput && typeof dataInput === 'object' && !Array.isArray(dataInput) ? dataInput : {};
+  const createdAtRaw = String(data.createdAt || '').trim();
+  const createdAt = toEpochMs(createdAtRaw) > 0 ? createdAtRaw : null;
+  const updatedAtRaw = String(data.updatedAt || '').trim();
+  const updatedAt = toEpochMs(updatedAtRaw) > 0 ? updatedAtRaw : createdAt;
+  return {
+    id: String(docId || '').trim(),
+    sellerAlias: String(data.sellerAlias || '').trim(),
+    firstName: String(data.firstName || '').trim(),
+    lastName: String(data.lastName || '').trim(),
+    citizenId: String(data.citizenId || '').trim(),
+    phone: String(data.phone || '').trim(),
+    bankAccount: String(data.bankAccount || '').trim(),
+    bankName: String(data.bankName || '').trim(),
+    product: String(data.product || '').trim(),
+    amount: normalizeScamReportAmount(data.amount),
+    transferDate: normalizeScamReportTransferDate(data.transferDate),
+    pageUrl: String(data.pageUrl || '').trim(),
+    province: String(data.province || '').trim(),
+    evidenceImage: normalizeScamReportEvidenceImage(data.evidenceImage),
+    createdById: sanitizeUserId(data.createdById),
+    createdByUsername: sanitizeUsername(data.createdByUsername),
+    createdByEmail: sanitizeEmail(data.createdByEmail),
+    createdAt,
+    updatedAt,
   };
 };
 const SUPPORT_TICKET_STATUS = {
@@ -3691,6 +3758,7 @@ app.get('/health', (_req, res) => {
     firestoreLineWebhookLogCollection: FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION,
     firestoreAdminComplaintCollection: FIRESTORE_ADMIN_COMPLAINT_COLLECTION,
     firestoreSupportTicketCollection: FIRESTORE_SUPPORT_TICKET_COLLECTION,
+    firestoreScamReportCollection: FIRESTORE_SCAM_REPORT_COLLECTION,
     googleClientConfigured: Boolean(GOOGLE_CLIENT_ID),
     googleCalendarOAuthConfigured: Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     googleCalendarRedirectUriPreview: redirectUriPreview,
@@ -3708,6 +3776,7 @@ app.get('/health', (_req, res) => {
     adminStatsTimezone: ADMIN_STATS_TIMEZONE,
     supportTicketAttachmentLimit: SUPPORT_TICKET_MAX_ATTACHMENTS,
     supportTicketAttachmentMaxBytes: SUPPORT_TICKET_MAX_ATTACHMENT_BYTES,
+    scamReportImageMaxBytes: SCAM_REPORT_IMAGE_MAX_BYTES,
   });
 });
 
@@ -5069,6 +5138,102 @@ app.patch('/admin/complaints/:complaintId', requireAuth, requireRootAdmin, async
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to update complaint.' });
+  }
+});
+
+app.get('/admin/scam-reports', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const limitRaw = Number.parseInt(String(req.query?.limit || '300'), 10);
+    const limit = Number.isInteger(limitRaw) ? Math.min(500, Math.max(1, limitRaw)) : 300;
+    const snapshot = await scamReportRef.orderBy('createdAt', 'desc').limit(limit).get();
+    const reports = snapshot.docs.map((doc) => toScamReportResponse(doc.id, doc.data() || {}));
+    return res.json({
+      reports,
+      total: reports.length,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load scam reports.' });
+  }
+});
+
+app.post('/admin/scam-reports', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const sellerAlias = String(req.body?.sellerAlias || '')
+      .trim()
+      .slice(0, 220);
+    const firstName = String(req.body?.firstName || '')
+      .trim()
+      .slice(0, 120);
+    const lastName = String(req.body?.lastName || '')
+      .trim()
+      .slice(0, 120);
+    const citizenId = String(req.body?.citizenId || '')
+      .trim()
+      .slice(0, 30);
+    const phone = String(req.body?.phone || '')
+      .trim()
+      .slice(0, 40);
+    const bankAccount = String(req.body?.bankAccount || '')
+      .trim()
+      .slice(0, 80);
+    const bankName = String(req.body?.bankName || '')
+      .trim()
+      .slice(0, 140);
+    const product = String(req.body?.product || '')
+      .trim()
+      .slice(0, 220);
+    const amount = normalizeScamReportAmount(req.body?.amount);
+    const transferDate = normalizeScamReportTransferDate(req.body?.transferDate);
+    const pageUrl = String(req.body?.pageUrl || '')
+      .trim()
+      .slice(0, 500);
+    const province = String(req.body?.province || '')
+      .trim()
+      .slice(0, 140);
+    const evidenceImageRaw = req.body?.evidenceImage;
+    const evidenceImage = evidenceImageRaw ? normalizeScamReportEvidenceImage(evidenceImageRaw) : null;
+    if (evidenceImageRaw && !evidenceImage) {
+      return res.status(400).json({
+        message: `Invalid evidence image. Only image/* data URL is allowed. Max ${SCAM_REPORT_IMAGE_MAX_BYTES} bytes.`,
+      });
+    }
+    if (!sellerAlias || !firstName || !lastName || !bankAccount || !bankName || !product || !transferDate || amount <= 0) {
+      return res.status(400).json({
+        message:
+          'sellerAlias, firstName, lastName, bankAccount, bankName, product, transferDate and amount are required.',
+      });
+    }
+
+    const reportId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
+    const record = {
+      sellerAlias,
+      firstName,
+      lastName,
+      citizenId,
+      phone,
+      bankAccount,
+      bankName,
+      product,
+      amount,
+      transferDate,
+      pageUrl,
+      province,
+      evidenceImage,
+      createdById: sanitizeUserId(req.rootAdmin?.id),
+      createdByUsername: sanitizeUsername(req.rootAdmin?.username),
+      createdByEmail: sanitizeEmail(req.rootAdmin?.email),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await scamReportRef.doc(reportId).set(record, { merge: true });
+
+    return res.status(201).json({
+      message: 'Scam report submitted successfully.',
+      report: toScamReportResponse(reportId, record),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to submit scam report.' });
   }
 });
 
