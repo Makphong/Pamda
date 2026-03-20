@@ -88,6 +88,8 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
       .btn:disabled { opacity: 0.6; cursor: not-allowed; }
       .btn.primary { color: #fff; background: linear-gradient(120deg, var(--accent), #1e3a8a); }
       .btn.secondary { color: #fff; background: linear-gradient(120deg, var(--accent-2), #0f766e); }
+      .btn.warn { color: #fff; background: linear-gradient(120deg, #d97706, #b45309); }
+      .btn.danger { color: #fff; background: linear-gradient(120deg, #dc2626, #b91c1c); }
       .btn.ghost { color: #1f2937; background: #f3f4f6; border: 1px solid #d1d5db; }
       .btn.upload { color: #0f172a; border: 1px solid #bfdbfe; background: #eff6ff; }
       .tiny { margin-top: 6px; font-size: 0.74rem; color: var(--muted); }
@@ -272,6 +274,8 @@ export const renderLineEscrowDealPage = () =>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
             <button id="deal-create-btn" class="btn primary" type="submit">สร้างดีล + สร้าง QR ชำระเงิน</button>
             <button id="deal-check-btn" class="btn ghost" type="button">เช็กสถานะการชำระเงิน</button>
+            <button id="deal-manual-paid-btn" class="btn warn hidden" type="button">ติ๊กว่าชำระเงินแล้ว (โหมดทดสอบ)</button>
+            <button id="deal-cancel-btn" class="btn danger hidden" type="button">ยกเลิกดีล</button>
           </div>
         </form>
         <div id="deal-status" class="status hidden"></div>
@@ -283,9 +287,12 @@ export const renderLineEscrowDealPage = () =>
       var form = document.getElementById('escrow-create-form');
       var createBtn = document.getElementById('deal-create-btn');
       var checkBtn = document.getElementById('deal-check-btn');
+      var manualPaidBtn = document.getElementById('deal-manual-paid-btn');
+      var cancelBtn = document.getElementById('deal-cancel-btn');
       var statusBox = document.getElementById('deal-status');
       var resultBox = document.getElementById('deal-result');
       var dealId = parseDealIdFromLocation();
+      var STORAGE_KEY_PREFIX = 'lineEscrowDealIdByGroup:';
 
       var groupInput = document.getElementById('deal-group-id');
       var buyerNameInput = document.getElementById('deal-buyer-name');
@@ -305,15 +312,70 @@ export const renderLineEscrowDealPage = () =>
         groupInput.setAttribute('aria-readonly', 'true');
       }
 
+      function getStorageKey(groupIdValue) {
+        return STORAGE_KEY_PREFIX + String(groupIdValue || '').trim();
+      }
+
+      function saveStoredDealId(groupIdValue, dealIdValue) {
+        var groupIdText = String(groupIdValue || '').trim();
+        var dealIdText = String(dealIdValue || '').trim();
+        if (!groupIdText || !dealIdText || !window.localStorage) return;
+        try {
+          window.localStorage.setItem(getStorageKey(groupIdText), dealIdText);
+        } catch (_error) {}
+      }
+
+      function loadStoredDealId(groupIdValue) {
+        var groupIdText = String(groupIdValue || '').trim();
+        if (!groupIdText || !window.localStorage) return '';
+        try {
+          return String(window.localStorage.getItem(getStorageKey(groupIdText)) || '').trim();
+        } catch (_error) {
+          return '';
+        }
+      }
+
+      function clearStoredDealId(groupIdValue) {
+        var groupIdText = String(groupIdValue || '').trim();
+        if (!groupIdText || !window.localStorage) return;
+        try {
+          window.localStorage.removeItem(getStorageKey(groupIdText));
+        } catch (_error) {}
+      }
+
+      function syncBankBrandByDeal(deal) {
+        var brand = String(deal && deal.sellerBankBrand || '').trim().toLowerCase();
+        if (!brand) return;
+        for (var i = 0; i < bankBrandInput.options.length; i += 1) {
+          if (String(bankBrandInput.options[i].value || '').trim().toLowerCase() === brand) {
+            bankBrandInput.selectedIndex = i;
+            break;
+          }
+        }
+      }
+
+      function updateDealActionButtons(deal) {
+        var d = deal && typeof deal === 'object' ? deal : null;
+        var status = String(d && d.status || '').trim().toLowerCase();
+        var paymentStatus = String(d && d.paymentStatus || '').trim().toLowerCase();
+        var canManagePendingPayment = Boolean(d && d.id) && status === 'awaiting_payment' && paymentStatus !== 'paid' && paymentStatus !== 'cancelled';
+        manualPaidBtn.classList.toggle('hidden', !canManagePendingPayment);
+        cancelBtn.classList.toggle('hidden', !canManagePendingPayment);
+      }
+
       function setBusy(isBusy) {
         createBtn.disabled = Boolean(isBusy);
         checkBtn.disabled = Boolean(isBusy);
+        manualPaidBtn.disabled = Boolean(isBusy);
+        cancelBtn.disabled = Boolean(isBusy);
         createBtn.textContent = isBusy ? 'กำลังสร้างดีล...' : 'สร้างดีล + สร้าง QR ชำระเงิน';
       }
 
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
         if (d.id) dealId = String(d.id);
+        if (d.groupId && d.id) saveStoredDealId(d.groupId, d.id);
+        syncBankBrandByDeal(d);
         var qrHtml = d.paymentQrImageUrl
           ? '<div class="qr"><div style="font-size:0.78rem;color:#334155;">สแกน QR นี้เพื่อโอนเงินเข้าระบบ</div><img alt="คิวอาร์พร้อมเพย์" src="' + escapeHtml(d.paymentQrImageUrl) + '" /></div>'
           : '<p class="tiny">ยังไม่มี QR (ตรวจสอบการตั้งค่า Payment Provider)</p>';
@@ -329,15 +391,43 @@ export const renderLineEscrowDealPage = () =>
             '<div class="k">สถานะชำระเงิน</div><div class="v">' + escapeHtml(d.paymentStatus || '-') + '</div>' +
             '<div class="k">ยอดเงิน</div><div class="v">' + escapeHtml((Number(d.paymentAmountThb || 0)).toLocaleString()) + ' THB</div>' +
             '<div class="k">สินค้า</div><div class="v">' + escapeHtml(d.itemName || '-') + '</div>' +
+            '<div class="k">ธนาคารผู้ขาย</div><div class="v">' + escapeHtml(d.sellerBankName || d.sellerBankBrand || '-') + '</div>' +
           '</div>' +
           qrHtml +
           (links ? '<div style="margin-top:10px;font-size:0.82rem;">' + links + '</div>' : '');
         resultBox.classList.remove('hidden');
+        updateDealActionButtons(d);
+
+        var status = String(d.status || '').trim().toLowerCase();
+        var paymentStatus = String(d.paymentStatus || '').trim().toLowerCase();
+        if (d.groupId && (paymentStatus === 'paid' || status !== 'awaiting_payment')) {
+          clearStoredDealId(d.groupId);
+        }
+      }
+
+      async function loadDealById(targetDealId, refreshPayment, silent) {
+        var targetId = String(targetDealId || '').trim();
+        if (!targetId) return null;
+        var url = '/line/escrow/liff/api/deals/' + encodeURIComponent(targetId);
+        if (refreshPayment) url += '?refreshPayment=1';
+        var response = await fetch(url);
+        var payload = await response.json().catch(function () { return null; });
+        if (!response.ok) {
+          throw new Error((payload && payload.message) || 'โหลดดีลไม่สำเร็จ');
+        }
+        if (payload && payload.deal) {
+          renderDeal(payload.deal);
+          return payload.deal;
+        }
+        if (!silent) {
+          showStatus(statusBox, 'ไม่พบข้อมูลดีล', 'error');
+        }
+        return null;
       }
 
       async function checkPayment() {
         if (!dealId) {
-          showStatus(statusBox, 'ยังไม่มี dealId ให้ตรวจสอบ', 'error');
+          showStatus(statusBox, 'ยังไม่มีรหัสดีลให้ตรวจสอบ', 'error');
           return;
         }
         hideStatus(statusBox);
@@ -359,19 +449,120 @@ export const renderLineEscrowDealPage = () =>
         }
       }
 
+      async function loadActivePaymentDeal(groupIdValue, silent) {
+        var groupIdText = String(groupIdValue || '').trim();
+        if (!groupIdText) return null;
+        var url =
+          '/line/escrow/liff/api/deals/active-payment?groupId=' +
+          encodeURIComponent(groupIdText) +
+          '&refreshPayment=1';
+        var response = await fetch(url);
+        var payload = await response.json().catch(function () { return null; });
+        if (!response.ok) {
+          throw new Error((payload && payload.message) || 'โหลดดีลที่รอชำระไม่สำเร็จ');
+        }
+        if (payload && payload.deal) {
+          renderDeal(payload.deal);
+          return payload.deal;
+        }
+        if (payload && payload.message && !silent) {
+          showStatus(statusBox, payload.message, 'success');
+        }
+        return null;
+      }
+
+      async function markManualPaidForTest() {
+        if (!dealId) {
+          showStatus(statusBox, 'ยังไม่มีรหัสดีลให้ยืนยันชำระเงิน', 'error');
+          return;
+        }
+        if (!window.confirm('ยืนยันว่ารายการนี้ได้รับเงินแล้วใช่หรือไม่?')) return;
+        var second = window.prompt('พิมพ์คำว่า "ยืนยัน" เพื่อยืนยันการชำระเงินในโหมดทดสอบ');
+        if (String(second || '').trim() !== 'ยืนยัน') {
+          showStatus(statusBox, 'ยกเลิกการยืนยันชำระเงิน', 'error');
+          return;
+        }
+        hideStatus(statusBox);
+        setBusy(true);
+        try {
+          var response = await fetch('/line/escrow/liff/api/deals/' + encodeURIComponent(dealId) + '/manual-confirm-paid', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groupId: String(groupInput.value || '').trim() })
+          });
+          var payload = await response.json().catch(function () { return null; });
+          if (!response.ok) throw new Error((payload && payload.message) || 'ยืนยันชำระเงินไม่สำเร็จ');
+          renderDeal(payload && payload.deal);
+          showStatus(statusBox, (payload && payload.message) || 'ยืนยันชำระเงินแล้ว', 'success');
+        } catch (error) {
+          showStatus(statusBox, (error && error.message) || 'ยืนยันชำระเงินไม่สำเร็จ', 'error');
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function cancelDeal() {
+        if (!dealId) {
+          showStatus(statusBox, 'ยังไม่มีรหัสดีลให้ยกเลิก', 'error');
+          return;
+        }
+        if (!window.confirm('ต้องการยกเลิกดีลนี้ใช่หรือไม่?')) return;
+        var second = window.prompt('พิมพ์คำว่า "ยกเลิกดีล" เพื่อยืนยันการยกเลิก');
+        if (String(second || '').trim() !== 'ยกเลิกดีล') {
+          showStatus(statusBox, 'ยกเลิกการดำเนินการยกเลิกดีล', 'error');
+          return;
+        }
+        hideStatus(statusBox);
+        setBusy(true);
+        try {
+          var response = await fetch('/line/escrow/liff/api/deals/' + encodeURIComponent(dealId) + '/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          var payload = await response.json().catch(function () { return null; });
+          if (!response.ok) throw new Error((payload && payload.message) || 'ยกเลิกดีลไม่สำเร็จ');
+          renderDeal(payload && payload.deal);
+          showStatus(statusBox, (payload && payload.message) || 'ยกเลิกดีลแล้ว', 'success');
+        } catch (error) {
+          showStatus(statusBox, (error && error.message) || 'ยกเลิกดีลไม่สำเร็จ', 'error');
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function bootstrapDealState() {
+        try {
+          if (dealId) {
+            await loadDealById(dealId, true, true);
+            return;
+          }
+          var groupIdValue = String(groupInput.value || '').trim();
+          if (!groupIdValue) return;
+          var storedDealId = loadStoredDealId(groupIdValue);
+          if (storedDealId) {
+            try {
+              await loadDealById(storedDealId, true, true);
+              if (dealId) return;
+            } catch (_error) {
+              clearStoredDealId(groupIdValue);
+            }
+          }
+          await loadActivePaymentDeal(groupIdValue, true);
+        } catch (_error) {}
+      }
+
       checkBtn.addEventListener('click', function () {
         void checkPayment();
       });
-
-      if (dealId) {
-        void (async function () {
-          try {
-            var response = await fetch('/line/escrow/liff/api/deals/' + encodeURIComponent(dealId) + '?refreshPayment=1');
-            var payload = await response.json().catch(function () { return null; });
-            if (response.ok && payload && payload.deal) renderDeal(payload.deal);
-          } catch (_error) {}
-        })();
-      }
+      manualPaidBtn.addEventListener('click', function () {
+        void markManualPaidForTest();
+      });
+      cancelBtn.addEventListener('click', function () {
+        void cancelDeal();
+      });
+      updateDealActionButtons(null);
+      void bootstrapDealState();
 
       form.addEventListener('submit', async function (event) {
         event.preventDefault();

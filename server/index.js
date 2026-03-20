@@ -262,6 +262,9 @@ const LINE_ESCROW_CRON_SECRET = String(process.env.LINE_ESCROW_CRON_SECRET || ''
 const LINE_ESCROW_PAYMENT_WEBHOOK_SECRET = String(
   process.env.LINE_ESCROW_PAYMENT_WEBHOOK_SECRET || ''
 ).trim();
+const LINE_ESCROW_MANUAL_PAYMENT_CONFIRM_ENABLED = /^(?:1|true|yes|on)$/i.test(
+  String(process.env.LINE_ESCROW_MANUAL_PAYMENT_CONFIRM_ENABLED || '1').trim()
+);
 const OPN_SECRET_KEY = String(process.env.OPN_SECRET_KEY || '').trim();
 const OPN_PUBLIC_KEY = String(process.env.OPN_PUBLIC_KEY || '').trim();
 const OPN_API_BASE_URL =
@@ -2290,6 +2293,7 @@ const toLineEscrowBotPublicConfig = (req, configInput = {}) => {
     slipUploadMaxBytes: LINE_ESCROW_SLIP_IMAGE_MAX_BYTES,
     cronSecretConfigured: Boolean(LINE_ESCROW_CRON_SECRET),
     paymentWebhookSecretConfigured: Boolean(LINE_ESCROW_PAYMENT_WEBHOOK_SECRET),
+    manualPaymentConfirmEnabled: LINE_ESCROW_MANUAL_PAYMENT_CONFIRM_ENABLED,
     updatedAt: normalized.updatedAt,
   };
 };
@@ -2411,6 +2415,9 @@ const toEscrowDealResponse = (docId, dataInput) => {
     paymentAmountThb: toEscrowAmountThb(paymentAmountSatang),
     paymentAmountSatang,
     paidAt: toEpochMs(data.paidAt) > 0 ? String(data.paidAt).trim() : null,
+    paymentManualConfirmedAt:
+      toEpochMs(data.paymentManualConfirmedAt) > 0 ? String(data.paymentManualConfirmedAt).trim() : null,
+    paymentManualConfirmedSource: String(data.paymentManualConfirmedSource || '').trim(),
     shipmentStatus: String(data.shipmentStatus || 'pending').trim().toLowerCase(),
     courierCode: String(data.courierCode || '').trim(),
     trackingNumber: String(data.trackingNumber || '').trim(),
@@ -2433,6 +2440,7 @@ const toEscrowDealResponse = (docId, dataInput) => {
     payoutAmountSatang,
     payoutReleasedAt: toEpochMs(data.payoutReleasedAt) > 0 ? String(data.payoutReleasedAt).trim() : null,
     payoutFailedReason: String(data.payoutFailedReason || '').trim(),
+    paidStepCardSentAt: toEpochMs(data.paidStepCardSentAt) > 0 ? String(data.paidStepCardSentAt).trim() : null,
     sellerBankName: String(data.sellerBankName || '').trim(),
     sellerBankBrand: String(data.sellerBankBrand || '').trim(),
     sellerBankAccount: String(data.sellerBankAccount || '').trim(),
@@ -2904,6 +2912,157 @@ const buildLineEscrowTrackingArrivedFlexMessage = (dealInput) => {
       },
     },
   };
+};
+
+const buildLineEscrowPaymentSuccessFlexMessage = (dealInput) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  const sellerLiffUrl = normalizeOptionalHttpUrl(deal.sellerLiffUrl || '', 1200);
+  return {
+    type: 'flex',
+    altText: `ดีล ${String(deal.id || '').trim()} ชำระเงินแล้ว`,
+    contents: {
+      type: 'bubble',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '8px',
+        contents: [
+          { type: 'text', text: 'ชำระเงินสำเร็จแล้ว', size: 'lg', weight: 'bold', color: '#166534' },
+          { type: 'text', text: `ดีล: ${String(deal.id || '-').trim()}`, size: 'sm', color: '#334155' },
+          {
+            type: 'text',
+            text: `ยอดคุ้มครอง ${Number(toEscrowAmountThb(deal.paymentAmountSatang || 0)).toLocaleString()} THB`,
+            size: 'sm',
+            color: '#334155',
+            wrap: true,
+          },
+          {
+            type: 'text',
+            text: 'ขั้นตอนถัดไป: ผู้ขายกดส่งเลขพัสดุพร้อมสลิปที่หน้า LIFF ผู้ขาย',
+            size: 'xs',
+            color: '#6b7280',
+            wrap: true,
+          },
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '8px',
+        contents: sellerLiffUrl
+          ? [
+              {
+                type: 'button',
+                style: 'primary',
+                color: '#0f766e',
+                action: {
+                  type: 'uri',
+                  label: 'เปิดหน้า LIFF ผู้ขาย',
+                  uri: sellerLiffUrl,
+                },
+              },
+            ]
+          : [
+              {
+                type: 'text',
+                text: 'ยังไม่ได้ตั้งค่า LIFF ผู้ขาย',
+                size: 'xs',
+                color: '#991b1b',
+                wrap: true,
+              },
+            ],
+      },
+    },
+  };
+};
+
+const markEscrowDealPaidWaitingShipment = async ({ dealRef, dealInput, manualConfirmed = false, manualSource = '' }) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  if (!dealRef || typeof dealRef.set !== 'function') {
+    const error = new Error('dealRef is required.');
+    error.status = 500;
+    throw error;
+  }
+  const nowIso = new Date().toISOString();
+  const patch = {
+    paymentStatus: 'paid',
+    status: 'paid_waiting_shipment',
+    shipmentStatus: 'pending',
+    paidAt: normalizeOptionalString(deal.paidAt || nowIso, 60) || nowIso,
+    updatedAt: nowIso,
+  };
+  if (manualConfirmed) {
+    patch.paymentManualConfirmedAt = nowIso;
+    patch.paymentManualConfirmedSource = normalizeOptionalString(manualSource || 'liff_manual_confirm', 80);
+  }
+  await dealRef.set(patch, { merge: true });
+  return {
+    ...deal,
+    ...patch,
+  };
+};
+
+const sendEscrowPaidStepCardIfNeeded = async ({ req, dealInput, configInput = null, force = false } = {}) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  const dealId = String(deal.id || '').trim();
+  const groupId = String(deal.groupId || '').trim();
+  const paymentStatus = String(deal.paymentStatus || '').trim().toLowerCase();
+  if (!dealId || !groupId || paymentStatus !== 'paid') return deal;
+  if (!force && toEpochMs(deal.paidStepCardSentAt) > 0) return deal;
+
+  const config = configInput || (await loadLineEscrowBotConfigRecord());
+  const dealWithLiff = buildEscrowDealQueryWithLiffUrls(req, deal, config);
+  try {
+    await sendLinePushMessage({
+      channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
+      to: groupId,
+      messages: [buildLineEscrowPaymentSuccessFlexMessage(dealWithLiff)],
+    });
+    const nowIso = new Date().toISOString();
+    await lineEscrowDealRef.doc(dealId).set(
+      {
+        paidStepCardSentAt: nowIso,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+    return {
+      ...dealWithLiff,
+      paidStepCardSentAt: nowIso,
+      updatedAt: nowIso,
+    };
+  } catch (error) {
+    console.warn(`Failed to push paid step card for deal ${dealId}:`, error.message);
+    return dealWithLiff;
+  }
+};
+
+const isEscrowDealAwaitingPayment = (dealInput) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  const status = String(deal.status || '').trim().toLowerCase();
+  const paymentStatus = String(deal.paymentStatus || '').trim().toLowerCase();
+  return status === 'awaiting_payment' && paymentStatus !== 'paid' && paymentStatus !== 'cancelled';
+};
+
+const loadLatestEscrowAwaitingPaymentDealByGroup = async (groupIdInput) => {
+  const groupId = normalizeOptionalString(groupIdInput || '', 120);
+  if (!groupId) return null;
+  const snapshot = await lineEscrowDealRef.where('groupId', '==', groupId).get();
+  if (snapshot.empty) return null;
+  const candidates = snapshot.docs
+    .map((doc) => ({
+      ref: lineEscrowDealRef.doc(doc.id),
+      deal: toEscrowDealResponse(doc.id, doc.data() || {}),
+    }))
+    .filter((entry) => isEscrowDealAwaitingPayment(entry.deal));
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    const aScore = Math.max(toEpochMs(a.deal.updatedAt), toEpochMs(a.deal.createdAt));
+    const bScore = Math.max(toEpochMs(b.deal.updatedAt), toEpochMs(b.deal.createdAt));
+    if (bScore !== aScore) return bScore - aScore;
+    return String(b.deal.id || '').localeCompare(String(a.deal.id || ''));
+  });
+  return candidates[0];
 };
 
 const loadEscrowDealWithRef = async (dealIdInput) => {
@@ -5403,6 +5562,7 @@ app.get('/health', (_req, res) => {
     lineEscrowSlipImageMaxBytes: LINE_ESCROW_SLIP_IMAGE_MAX_BYTES,
     lineEscrowCronConfigured: Boolean(LINE_ESCROW_CRON_SECRET),
     lineEscrowPaymentWebhookSecretConfigured: Boolean(LINE_ESCROW_PAYMENT_WEBHOOK_SECRET),
+    lineEscrowManualPaymentConfirmEnabled: LINE_ESCROW_MANUAL_PAYMENT_CONFIRM_ENABLED,
     openAiConfigured: Boolean(OPENAI_API_KEY),
     openAiModel: OPENAI_MODEL,
     openAiReasoningEffort: OPENAI_REASONING_EFFORT,
@@ -7250,6 +7410,14 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
         },
       });
     }
+    const activePaymentDeal = await loadLatestEscrowAwaitingPaymentDealByGroup(groupId);
+    if (activePaymentDeal) {
+      const config = await loadLineEscrowBotConfigRecord();
+      return res.status(200).json({
+        message: 'พบดีลที่รอชำระอยู่แล้ว ระบบเปิดดีลเดิมให้',
+        deal: buildEscrowDealQueryWithLiffUrls(req, activePaymentDeal.deal, config),
+      });
+    }
 
     const dealId = crypto.randomUUID();
     const nowIso = new Date().toISOString();
@@ -7342,6 +7510,51 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
   }
 });
 
+app.get('/line/escrow/liff/api/deals/active-payment', async (req, res) => {
+  try {
+    const groupId = normalizeOptionalString(req.query?.groupId || '', 120);
+    if (!groupId) {
+      return res.status(400).json({ message: 'groupId is required.' });
+    }
+    const found = await loadLatestEscrowAwaitingPaymentDealByGroup(groupId);
+    if (!found) {
+      return res.json({ deal: null });
+    }
+    let deal = found.deal;
+    const shouldRefreshPayment = String(req.query?.refreshPayment || '').trim() !== '0';
+    if (shouldRefreshPayment && String(deal.paymentStatus || '').trim().toLowerCase() !== 'paid') {
+      deal = await refreshEscrowDealPaymentStatus(deal);
+    }
+    if (
+      String(deal.paymentStatus || '').trim().toLowerCase() === 'paid' &&
+      String(deal.status || '').trim().toLowerCase() === 'awaiting_payment'
+    ) {
+      deal = await markEscrowDealPaidWaitingShipment({
+        dealRef: found.ref,
+        dealInput: deal,
+      });
+      deal = await sendEscrowPaidStepCardIfNeeded({
+        req,
+        dealInput: deal,
+      });
+      return res.json({
+        deal: null,
+        message: 'ดีลนี้ชำระเงินแล้ว ระบบส่งขั้นตอนถัดไปในกลุ่มเรียบร้อย',
+      });
+    }
+    const config = await loadLineEscrowBotConfigRecord();
+    return res.json({
+      deal: buildEscrowDealQueryWithLiffUrls(req, deal, config),
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to load active payment deal.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to load active payment deal.' });
+  }
+});
+
 app.post('/line/escrow/liff/api/deals/:dealId/check-payment', async (req, res) => {
   try {
     const found = await loadEscrowDealWithRef(req.params?.dealId);
@@ -7351,25 +7564,21 @@ app.post('/line/escrow/liff/api/deals/:dealId/check-payment', async (req, res) =
     let deal = found.deal;
     if (String(deal.paymentStatus || '').trim().toLowerCase() !== 'paid') {
       deal = await refreshEscrowDealPaymentStatus(deal);
-      if (String(deal.paymentStatus || '').trim().toLowerCase() === 'paid') {
-        const nowIso = new Date().toISOString();
-        await found.ref.set(
-          {
-            status: 'paid_waiting_shipment',
-            shipmentStatus: 'pending',
-            paidAt: deal.paidAt || nowIso,
-            updatedAt: nowIso,
-          },
-          { merge: true }
-        );
-        deal = {
-          ...deal,
-          status: 'paid_waiting_shipment',
-          shipmentStatus: 'pending',
-          paidAt: deal.paidAt || nowIso,
-          updatedAt: nowIso,
-        };
-      }
+    }
+    if (
+      String(deal.paymentStatus || '').trim().toLowerCase() === 'paid' &&
+      String(deal.status || '').trim().toLowerCase() === 'awaiting_payment'
+    ) {
+      deal = await markEscrowDealPaidWaitingShipment({
+        dealRef: found.ref,
+        dealInput: deal,
+      });
+    }
+    if (String(deal.paymentStatus || '').trim().toLowerCase() === 'paid') {
+      deal = await sendEscrowPaidStepCardIfNeeded({
+        req,
+        dealInput: deal,
+      });
     }
     const config = await loadLineEscrowBotConfigRecord();
     return res.json({
@@ -7381,6 +7590,101 @@ app.post('/line/escrow/liff/api/deals/:dealId/check-payment', async (req, res) =
       return res.status(status).json({ message: error.message || 'Failed to check payment status.' });
     }
     return res.status(500).json({ message: error.message || 'Failed to check payment status.' });
+  }
+});
+
+app.post('/line/escrow/liff/api/deals/:dealId/cancel', async (req, res) => {
+  try {
+    const found = await loadEscrowDealWithRef(req.params?.dealId);
+    if (!found) {
+      return res.status(404).json({ message: 'Deal not found.' });
+    }
+    const status = String(found.deal.status || '').trim().toLowerCase();
+    const paymentStatus = String(found.deal.paymentStatus || '').trim().toLowerCase();
+    if (status === 'cancelled') {
+      const config = await loadLineEscrowBotConfigRecord();
+      return res.json({
+        message: 'ดีลนี้ถูกยกเลิกแล้ว',
+        deal: buildEscrowDealQueryWithLiffUrls(req, found.deal, config),
+      });
+    }
+    if (
+      paymentStatus === 'paid' ||
+      ['paid_waiting_shipment', 'shipped', 'delivered_waiting_confirmation', 'confirmed_release_pending', 'released'].includes(
+        status
+      )
+    ) {
+      return res.status(400).json({
+        message: 'ไม่สามารถยกเลิกดีลหลังชำระเงินหรือเข้าขั้นตอนจัดส่งแล้ว',
+      });
+    }
+    const nowIso = new Date().toISOString();
+    const patch = {
+      status: 'cancelled',
+      shipmentStatus: 'cancelled',
+      paymentStatus: paymentStatus === 'failed' ? 'failed' : 'cancelled',
+      paymentQrImageUrl: '',
+      paymentExpiresAt: null,
+      cancelledAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await found.ref.set(patch, { merge: true });
+    const updatedDeal = {
+      ...found.deal,
+      ...patch,
+    };
+    const config = await loadLineEscrowBotConfigRecord();
+    return res.json({
+      message: 'ยกเลิกดีลเรียบร้อยแล้ว',
+      deal: buildEscrowDealQueryWithLiffUrls(req, updatedDeal, config),
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to cancel deal.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to cancel deal.' });
+  }
+});
+
+app.post('/line/escrow/liff/api/deals/:dealId/manual-confirm-paid', async (req, res) => {
+  try {
+    if (!LINE_ESCROW_MANUAL_PAYMENT_CONFIRM_ENABLED) {
+      return res.status(403).json({ message: 'Manual payment confirmation is disabled on server.' });
+    }
+    const found = await loadEscrowDealWithRef(req.params?.dealId);
+    if (!found) {
+      return res.status(404).json({ message: 'Deal not found.' });
+    }
+    const status = String(found.deal.status || '').trim().toLowerCase();
+    const paymentStatus = String(found.deal.paymentStatus || '').trim().toLowerCase();
+    if (status === 'cancelled') {
+      return res.status(400).json({ message: 'ดีลนี้ถูกยกเลิกแล้ว ไม่สามารถยืนยันชำระเงินได้' });
+    }
+    let deal = found.deal;
+    if (!(paymentStatus === 'paid' && status === 'paid_waiting_shipment')) {
+      deal = await markEscrowDealPaidWaitingShipment({
+        dealRef: found.ref,
+        dealInput: deal,
+        manualConfirmed: true,
+        manualSource: 'liff_test_confirm',
+      });
+    }
+    deal = await sendEscrowPaidStepCardIfNeeded({
+      req,
+      dealInput: deal,
+    });
+    const config = await loadLineEscrowBotConfigRecord();
+    return res.json({
+      message: 'ยืนยันการชำระเงินแล้ว และส่งขั้นตอนถัดไปในกลุ่มเรียบร้อย',
+      deal: buildEscrowDealQueryWithLiffUrls(req, deal, config),
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to confirm payment manually.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to confirm payment manually.' });
   }
 });
 
@@ -7443,77 +7747,18 @@ app.post('/line/escrow/payment/webhook', async (req, res) => {
     };
     if (paid && String(foundDeal.deal.status || '').trim().toLowerCase() === 'awaiting_payment') {
       patch.status = 'paid_waiting_shipment';
+      patch.shipmentStatus = 'pending';
     }
     await foundDeal.ref.set(patch, { merge: true });
-    const updatedDeal = {
+    let updatedDeal = {
       ...foundDeal.deal,
       ...patch,
     };
 
-    if (paid && String(updatedDeal.groupId || '').trim()) {
-      const config = await loadLineEscrowBotConfigRecord();
-      const dealWithLiff = buildEscrowDealQueryWithLiffUrls(req, updatedDeal, config);
-      const paidCard = {
-        type: 'flex',
-        altText: `ดีล ${updatedDeal.id} ชำระเงินแล้ว`,
-        contents: {
-          type: 'bubble',
-          body: {
-            type: 'box',
-            layout: 'vertical',
-            spacing: '8px',
-            contents: [
-              { type: 'text', text: 'ชำระเงินสำเร็จแล้ว', size: 'lg', weight: 'bold', color: '#166534' },
-              { type: 'text', text: `ดีล: ${updatedDeal.id}`, size: 'sm', color: '#334155' },
-              {
-                type: 'text',
-                text: `ยอดคุ้มครอง ${Number(toEscrowAmountThb(updatedDeal.paymentAmountSatang || 0)).toLocaleString()} THB`,
-                size: 'sm',
-                color: '#334155',
-                wrap: true,
-              },
-              {
-                type: 'text',
-                text: 'ขั้นตอนถัดไป: ผู้ขายกดส่งเลขพัสดุพร้อมสลิปที่หน้า LIFF ผู้ขาย',
-                size: 'xs',
-                color: '#6b7280',
-                wrap: true,
-              },
-            ],
-          },
-          footer: {
-            type: 'box',
-            layout: 'vertical',
-            spacing: '8px',
-            contents: dealWithLiff.sellerLiffUrl
-              ? [
-                  {
-                    type: 'button',
-                    style: 'primary',
-                    color: '#0f766e',
-                    action: {
-                      type: 'uri',
-                      label: 'เปิดหน้า LIFF ผู้ขาย',
-                      uri: dealWithLiff.sellerLiffUrl,
-                    },
-                  },
-                ]
-              : [
-                  {
-                    type: 'text',
-                    text: 'ยังไม่ได้ตั้งค่า LIFF ผู้ขาย',
-                    size: 'xs',
-                    color: '#991b1b',
-                    wrap: true,
-                  },
-                ],
-          },
-        },
-      };
-      await sendLinePushMessage({
-        channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
-        to: String(updatedDeal.groupId || '').trim(),
-        messages: [paidCard],
+    if (paid) {
+      updatedDeal = await sendEscrowPaidStepCardIfNeeded({
+        req,
+        dealInput: updatedDeal,
       });
     }
 
