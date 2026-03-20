@@ -2717,6 +2717,18 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
   const isStartStage = currentStage === 'start';
   const safeGroupId = normalizeOptionalString(groupId || '', 120);
   const footerButtons = [];
+  if (isStartStage && safeGroupId) {
+    footerButtons.push({
+      type: 'button',
+      style: 'secondary',
+      color: '#e0e7ff',
+      action: {
+        type: 'clipboard',
+        label: 'คัดลอก Group ID',
+        clipboardText: safeGroupId,
+      },
+    });
+  }
   if (dealUrl) {
     footerButtons.push({
       type: 'button',
