@@ -8,6 +8,11 @@ import { OAuth2Client } from 'google-auth-library';
 import { Firestore } from '@google-cloud/firestore';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import {
+  renderLineScamFakeNewsPage,
+  renderLineScamRiskAssessPage,
+  renderLineScamScammerCheckPage,
+} from './lineScamLiffPages.js';
 
 dotenv.config();
 
@@ -73,6 +78,12 @@ const FIRESTORE_LINE_REMINDER_LOG_COLLECTION = String(
 const FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION = String(
   process.env.FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION || 'line_webhook_logs'
 ).trim();
+const FIRESTORE_LINE_SCAM_BOT_COLLECTION = String(
+  process.env.FIRESTORE_LINE_SCAM_BOT_COLLECTION || 'line_scam_bot'
+).trim();
+const FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION = String(
+  process.env.FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION || 'line_scam_webhook_logs'
+).trim();
 const FIRESTORE_ADMIN_COMPLAINT_COLLECTION = String(
   process.env.FIRESTORE_ADMIN_COMPLAINT_COLLECTION || 'support_complaints'
 ).trim();
@@ -107,6 +118,10 @@ const SCAM_REPORT_IMAGE_MAX_BYTES = Math.max(
   60_000,
   Number(process.env.SCAM_REPORT_IMAGE_MAX_BYTES || 600_000)
 );
+const SCAM_LIFF_IMAGE_MAX_BYTES = Math.max(
+  120_000,
+  Number(process.env.SCAM_LIFF_IMAGE_MAX_BYTES || 2_500_000)
+);
 const SUPPORT_TICKET_MAX_MESSAGE_LENGTH = Math.max(
   200,
   Number(process.env.SUPPORT_TICKET_MAX_MESSAGE_LENGTH || 4000)
@@ -135,6 +150,17 @@ const LINE_REMINDER_CHANNEL_ACCESS_TOKEN = String(
     LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN ||
     ''
 ).trim();
+const LINE_SCAM_CHANNEL_SECRET = String(process.env.LINE_SCAM_CHANNEL_SECRET || '').trim();
+const LINE_SCAM_CHANNEL_ACCESS_TOKEN = String(process.env.LINE_SCAM_CHANNEL_ACCESS_TOKEN || '').trim();
+const LINE_SCAM_LIFF_SCAMMER_CHECK_URL = String(
+  process.env.LINE_SCAM_LIFF_SCAMMER_CHECK_URL || ''
+).trim();
+const LINE_SCAM_LIFF_FAKE_NEWS_URL = String(process.env.LINE_SCAM_LIFF_FAKE_NEWS_URL || '').trim();
+const LINE_SCAM_LIFF_RISK_ASSESS_URL = String(
+  process.env.LINE_SCAM_LIFF_RISK_ASSESS_URL || ''
+).trim();
+const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
+const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim() || 'gemini-2.5-flash';
 const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || '').trim();
 const OPENAI_MODEL = String(process.env.OPENAI_MODEL || 'gpt-5-mini').trim() || 'gpt-5-mini';
 const OPENAI_REASONING_EFFORT = String(process.env.OPENAI_REASONING_EFFORT || 'low')
@@ -250,6 +276,9 @@ const invitesDocRef = firestore.collection(PROJECT_INVITES_COLLECTION).doc(PROJE
 const lineReminderConfigRef = firestore.collection(FIRESTORE_LINE_REMINDER_COLLECTION);
 const lineReminderLogRef = firestore.collection(FIRESTORE_LINE_REMINDER_LOG_COLLECTION);
 const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION);
+const lineScamBotRef = firestore.collection(FIRESTORE_LINE_SCAM_BOT_COLLECTION);
+const lineScamWebhookLogRef = firestore.collection(FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION);
+const lineScamBotConfigDocRef = lineScamBotRef.doc('global');
 const adminComplaintRef = firestore.collection(FIRESTORE_ADMIN_COMPLAINT_COLLECTION);
 const supportTicketRef = firestore.collection(FIRESTORE_SUPPORT_TICKET_COLLECTION);
 const scamReportRef = firestore.collection(FIRESTORE_SCAM_REPORT_COLLECTION);
@@ -549,6 +578,413 @@ const toScamReportResponse = (docId, dataInput) => {
     createdAt,
     updatedAt,
   };
+};
+
+const clampPercent = (valueInput) => {
+  const value = Number(valueInput);
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, Math.round(value * 100) / 100));
+};
+
+const normalizeOptionalString = (valueInput, maxLength = 400) =>
+  String(valueInput || '')
+    .trim()
+    .slice(0, Math.max(20, Number(maxLength || 400)));
+
+const parseImageDataUrlForGemini = (dataUrlInput, maxBytes = SCAM_LIFF_IMAGE_MAX_BYTES) => {
+  const dataUrl = String(dataUrlInput || '').trim();
+  if (!dataUrl) return null;
+  const matched = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([a-zA-Z0-9+/=\n\r]+)$/);
+  if (!matched) return null;
+  const mimeType = String(matched[1] || '').trim().toLowerCase();
+  const base64Raw = String(matched[2] || '').replace(/\s+/g, '');
+  if (!mimeType.startsWith('image/') || !base64Raw) return null;
+  const byteLength = Buffer.byteLength(base64Raw, 'base64');
+  if (!Number.isFinite(byteLength) || byteLength <= 0 || byteLength > maxBytes) return null;
+  return {
+    mimeType,
+    data: base64Raw,
+    byteLength,
+  };
+};
+
+const extractJsonObjectFromText = (textInput) => {
+  const text = String(textInput || '').trim();
+  if (!text) return null;
+
+  const tryParse = (candidateInput) => {
+    const candidate = String(candidateInput || '').trim();
+    if (!candidate) return null;
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = tryParse(text);
+  if (direct && typeof direct === 'object') return direct;
+
+  const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const fenced = tryParse(fencedMatch?.[1] || '');
+  if (fenced && typeof fenced === 'object') return fenced;
+
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const sliced = tryParse(text.slice(firstBrace, lastBrace + 1));
+    if (sliced && typeof sliced === 'object') return sliced;
+  }
+  return null;
+};
+
+const callGeminiStructuredJson = async ({
+  prompt,
+  imageDataUrl = '',
+  model = GEMINI_MODEL,
+  taskName = 'analysis',
+}) => {
+  if (!GEMINI_API_KEY) {
+    const error = new Error('GEMINI_API_KEY is not configured on server.');
+    error.status = 503;
+    throw error;
+  }
+  const safePrompt = String(prompt || '').trim();
+  if (!safePrompt) {
+    const error = new Error('Prompt is empty for Gemini request.');
+    error.status = 400;
+    throw error;
+  }
+
+  const parts = [{ text: safePrompt }];
+  if (imageDataUrl) {
+    const parsedImage = parseImageDataUrlForGemini(imageDataUrl, SCAM_LIFF_IMAGE_MAX_BYTES);
+    if (!parsedImage) {
+      const error = new Error(
+        `Invalid image data. Please upload image/* base64 and keep size <= ${SCAM_LIFF_IMAGE_MAX_BYTES} bytes.`
+      );
+      error.status = 400;
+      throw error;
+    }
+    parts.push({
+      inline_data: {
+        mime_type: parsedImage.mimeType,
+        data: parsedImage.data,
+      },
+    });
+  }
+
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    String(model || GEMINI_MODEL)
+  )}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: 'user',
+          parts,
+        },
+      ],
+      generationConfig: {
+        temperature: 0.15,
+        responseMimeType: 'application/json',
+      },
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      normalizeOptionalString(payload?.error?.message, 280) ||
+      `Gemini ${taskName} request failed (${response.status}).`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+  const partsOutput = Array.isArray(payload?.candidates?.[0]?.content?.parts)
+    ? payload.candidates[0].content.parts
+    : [];
+  const textOutput = partsOutput
+    .map((part) => String(part?.text || '').trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  const parsedJson = extractJsonObjectFromText(textOutput);
+  if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
+    const error = new Error('Gemini returned invalid JSON format.');
+    error.status = 502;
+    throw error;
+  }
+  return {
+    rawText: textOutput,
+    json: parsedJson,
+  };
+};
+
+const normalizeGeminiReferences = (referencesInput) =>
+  (Array.isArray(referencesInput) ? referencesInput : [])
+    .map((itemInput) => {
+      const item = itemInput && typeof itemInput === 'object' && !Array.isArray(itemInput) ? itemInput : {};
+      const title = normalizeOptionalString(item.title || item.name || item.source || '', 180);
+      const url = normalizeOptionalHttpUrl(item.url || item.link || item.sourceUrl || '', 800);
+      if (!title && !url) return null;
+      return {
+        title: title || url || 'Reference',
+        url: url || '',
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+
+const normalizeGeminiStringList = (valuesInput, maxItems = 10, maxLength = 220) =>
+  (Array.isArray(valuesInput) ? valuesInput : [])
+    .map((value) => normalizeOptionalString(value, maxLength))
+    .filter(Boolean)
+    .slice(0, Math.max(1, Number(maxItems || 10)));
+
+const resolveLineScamRiskLevel = (riskPercentInput) => {
+  const riskPercent = clampPercent(riskPercentInput);
+  if (riskPercent >= 70) return 'high';
+  if (riskPercent >= 40) return 'medium';
+  return 'low';
+};
+
+const buildLineScamActionFlexMessage = ({
+  title,
+  subtitle = '',
+  bodyText = '',
+  actionLabel = 'เปิด LIFF',
+  actionUrl = '',
+  accentColor = '#0ea5e9',
+  altText = '',
+}) => {
+  const safeActionUrl = normalizeOptionalHttpUrl(actionUrl, 1000);
+  return {
+    type: 'flex',
+    altText: normalizeOptionalString(altText || title || 'LINE Scam Bot', 320) || 'LINE Scam Bot',
+    contents: {
+      type: 'bubble',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '12px',
+        contents: [
+          {
+            type: 'box',
+            layout: 'vertical',
+            cornerRadius: '12px',
+            paddingAll: '12px',
+            backgroundColor: accentColor,
+            contents: [
+              {
+                type: 'text',
+                text: normalizeOptionalString(title, 64) || 'LINE Scam Bot',
+                size: 'lg',
+                weight: 'bold',
+                color: '#ffffff',
+                wrap: true,
+              },
+              ...(subtitle
+                ? [
+                    {
+                      type: 'text',
+                      text: normalizeOptionalString(subtitle, 120),
+                      size: 'xs',
+                      color: '#ffffffcc',
+                      wrap: true,
+                    },
+                  ]
+                : []),
+            ],
+          },
+          ...(bodyText
+            ? [
+                {
+                  type: 'text',
+                  text: normalizeOptionalString(bodyText, 420),
+                  size: 'sm',
+                  color: '#334155',
+                  wrap: true,
+                },
+              ]
+            : []),
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '8px',
+        contents: safeActionUrl
+          ? [
+              {
+                type: 'button',
+                style: 'primary',
+                color: accentColor,
+                action: {
+                  type: 'uri',
+                  label: normalizeOptionalString(actionLabel, 20) || 'Open',
+                  uri: safeActionUrl,
+                },
+              },
+            ]
+          : [
+              {
+                type: 'text',
+                text: 'LIFF URL ยังไม่ถูกตั้งค่า โปรดแจ้งผู้ดูแลระบบ',
+                size: 'xs',
+                color: '#991b1b',
+                wrap: true,
+              },
+            ],
+      },
+    },
+  };
+};
+
+const buildLineScamHelpFlexMessage = () =>
+  buildLineScamActionFlexMessage({
+    title: 'คำแนะนำเมื่อถูกโกง',
+    subtitle: 'หยุดโอนเพิ่ม และเก็บหลักฐานทันที',
+    bodyText:
+      '1) แคปแชท/สลิป/โปรไฟล์ผู้ขาย\\n2) โทรอายัดบัญชีปลายทางผ่านธนาคาร\\n3) แจ้งความออนไลน์ผ่าน Thaipoliceonline\\n4) แจ้งความคืบหน้าในช่องทางทางการเท่านั้น',
+    actionLabel: 'เปิดเว็บแจ้งความ',
+    actionUrl: 'https://www.thaipoliceonline.go.th',
+    accentColor: '#dc2626',
+    altText: 'คำแนะนำเมื่อถูกโกง',
+  });
+
+const buildLineScamUsageFlexMessage = () =>
+  buildLineScamActionFlexMessage({
+    title: 'วิธีใช้งาน LINE Scam Bot',
+    subtitle: 'เลือกเมนูจาก Rich Menu ได้ 5 ฟังก์ชัน',
+    bodyText:
+      'ตรวจสอบมิจฉาชีพ: ค้นฐานข้อมูลเคสโกง\\nตรวจสอบข่าวปลอม: วิเคราะห์ข่าวและแหล่งอ้างอิง\\nประเมินความเสี่ยง: อัปโหลดรูปแชทเพื่อวิเคราะห์\\nเมนูคำแนะนำ: อ่านขั้นตอนป้องกันโดนโกง',
+    actionLabel: 'เปิดหน้าตรวจสอบมิจฉาชีพ',
+    actionUrl: LINE_SCAM_LIFF_SCAMMER_CHECK_URL,
+    accentColor: '#0369a1',
+    altText: 'แนะนำวิธีการใช้งาน',
+  });
+
+const buildLineScamUnknownCommandText = () =>
+  [
+    'รองรับคำสั่งจาก Rich Menu ดังนี้:',
+    `- ${LINE_SCAM_RICH_MENU_COMMANDS.HELP_WHEN_SCAMMED}`,
+    `- ${LINE_SCAM_RICH_MENU_COMMANDS.CHECK_SCAMMER}`,
+    `- ${LINE_SCAM_RICH_MENU_COMMANDS.CHECK_FAKE_NEWS}`,
+    `- ${LINE_SCAM_RICH_MENU_COMMANDS.ASSESS_RISK}`,
+    `- ${LINE_SCAM_RICH_MENU_COMMANDS.HOW_TO_USE}`,
+  ].join('\\n');
+
+const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
+  const urls = liffUrls && typeof liffUrls === 'object' ? liffUrls : {};
+  if (commandKey === 'help_when_scammed') {
+    return [buildLineScamHelpFlexMessage()];
+  }
+  if (commandKey === 'check_scammer') {
+    return [
+      buildLineScamActionFlexMessage({
+        title: 'ตรวจสอบมิจฉาชีพ',
+        subtitle: 'ค้นหาประวัติโกงจากฐานข้อมูล',
+        bodyText: 'กดปุ่มด้านล่างเพื่อเปิด LIFF แล้วกรอกชื่อ/บัญชี/เบอร์โทรเพื่อค้นหา',
+        actionLabel: 'เปิด LIFF ตรวจสอบมิจฉาชีพ',
+        actionUrl: urls.scammerCheck || '',
+        accentColor: '#b91c1c',
+        altText: 'ตรวจสอบมิจฉาชีพ',
+      }),
+    ];
+  }
+  if (commandKey === 'check_fake_news') {
+    return [
+      buildLineScamActionFlexMessage({
+        title: 'ตรวจสอบข่าวปลอม',
+        subtitle: 'วิเคราะห์ข้อความข่าวหรือรูปข่าว',
+        bodyText: 'ระบบจะให้เปอร์เซ็นต์ข่าวปลอม พร้อมเหตุผลและแหล่งอ้างอิงที่ควรตรวจซ้ำ',
+        actionLabel: 'เปิด LIFF ตรวจสอบข่าวปลอม',
+        actionUrl: urls.fakeNews || '',
+        accentColor: '#0f766e',
+        altText: 'ตรวจสอบข่าวปลอม',
+      }),
+    ];
+  }
+  if (commandKey === 'assess_risk') {
+    return [
+      buildLineScamActionFlexMessage({
+        title: 'ประเมินความเสี่ยงการโดนโกง',
+        subtitle: 'อัปโหลดรูปแชทให้ AI วิเคราะห์',
+        bodyText: 'ระบบจะแสดงเปอร์เซ็นต์ความเสี่ยง สัญญาณเตือน และคำแนะนำที่ควรทำต่อ',
+        actionLabel: 'เปิด LIFF ประเมินความเสี่ยง',
+        actionUrl: urls.riskAssess || '',
+        accentColor: '#a16207',
+        altText: 'ประเมินความเสี่ยง',
+      }),
+    ];
+  }
+  if (commandKey === 'how_to_use') {
+    const usageCard = buildLineScamUsageFlexMessage();
+    const firstUrl = normalizeOptionalHttpUrl(urls.scammerCheck || '');
+    if (firstUrl) {
+      usageCard.contents.footer = {
+        type: 'box',
+        layout: 'vertical',
+        contents: [
+          {
+            type: 'button',
+            style: 'primary',
+            color: '#0369a1',
+            action: {
+              type: 'uri',
+              label: 'เริ่มใช้งานตอนนี้',
+              uri: firstUrl,
+            },
+          },
+        ],
+      };
+    }
+    return [usageCard];
+  }
+  return [
+    {
+      type: 'text',
+      text: buildLineScamUnknownCommandText().slice(0, 4900),
+    },
+  ];
+};
+
+const normalizeSearchToken = (valueInput) =>
+  String(valueInput || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const toScamReportSearchableText = (reportInput) => {
+  const report = reportInput && typeof reportInput === 'object' && !Array.isArray(reportInput) ? reportInput : {};
+  return normalizeSearchToken(
+    [
+      report.sellerAlias,
+      report.firstName,
+      report.lastName,
+      report.citizenId,
+      report.phone,
+      report.bankAccount,
+      report.bankName,
+      report.product,
+      report.pageUrl,
+      report.province,
+    ]
+      .map((item) => String(item || '').trim())
+      .join(' ')
+  );
+};
+
+const setLineScamLiffHtmlHeaders = (res) => {
+  res.set(
+    'Content-Security-Policy',
+    "default-src 'self'; img-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self' https://liff.line.me"
+  );
+  res.set('X-Frame-Options', 'SAMEORIGIN');
 };
 const SUPPORT_TICKET_STATUS = {
   OPEN: 'open',
@@ -1446,12 +1882,13 @@ const buildLineReminderMessage = ({
   });
 };
 
-const isValidLineWebhookSignature = (req) => {
-  if (!LINE_CHANNEL_SECRET) return false;
+const isValidLineWebhookSignatureWithSecret = (req, channelSecretInput) => {
+  const channelSecret = String(channelSecretInput || '').trim();
+  if (!channelSecret) return false;
   const signature = String(req.get('x-line-signature') || '').trim();
   if (!signature || !req.rawBody) return false;
   const expected = crypto
-    .createHmac('sha256', LINE_CHANNEL_SECRET)
+    .createHmac('sha256', channelSecret)
     .update(req.rawBody)
     .digest('base64');
   const incomingBuffer = Buffer.from(signature);
@@ -1460,11 +1897,14 @@ const isValidLineWebhookSignature = (req) => {
   return crypto.timingSafeEqual(incomingBuffer, expectedBuffer);
 };
 
-const sendLineReplyMessage = async ({ replyToken, message }) => {
-  const token = String(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || '').trim();
+const isValidLineWebhookSignature = (req) =>
+  isValidLineWebhookSignatureWithSecret(req, LINE_CHANNEL_SECRET);
+
+const sendLineReplyMessages = async ({ channelAccessToken, replyToken, messages }) => {
+  const token = String(channelAccessToken || '').trim();
   const safeReplyToken = String(replyToken || '').trim();
-  const text = String(message || '').trim();
-  if (!token || !safeReplyToken || !text) return;
+  const preparedMessages = Array.isArray(messages) ? messages.filter(Boolean).slice(0, 5) : [];
+  if (!token || !safeReplyToken || preparedMessages.length === 0) return;
   const response = await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: {
@@ -1473,7 +1913,7 @@ const sendLineReplyMessage = async ({ replyToken, message }) => {
     },
     body: JSON.stringify({
       replyToken: safeReplyToken,
-      messages: [{ type: 'text', text: text.slice(0, 4900) }],
+      messages: preparedMessages,
     }),
   });
   if (!response.ok) {
@@ -1482,6 +1922,16 @@ const sendLineReplyMessage = async ({ replyToken, message }) => {
       `LINE reply failed (${response.status})${responseText ? `: ${responseText.slice(0, 220)}` : ''}`
     );
   }
+};
+
+const sendLineReplyMessage = async ({ replyToken, message }) => {
+  const text = String(message || '').trim();
+  if (!text) return;
+  await sendLineReplyMessages({
+    channelAccessToken: LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN,
+    replyToken,
+    messages: [{ type: 'text', text: text.slice(0, 4900) }],
+  });
 };
 
 const normalizeLineCommandText = (value) =>
@@ -1502,6 +1952,119 @@ const isLineGroupIdCommand = (value) => {
     '/gid',
     'gid',
   ]).has(normalized);
+};
+
+const LINE_SCAM_RICH_MENU_COMMANDS = Object.freeze({
+  HELP_WHEN_SCAMMED: 'คำแนะนำเมื่อถูกโกง',
+  CHECK_SCAMMER: 'ตรวจสอบมิจฉาชีพ',
+  CHECK_FAKE_NEWS: 'ตรวจสอบข่าวปลอม',
+  ASSESS_RISK: 'ประเมินความเสี่ยง',
+  HOW_TO_USE: 'เเนะนำวิธีการใช้งาน',
+});
+const LINE_SCAM_COMMAND_KEY_BY_TEXT = new Map([
+  [LINE_SCAM_RICH_MENU_COMMANDS.HELP_WHEN_SCAMMED, 'help_when_scammed'],
+  [LINE_SCAM_RICH_MENU_COMMANDS.CHECK_SCAMMER, 'check_scammer'],
+  [LINE_SCAM_RICH_MENU_COMMANDS.CHECK_FAKE_NEWS, 'check_fake_news'],
+  [LINE_SCAM_RICH_MENU_COMMANDS.ASSESS_RISK, 'assess_risk'],
+  [LINE_SCAM_RICH_MENU_COMMANDS.HOW_TO_USE, 'how_to_use'],
+  ['แนะนำวิธีการใช้งาน', 'how_to_use'],
+]);
+const LINE_SCAM_LIFF_DEFAULT_PATHS = Object.freeze({
+  scammerCheck: '/line/scam/liff/scammer-check',
+  fakeNews: '/line/scam/liff/fake-news',
+  riskAssess: '/line/scam/liff/risk-assess',
+});
+
+const resolveLineScamCommandKey = (textInput) => {
+  const text = String(textInput || '').trim();
+  if (!text) return '';
+  return String(LINE_SCAM_COMMAND_KEY_BY_TEXT.get(text) || '').trim();
+};
+
+const resolveRequestOrigin = (req) => {
+  const forwardedProtocol = String(req?.headers?.['x-forwarded-proto'] || '').split(',')[0].trim();
+  const protocol = forwardedProtocol || String(req?.protocol || '').trim() || 'https';
+  const host = String(req?.get?.('host') || '').trim();
+  if (!host) return '';
+  return `${protocol}://${host}`;
+};
+
+const normalizeOptionalHttpUrl = (valueInput, maxLength = 1200) => {
+  const value = String(valueInput || '')
+    .trim()
+    .slice(0, Math.max(10, Number(maxLength || 1200)));
+  if (!value) return '';
+  return isSafeHttpUrl(value) ? value : null;
+};
+
+const normalizeLineScamBotConfigRecord = (recordInput) => {
+  const record = recordInput && typeof recordInput === 'object' && !Array.isArray(recordInput) ? recordInput : {};
+  return {
+    liffScammerCheckUrl: String(record.liffScammerCheckUrl || '').trim(),
+    liffFakeNewsUrl: String(record.liffFakeNewsUrl || '').trim(),
+    liffRiskAssessUrl: String(record.liffRiskAssessUrl || '').trim(),
+    richMenuId: String(record.richMenuId || '').trim(),
+    updatedAt: String(record.updatedAt || '').trim() || null,
+    updatedById: sanitizeUserId(record.updatedById),
+    updatedByEmail: sanitizeEmail(record.updatedByEmail),
+  };
+};
+
+const resolveLineScamLiffUrls = (req, configInput = {}) => {
+  const config = normalizeLineScamBotConfigRecord(configInput);
+  const requestOrigin = resolveRequestOrigin(req);
+  const envScammerCheck = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_SCAMMER_CHECK_URL);
+  const envFakeNews = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_FAKE_NEWS_URL);
+  const envRiskAssess = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_RISK_ASSESS_URL);
+  const configuredScammerCheck = normalizeOptionalHttpUrl(config.liffScammerCheckUrl);
+  const configuredFakeNews = normalizeOptionalHttpUrl(config.liffFakeNewsUrl);
+  const configuredRiskAssess = normalizeOptionalHttpUrl(config.liffRiskAssessUrl);
+  const buildDefaultUrl = (path) => {
+    if (!requestOrigin) return '';
+    return `${requestOrigin}${path}`;
+  };
+
+  return {
+    scammerCheck:
+      configuredScammerCheck ||
+      envScammerCheck ||
+      buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.scammerCheck),
+    fakeNews: configuredFakeNews || envFakeNews || buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.fakeNews),
+    riskAssess:
+      configuredRiskAssess ||
+      envRiskAssess ||
+      buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.riskAssess),
+  };
+};
+
+const toLineScamBotPublicConfig = (req, configInput = {}) => {
+  const normalized = normalizeLineScamBotConfigRecord(configInput);
+  const liffUrls = resolveLineScamLiffUrls(req, normalized);
+  return {
+    webhookPath: '/line/scam/webhook',
+    webhookUrl: `${resolveRequestOrigin(req)}/line/scam/webhook`,
+    richMenuId: normalized.richMenuId,
+    liffUrls,
+    commandMap: {
+      helpWhenScammed: LINE_SCAM_RICH_MENU_COMMANDS.HELP_WHEN_SCAMMED,
+      checkScammer: LINE_SCAM_RICH_MENU_COMMANDS.CHECK_SCAMMER,
+      checkFakeNews: LINE_SCAM_RICH_MENU_COMMANDS.CHECK_FAKE_NEWS,
+      assessRisk: LINE_SCAM_RICH_MENU_COMMANDS.ASSESS_RISK,
+      howToUse: LINE_SCAM_RICH_MENU_COMMANDS.HOW_TO_USE,
+    },
+    channelSecretConfigured: Boolean(LINE_SCAM_CHANNEL_SECRET),
+    channelAccessTokenConfigured: Boolean(LINE_SCAM_CHANNEL_ACCESS_TOKEN),
+    geminiConfigured: Boolean(GEMINI_API_KEY),
+    geminiModel: GEMINI_MODEL,
+    imageUploadMaxBytes: SCAM_LIFF_IMAGE_MAX_BYTES,
+    updatedAt: normalized.updatedAt,
+  };
+};
+
+const loadLineScamBotConfigRecord = async () => {
+  const doc = await lineScamBotConfigDocRef.get();
+  if (!doc.exists) return normalizeLineScamBotConfigRecord({});
+  return normalizeLineScamBotConfigRecord(doc.data() || {});
 };
 
 const normalizeGoogleEventColorId = (value) => {
@@ -3756,6 +4319,8 @@ app.get('/health', (_req, res) => {
     firestoreLineReminderCollection: FIRESTORE_LINE_REMINDER_COLLECTION,
     firestoreLineReminderLogCollection: FIRESTORE_LINE_REMINDER_LOG_COLLECTION,
     firestoreLineWebhookLogCollection: FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION,
+    firestoreLineScamBotCollection: FIRESTORE_LINE_SCAM_BOT_COLLECTION,
+    firestoreLineScamWebhookLogCollection: FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION,
     firestoreAdminComplaintCollection: FIRESTORE_ADMIN_COMPLAINT_COLLECTION,
     firestoreSupportTicketCollection: FIRESTORE_SUPPORT_TICKET_COLLECTION,
     firestoreScamReportCollection: FIRESTORE_SCAM_REPORT_COLLECTION,
@@ -3769,6 +4334,10 @@ app.get('/health', (_req, res) => {
     lineReminderDefaultDaysBefore: DEFAULT_LINE_REMINDER_DAYS_BEFORE,
     lineWebhookConfigured: Boolean(LINE_CHANNEL_SECRET),
     lineWebhookReplyConfigured: Boolean(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN),
+    lineScamWebhookConfigured: Boolean(LINE_SCAM_CHANNEL_SECRET),
+    lineScamReplyConfigured: Boolean(LINE_SCAM_CHANNEL_ACCESS_TOKEN),
+    lineScamGeminiConfigured: Boolean(GEMINI_API_KEY),
+    lineScamGeminiModel: GEMINI_MODEL,
     openAiConfigured: Boolean(OPENAI_API_KEY),
     openAiModel: OPENAI_MODEL,
     openAiReasoningEffort: OPENAI_REASONING_EFFORT,
@@ -3777,6 +4346,7 @@ app.get('/health', (_req, res) => {
     supportTicketAttachmentLimit: SUPPORT_TICKET_MAX_ATTACHMENTS,
     supportTicketAttachmentMaxBytes: SUPPORT_TICKET_MAX_ATTACHMENT_BYTES,
     scamReportImageMaxBytes: SCAM_REPORT_IMAGE_MAX_BYTES,
+    scamLiffImageMaxBytes: SCAM_LIFF_IMAGE_MAX_BYTES,
   });
 });
 
@@ -5237,6 +5807,281 @@ app.post('/admin/scam-reports', requireAuth, requireRootAdmin, async (req, res) 
   }
 });
 
+app.get('/admin/line-scam-bot/config', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const config = await loadLineScamBotConfigRecord();
+    return res.json({
+      config: toLineScamBotPublicConfig(req, config),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load LINE scam bot config.' });
+  }
+});
+
+app.put('/admin/line-scam-bot/config', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const liffScammerCheckUrl = normalizeOptionalHttpUrl(req.body?.liffScammerCheckUrl || '', 1000);
+    const liffFakeNewsUrl = normalizeOptionalHttpUrl(req.body?.liffFakeNewsUrl || '', 1000);
+    const liffRiskAssessUrl = normalizeOptionalHttpUrl(req.body?.liffRiskAssessUrl || '', 1000);
+    if (
+      liffScammerCheckUrl === null ||
+      liffFakeNewsUrl === null ||
+      liffRiskAssessUrl === null
+    ) {
+      return res.status(400).json({
+        message: 'LIFF URL must be empty or start with http:// or https://',
+      });
+    }
+    const richMenuId = normalizeOptionalString(req.body?.richMenuId, 180);
+    const nowIso = new Date().toISOString();
+    await lineScamBotConfigDocRef.set(
+      {
+        liffScammerCheckUrl: liffScammerCheckUrl || '',
+        liffFakeNewsUrl: liffFakeNewsUrl || '',
+        liffRiskAssessUrl: liffRiskAssessUrl || '',
+        richMenuId: richMenuId || '',
+        updatedAt: nowIso,
+        updatedById: sanitizeUserId(req.rootAdmin?.id),
+        updatedByEmail: sanitizeEmail(req.rootAdmin?.email),
+      },
+      { merge: true }
+    );
+    const updatedConfig = await loadLineScamBotConfigRecord();
+    return res.json({
+      message: 'LINE scam bot settings saved.',
+      config: toLineScamBotPublicConfig(req, updatedConfig),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to save LINE scam bot config.' });
+  }
+});
+
+app.get('/line/scam/liff/scammer-check', (_req, res) => {
+  setLineScamLiffHtmlHeaders(res);
+  return res.status(200).type('html').send(renderLineScamScammerCheckPage());
+});
+
+app.get('/line/scam/liff/fake-news', (_req, res) => {
+  setLineScamLiffHtmlHeaders(res);
+  return res
+    .status(200)
+    .type('html')
+    .send(renderLineScamFakeNewsPage({ maxImageBytes: SCAM_LIFF_IMAGE_MAX_BYTES }));
+});
+
+app.get('/line/scam/liff/risk-assess', (_req, res) => {
+  setLineScamLiffHtmlHeaders(res);
+  return res
+    .status(200)
+    .type('html')
+    .send(renderLineScamRiskAssessPage({ maxImageBytes: SCAM_LIFF_IMAGE_MAX_BYTES }));
+});
+
+app.post('/line/scam/liff/api/scammer-check', async (req, res) => {
+  try {
+    const query = normalizeOptionalString(req.body?.query || req.body?.text || '', 140);
+    if (!query) {
+      return res.status(400).json({ message: 'query is required.' });
+    }
+    const queryToken = normalizeSearchToken(query);
+    if (!queryToken || queryToken.length < 2) {
+      return res.status(400).json({ message: 'Please enter at least 2 characters to search.' });
+    }
+    const resultLimitRaw = Number.parseInt(String(req.body?.limit || '20'), 10);
+    const resultLimit = Number.isInteger(resultLimitRaw)
+      ? Math.min(50, Math.max(1, resultLimitRaw))
+      : 20;
+
+    const snapshot = await scamReportRef.orderBy('createdAt', 'desc').limit(700).get();
+    const reports = snapshot.docs.map((doc) => toScamReportResponse(doc.id, doc.data() || {}));
+    const matches = reports
+      .filter((report) => toScamReportSearchableText(report).includes(queryToken))
+      .slice(0, resultLimit);
+    const totalDamageAmount = matches.reduce(
+      (sum, report) => sum + normalizeScamReportAmount(report.amount),
+      0
+    );
+    return res.json({
+      query,
+      isScammer: matches.length > 0,
+      totalMatches: matches.length,
+      totalDamageAmount,
+      matches: matches.map((report) => ({
+        id: report.id,
+        sellerAlias: report.sellerAlias,
+        firstName: report.firstName,
+        lastName: report.lastName,
+        citizenId: report.citizenId,
+        phone: report.phone,
+        bankAccount: report.bankAccount,
+        bankName: report.bankName,
+        product: report.product,
+        amount: report.amount,
+        transferDate: report.transferDate,
+        pageUrl: report.pageUrl,
+        province: report.province,
+        createdAt: report.createdAt,
+      })),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to search scam database.' });
+  }
+});
+
+app.post('/line/scam/liff/api/fake-news', async (req, res) => {
+  try {
+    const text = normalizeOptionalString(req.body?.text || req.body?.newsText || '', 5000);
+    const imageDataUrl = String(req.body?.imageDataUrl || '').trim();
+    if (!text && !imageDataUrl) {
+      return res.status(400).json({ message: 'text or imageDataUrl is required.' });
+    }
+
+    const analysisPrompt = [
+      'คุณคือผู้ช่วยตรวจสอบข่าวปลอมสำหรับผู้ใช้ไทย',
+      'วิเคราะห์ข่าวจากข้อมูลที่ได้รับ แล้วตอบเป็น JSON เท่านั้นโดยไม่ใส่ markdown',
+      'โครงสร้าง JSON:',
+      '{',
+      '  "verdict": "true|likely_true|uncertain|likely_fake|fake",',
+      '  "fakePercent": 0-100,',
+      '  "confidencePercent": 0-100,',
+      '  "summary": "สรุปสั้นภาษาไทย",',
+      '  "reasons": ["เหตุผลหลัก 2-6 ข้อ"],',
+      '  "references": [{"title":"ชื่อแหล่ง","url":"https://..."}],',
+      '  "trustedChannels": ["ช่องทางข่าวจริงที่น่าเชื่อถือ"]',
+      '}',
+      'ห้ามใส่ข้อมูลเกินโครงสร้างนี้',
+      '',
+      `ข้อความข่าวจากผู้ใช้: ${text || '(ผู้ใช้ส่งเฉพาะรูปภาพ)'}`,
+    ].join('\n');
+
+    const gemini = await callGeminiStructuredJson({
+      prompt: analysisPrompt,
+      imageDataUrl,
+      taskName: 'fake-news',
+    });
+    const json = gemini.json || {};
+
+    const fakePercent = clampPercent(
+      json.fakePercent ??
+        json.fake_percent ??
+        json.fakeProbabilityPercent ??
+        json.probabilityFake ??
+        0
+    );
+    const confidencePercent = clampPercent(
+      json.confidencePercent ?? json.confidence ?? json.modelConfidence ?? 0
+    );
+    const verdict = normalizeOptionalString(json.verdict || json.label || 'uncertain', 40).toLowerCase();
+    const summary = normalizeOptionalString(
+      json.summary || json.brief || 'ยังไม่สามารถยืนยันความจริงของข่าวได้ชัดเจน',
+      1200
+    );
+    const reasons = normalizeGeminiStringList(
+      json.reasons || json.reasoning || json.keyPoints || [],
+      8,
+      360
+    );
+    const references = normalizeGeminiReferences(
+      json.references || json.sources || json.citations || []
+    );
+    const trustedChannels = normalizeGeminiStringList(
+      json.trustedChannels || json.trusted_sources || json.recommendedChannels || [],
+      10,
+      220
+    );
+
+    return res.json({
+      verdict,
+      fakePercent,
+      confidencePercent,
+      summary,
+      reasons,
+      references,
+      trustedChannels,
+      model: GEMINI_MODEL,
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to analyze fake news.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to analyze fake news.' });
+  }
+});
+
+app.post('/line/scam/liff/api/risk-assess', async (req, res) => {
+  try {
+    const imageDataUrl = String(req.body?.imageDataUrl || '').trim();
+    const contextText = normalizeOptionalString(req.body?.contextText || '', 2000);
+    if (!imageDataUrl) {
+      return res.status(400).json({ message: 'imageDataUrl is required.' });
+    }
+
+    const analysisPrompt = [
+      'คุณคือผู้ช่วยประเมินความเสี่ยงโดนโกงจากรูปแชท',
+      'อ่านข้อมูลจากภาพและข้อความเสริม แล้วตอบเป็น JSON เท่านั้นโดยไม่ใส่ markdown',
+      'โครงสร้าง JSON:',
+      '{',
+      '  "riskPercent": 0-100,',
+      '  "riskLevel": "low|medium|high",',
+      '  "summary": "สรุปความเสี่ยงภาษาไทย",',
+      '  "signals": ["สัญญาณเตือนที่พบ"],',
+      '  "recommendations": ["วิธีป้องกันหรือการกระทำถัดไป"],',
+      '  "shouldReport": true/false',
+      '}',
+      'หากข้อมูลไม่ชัดเจน ให้ประเมินแบบระมัดระวังและแนะนำผู้ใช้ตรวจสอบเพิ่ม',
+      '',
+      `ข้อความเสริมจากผู้ใช้: ${contextText || '(ไม่มีข้อความเสริม)'}`,
+    ].join('\n');
+
+    const gemini = await callGeminiStructuredJson({
+      prompt: analysisPrompt,
+      imageDataUrl,
+      taskName: 'risk-assess',
+    });
+    const json = gemini.json || {};
+    const riskPercent = clampPercent(
+      json.riskPercent ?? json.risk_score ?? json.scamRiskPercent ?? json.probabilityScam ?? 0
+    );
+    const riskLevelRaw = normalizeOptionalString(json.riskLevel || json.level || '', 32).toLowerCase();
+    const riskLevel =
+      riskLevelRaw === 'high' || riskLevelRaw === 'medium' || riskLevelRaw === 'low'
+        ? riskLevelRaw
+        : resolveLineScamRiskLevel(riskPercent);
+    const summary = normalizeOptionalString(
+      json.summary || json.brief || 'ยังไม่สามารถประเมินความเสี่ยงได้ชัดเจน',
+      1200
+    );
+    const signals = normalizeGeminiStringList(
+      json.signals || json.warningSignals || json.redFlags || [],
+      10,
+      320
+    );
+    const recommendations = normalizeGeminiStringList(
+      json.recommendations || json.actions || json.nextSteps || [],
+      12,
+      320
+    );
+    const shouldReport = json.shouldReport === true || riskPercent >= 70;
+
+    return res.json({
+      riskPercent,
+      riskLevel,
+      summary,
+      signals,
+      recommendations,
+      shouldReport,
+      model: GEMINI_MODEL,
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to assess scam risk.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to assess scam risk.' });
+  }
+});
+
 app.post('/support/complaints', requireAuth, async (req, res) => {
   try {
     const reporterId = sanitizeUserId(req.authUser?.sub);
@@ -5986,6 +6831,106 @@ app.post('/line/webhook', async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to process LINE webhook.' });
+  }
+});
+
+app.post('/line/scam/webhook', async (req, res) => {
+  try {
+    if (!LINE_SCAM_CHANNEL_SECRET) {
+      return res.status(503).json({
+        message: 'LINE_SCAM_CHANNEL_SECRET is not configured on server.',
+      });
+    }
+    if (!LINE_SCAM_CHANNEL_ACCESS_TOKEN) {
+      return res.status(503).json({
+        message: 'LINE_SCAM_CHANNEL_ACCESS_TOKEN is not configured on server.',
+      });
+    }
+    if (!isValidLineWebhookSignatureWithSecret(req, LINE_SCAM_CHANNEL_SECRET)) {
+      return res.status(401).json({ message: 'Invalid LINE scam webhook signature.' });
+    }
+
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+    const destination = String(req.body?.destination || '').trim();
+    const nowIso = new Date().toISOString();
+    const lineScamConfig = await loadLineScamBotConfigRecord();
+    const lineScamPublicConfig = toLineScamBotPublicConfig(req, lineScamConfig);
+    const liffUrls =
+      lineScamPublicConfig.liffUrls &&
+      typeof lineScamPublicConfig.liffUrls === 'object' &&
+      !Array.isArray(lineScamPublicConfig.liffUrls)
+        ? lineScamPublicConfig.liffUrls
+        : {};
+
+    const writes = [];
+    for (const event of events) {
+      const source = event?.source && typeof event.source === 'object' ? event.source : {};
+      const sourceType = normalizeOptionalString(source.type, 40);
+      const groupId = normalizeOptionalString(source.groupId, 80);
+      const userId = normalizeOptionalString(source.userId, 80);
+      const eventType = normalizeOptionalString(event?.type, 40);
+      const messageType = normalizeOptionalString(event?.message?.type, 40);
+      const messageText =
+        messageType === 'text' ? normalizeOptionalString(event?.message?.text, 400) : '';
+      const commandKey = resolveLineScamCommandKey(messageText);
+      const eventTimestamp = Number(event?.timestamp || Date.now());
+
+      if (groupId || userId) {
+        const logId = crypto
+          .createHash('sha256')
+          .update(`${groupId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
+          .digest('hex');
+        writes.push(
+          lineScamWebhookLogRef.doc(logId).set(
+            {
+              destination,
+              sourceType,
+              groupId,
+              userId,
+              eventType,
+              messageType,
+              messageText,
+              commandKey,
+              eventTimestamp,
+              receivedAt: nowIso,
+            },
+            { merge: true }
+          )
+        );
+      }
+
+      if (
+        commandKey &&
+        eventType === 'message' &&
+        messageType === 'text' &&
+        String(event?.replyToken || '').trim()
+      ) {
+        const replyMessages = buildLineScamCommandReplyMessages({
+          commandKey,
+          liffUrls,
+        });
+        writes.push(
+          sendLineReplyMessages({
+            channelAccessToken: LINE_SCAM_CHANNEL_ACCESS_TOKEN,
+            replyToken: String(event.replyToken || '').trim(),
+            messages: replyMessages,
+          }).catch((error) => {
+            console.warn('Failed to reply LINE scam bot message:', error.message);
+          })
+        );
+      }
+    }
+
+    if (writes.length > 0) {
+      await Promise.all(writes);
+    }
+
+    return res.json({
+      ok: true,
+      received: events.length,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to process LINE scam webhook.' });
   }
 });
 

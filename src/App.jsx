@@ -3828,6 +3828,14 @@ const LOCAL_TEST_USERS = [
     isRootAdmin: true,
   },
   {
+    id: 'local-root-admin-main-thatphong',
+    username: 'main_thatphong',
+    email: 'main.thatphong@gmail.com',
+    password: '123456',
+    avatarUrl: '',
+    isRootAdmin: true,
+  },
+  {
     id: 'local-test-user-1',
     username: 'test_pm_1',
     email: 'test_pm_1@local.pm',
@@ -6080,6 +6088,8 @@ function ProfileSettingsView({
   onRemoveSupportAdmin,
   onLoadScamReports,
   onCreateScamReport,
+  onLoadLineScamBotConfig,
+  onSaveLineScamBotConfig,
 }) {
   const [username, setUsername] = useState(currentUser.username || '');
   const [email, setEmail] = useState(currentUser.email || '');
@@ -7654,7 +7664,12 @@ function ProfileSettingsView({
               </div>
             )}
             {activeMenu === PROFILE_VIEW_MENUS.SCAM_CHECK && isRootAdmin && (
-              <ScamCheckPage onLoadReports={onLoadScamReports} onCreateReport={onCreateScamReport} />
+              <ScamCheckPage
+                onLoadReports={onLoadScamReports}
+                onCreateReport={onCreateScamReport}
+                onLoadLineScamBotConfig={onLoadLineScamBotConfig}
+                onSaveLineScamBotConfig={onSaveLineScamBotConfig}
+              />
             )}
           </div>
         </div>
@@ -12928,6 +12943,46 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return { ok: false, message: error.message || 'Failed to submit scam report.' };
     }
   }, [isRootAdmin]);
+  const handleLoadLineScamBotConfig = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'LINE Scam Bot Admin requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    try {
+      const result = await requestCloudDataApi('/admin/line-scam-bot/config');
+      return {
+        ok: true,
+        config: result?.config && typeof result.config === 'object' ? result.config : null,
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load LINE scam bot config.' };
+    }
+  }, [isRootAdmin]);
+  const handleSaveLineScamBotConfig = useCallback(async (configInput) => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'LINE Scam Bot Admin requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    const config =
+      configInput && typeof configInput === 'object' && !Array.isArray(configInput) ? configInput : {};
+    try {
+      const result = await requestCloudDataApi('/admin/line-scam-bot/config', {
+        method: 'PUT',
+        body: config,
+      });
+      return {
+        ok: true,
+        message: result?.message || 'LINE scam bot settings saved.',
+        config: result?.config && typeof result.config === 'object' ? result.config : null,
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to save LINE scam bot config.' };
+    }
+  }, [isRootAdmin]);
   const projectUpdatesOverlay = (
     <>
       {projectUpdateToastNotice && !isProjectUpdatesPopupOpen && (
@@ -12991,6 +13046,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         onRemoveSupportAdmin={handleRemoveSupportAdmin}
         onLoadScamReports={handleLoadScamReports}
         onCreateScamReport={handleCreateScamReport}
+        onLoadLineScamBotConfig={handleLoadLineScamBotConfig}
+        onSaveLineScamBotConfig={handleSaveLineScamBotConfig}
       />
     );
   }

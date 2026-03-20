@@ -35,6 +35,16 @@ FIRESTORE_PROJECT_INVITES_COLLECTION=project_invites
 FIRESTORE_PROJECT_INVITES_DOC_ID=global
 FIRESTORE_SCAM_REPORT_COLLECTION=admin_scam_reports
 SCAM_REPORT_IMAGE_MAX_BYTES=600000
+FIRESTORE_LINE_SCAM_BOT_COLLECTION=line_scam_bot
+FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION=line_scam_webhook_logs
+SCAM_LIFF_IMAGE_MAX_BYTES=2500000
+LINE_SCAM_CHANNEL_SECRET=your_line_scam_channel_secret
+LINE_SCAM_CHANNEL_ACCESS_TOKEN=your_line_scam_channel_access_token
+LINE_SCAM_LIFF_SCAMMER_CHECK_URL=
+LINE_SCAM_LIFF_FAKE_NEWS_URL=
+LINE_SCAM_LIFF_RISK_ASSESS_URL=
+GEMINI_API_KEY=your_google_ai_studio_api_key
+GEMINI_MODEL=gemini-2.5-flash
 ```
 
 Google OAuth can be configured in either way:
@@ -176,6 +186,30 @@ Google OAuth setup for backend:
 6. Check backend `/health` and ensure:
    - `googleClientConfigured: true`
    - `googleCalendarOAuthConfigured: true`
+
+## LINE Scam Bot (Separate Channel)
+
+New routes:
+1. Admin config (root admin only):
+   - `GET /admin/line-scam-bot/config`
+   - `PUT /admin/line-scam-bot/config`
+2. Webhook (separate from project bot):
+   - `POST /line/scam/webhook`
+3. LIFF pages:
+   - `/line/scam/liff/scammer-check`
+   - `/line/scam/liff/fake-news`
+   - `/line/scam/liff/risk-assess`
+4. LIFF APIs:
+   - `POST /line/scam/liff/api/scammer-check`
+   - `POST /line/scam/liff/api/fake-news`
+   - `POST /line/scam/liff/api/risk-assess`
+
+Rich menu command text mapping:
+1. โดนโกงแล้วทำยังไงดี -> `คำแนะนำเมื่อถูกโกง`
+2. เช็คคนโกง -> `ตรวจสอบมิจฉาชีพ`
+3. เช็คข่าวปลอม -> `ตรวจสอบข่าวปลอม`
+4. ประเมินความเสี่ยงการโดนโกง -> `ประเมินความเสี่ยง`
+5. วิธีใช้ -> `เเนะนำวิธีการใช้งาน`
 
 ---
 

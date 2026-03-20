@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   Plus,
+  Bot,
+  ExternalLink,
+  Save,
   ShieldAlert,
   Image as ImageIcon,
   X,
@@ -71,9 +74,47 @@ const normalizeReport = (reportInput) => {
   };
 };
 
+const normalizeLineScamBotConfig = (configInput) => {
+  const config = configInput && typeof configInput === 'object' && !Array.isArray(configInput)
+    ? configInput
+    : {};
+  const liffUrlsRaw =
+    config.liffUrls && typeof config.liffUrls === 'object' && !Array.isArray(config.liffUrls)
+      ? config.liffUrls
+      : {};
+  const commandMapRaw =
+    config.commandMap && typeof config.commandMap === 'object' && !Array.isArray(config.commandMap)
+      ? config.commandMap
+      : {};
+
+  return {
+    webhookUrl: String(config.webhookUrl || '').trim(),
+    webhookPath: String(config.webhookPath || '/line/scam/webhook').trim(),
+    richMenuId: String(config.richMenuId || '').trim(),
+    liffScammerCheckUrl: String(liffUrlsRaw.scammerCheck || config.liffScammerCheckUrl || '').trim(),
+    liffFakeNewsUrl: String(liffUrlsRaw.fakeNews || config.liffFakeNewsUrl || '').trim(),
+    liffRiskAssessUrl: String(liffUrlsRaw.riskAssess || config.liffRiskAssessUrl || '').trim(),
+    commandMap: {
+      helpWhenScammed: String(commandMapRaw.helpWhenScammed || 'คำแนะนำเมื่อถูกโกง').trim(),
+      checkScammer: String(commandMapRaw.checkScammer || 'ตรวจสอบมิจฉาชีพ').trim(),
+      checkFakeNews: String(commandMapRaw.checkFakeNews || 'ตรวจสอบข่าวปลอม').trim(),
+      assessRisk: String(commandMapRaw.assessRisk || 'ประเมินความเสี่ยง').trim(),
+      howToUse: String(commandMapRaw.howToUse || 'เเนะนำวิธีการใช้งาน').trim(),
+    },
+    channelSecretConfigured: config.channelSecretConfigured === true,
+    channelAccessTokenConfigured: config.channelAccessTokenConfigured === true,
+    geminiConfigured: config.geminiConfigured === true,
+    geminiModel: String(config.geminiModel || '').trim(),
+    imageUploadMaxBytes: Number(config.imageUploadMaxBytes || 0) || 0,
+    updatedAt: String(config.updatedAt || '').trim() || null,
+  };
+};
+
 export default function CheckPage({
   onLoadReports,
   onCreateReport,
+  onLoadLineScamBotConfig,
+  onSaveLineScamBotConfig,
   maxImageBytes = DEFAULT_MAX_IMAGE_BYTES,
 }) {
   const [reports, setReports] = useState([]);
@@ -83,6 +124,11 @@ export default function CheckPage({
   const [isLoadingReports, setIsLoadingReports] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState(null);
+  const [isLineBotModalOpen, setIsLineBotModalOpen] = useState(false);
+  const [isLineConfigLoading, setIsLineConfigLoading] = useState(false);
+  const [isLineConfigSaving, setIsLineConfigSaving] = useState(false);
+  const [lineConfigResult, setLineConfigResult] = useState(null);
+  const [lineConfig, setLineConfig] = useState(() => normalizeLineScamBotConfig({}));
   const evidenceInputRef = useRef(null);
 
   const [formData, setFormData] = useState({
@@ -102,6 +148,8 @@ export default function CheckPage({
   });
 
   const canUseCloudApi = typeof onLoadReports === 'function' && typeof onCreateReport === 'function';
+  const canManageLineScamBot =
+    typeof onLoadLineScamBotConfig === 'function' && typeof onSaveLineScamBotConfig === 'function';
 
   const filteredReports = useMemo(() => {
     const searchLower = String(searchQuery || '').trim().toLowerCase();
@@ -168,6 +216,69 @@ export default function CheckPage({
   useEffect(() => {
     void loadReports();
   }, [onLoadReports]);
+
+  const loadLineScamBotConfig = async () => {
+    if (typeof onLoadLineScamBotConfig !== 'function') return;
+    setIsLineConfigLoading(true);
+    setLineConfigResult(null);
+    try {
+      const response = await Promise.resolve(onLoadLineScamBotConfig());
+      if (!response?.ok) {
+        setLineConfigResult({
+          ok: false,
+          message: response?.message || 'Failed to load LINE scam bot config.',
+        });
+        return;
+      }
+      setLineConfig(normalizeLineScamBotConfig(response.config));
+    } finally {
+      setIsLineConfigLoading(false);
+    }
+  };
+
+  const openLineScamBotModal = () => {
+    setIsLineBotModalOpen(true);
+    void loadLineScamBotConfig();
+  };
+
+  const handleLineConfigInputChange = (event) => {
+    const { name, value } = event.target;
+    setLineConfig((prev) => ({ ...prev, [name]: String(value || '') }));
+  };
+
+  const handleSaveLineConfig = async (event) => {
+    event.preventDefault();
+    if (typeof onSaveLineScamBotConfig !== 'function') {
+      setLineConfigResult({ ok: false, message: 'Cloud API is not configured for LINE scam bot.' });
+      return;
+    }
+    setIsLineConfigSaving(true);
+    setLineConfigResult(null);
+    try {
+      const response = await Promise.resolve(
+        onSaveLineScamBotConfig({
+          liffScammerCheckUrl: String(lineConfig.liffScammerCheckUrl || '').trim(),
+          liffFakeNewsUrl: String(lineConfig.liffFakeNewsUrl || '').trim(),
+          liffRiskAssessUrl: String(lineConfig.liffRiskAssessUrl || '').trim(),
+          richMenuId: String(lineConfig.richMenuId || '').trim(),
+        })
+      );
+      if (!response?.ok) {
+        setLineConfigResult({
+          ok: false,
+          message: response?.message || 'Failed to save LINE scam bot config.',
+        });
+        return;
+      }
+      setLineConfig(normalizeLineScamBotConfig(response.config || lineConfig));
+      setLineConfigResult({
+        ok: true,
+        message: response?.message || 'Saved LINE scam bot settings.',
+      });
+    } finally {
+      setIsLineConfigSaving(false);
+    }
+  };
 
   const handleInputChange = (event) => {
     const { name, value } = event.target;
@@ -313,6 +424,13 @@ export default function CheckPage({
               <Plus size={18} />
               <span className="hidden sm:inline">Add Report</span>
             </button>
+            <button
+              onClick={openLineScamBotModal}
+              className="inline-flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm whitespace-nowrap"
+            >
+              <Bot size={18} />
+              <span className="hidden sm:inline">LINE Bot Admin</span>
+            </button>
           </div>
         </div>
       </header>
@@ -321,6 +439,11 @@ export default function CheckPage({
         {!canUseCloudApi && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
             This page requires Cloud Auth API to save reports in Cloud Database.
+          </p>
+        )}
+        {!canManageLineScamBot && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+            LINE Scam Bot Admin requires Cloud Auth API and root-admin access.
           </p>
         )}
 
@@ -605,6 +728,227 @@ export default function CheckPage({
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLineBotModalOpen && (
+        <div className="fixed inset-0 z-[55] overflow-y-auto" role="dialog" aria-modal="true">
+          <div className="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
+            <div
+              className="fixed inset-0 bg-gray-700 bg-opacity-70 transition-opacity"
+              onClick={() => setIsLineBotModalOpen(false)}
+              aria-hidden="true"
+            />
+            <span className="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
+            <div className="inline-block w-full transform overflow-hidden rounded-2xl bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:max-w-3xl sm:align-middle">
+              <div className="border-b border-gray-200 bg-slate-900 px-4 py-4 text-white sm:px-6">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-lg font-semibold">LINE Scam Bot Admin</h3>
+                    <p className="mt-1 text-xs text-slate-200">
+                      จัดการ LIFF URL, webhook และคำสั่ง Rich Menu สำหรับบอทเช็คโกงแยกจากบอท Project
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsLineBotModalOpen(false)}
+                    className="rounded-lg border border-slate-500 bg-slate-800 p-2 text-slate-200 hover:bg-slate-700"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <form id="line-scam-bot-form" onSubmit={(event) => void handleSaveLineConfig(event)}>
+                <div className="max-h-[72vh] space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
+                  {lineConfigResult?.message && (
+                    <p
+                      className={`rounded-lg border px-3 py-2 text-sm ${
+                        lineConfigResult.ok
+                          ? 'border-green-200 bg-green-50 text-green-700'
+                          : 'border-red-200 bg-red-50 text-red-600'
+                      }`}
+                    >
+                      {lineConfigResult.message}
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">Channel Secret</p>
+                      <p
+                        className={`mt-1 text-sm font-semibold ${
+                          lineConfig.channelSecretConfigured ? 'text-emerald-700' : 'text-red-600'
+                        }`}
+                      >
+                        {lineConfig.channelSecretConfigured ? 'Configured' : 'Missing'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">Channel Access Token</p>
+                      <p
+                        className={`mt-1 text-sm font-semibold ${
+                          lineConfig.channelAccessTokenConfigured ? 'text-emerald-700' : 'text-red-600'
+                        }`}
+                      >
+                        {lineConfig.channelAccessTokenConfigured ? 'Configured' : 'Missing'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">Gemini API</p>
+                      <p
+                        className={`mt-1 text-sm font-semibold ${
+                          lineConfig.geminiConfigured ? 'text-emerald-700' : 'text-red-600'
+                        }`}
+                      >
+                        {lineConfig.geminiConfigured
+                          ? `Configured${lineConfig.geminiModel ? ` (${lineConfig.geminiModel})` : ''}`
+                          : 'Missing'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-gray-800">Webhook URL (ตั้งใน LINE Developer Console)</p>
+                      <button
+                        type="button"
+                        onClick={() => void loadLineScamBotConfig()}
+                        disabled={isLineConfigLoading}
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        {isLineConfigLoading ? 'Loading...' : 'Refresh'}
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      readOnly
+                      value={lineConfig.webhookUrl || ''}
+                      className="mt-2 w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-xs text-gray-700"
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                    <p className="text-sm font-semibold text-gray-800">Rich Menu Command Mapping</p>
+                    <div className="grid grid-cols-1 gap-2 text-xs text-gray-700 sm:grid-cols-2">
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        โดนโกงแล้วทำยังไงดี <span className="font-semibold">"{lineConfig.commandMap.helpWhenScammed}"</span>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        เช็คคนโกง <span className="font-semibold">"{lineConfig.commandMap.checkScammer}"</span>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        เช็คข่าวปลอม <span className="font-semibold">"{lineConfig.commandMap.checkFakeNews}"</span>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        ประเมินความเสี่ยง <span className="font-semibold">"{lineConfig.commandMap.assessRisk}"</span>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 sm:col-span-2">
+                        วิธีใช้ <span className="font-semibold">"{lineConfig.commandMap.howToUse}"</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                    <p className="text-sm font-semibold text-gray-800">LIFF URL Settings</p>
+                    <label className="block space-y-1">
+                      <span className="text-xs text-gray-600">LIFF URL: ตรวจสอบมิจฉาชีพ</span>
+                      <input
+                        type="url"
+                        name="liffScammerCheckUrl"
+                        value={lineConfig.liffScammerCheckUrl}
+                        onChange={handleLineConfigInputChange}
+                        placeholder="https://..."
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-xs text-gray-600">LIFF URL: ตรวจสอบข่าวปลอม</span>
+                      <input
+                        type="url"
+                        name="liffFakeNewsUrl"
+                        value={lineConfig.liffFakeNewsUrl}
+                        onChange={handleLineConfigInputChange}
+                        placeholder="https://..."
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-xs text-gray-600">LIFF URL: ประเมินความเสี่ยง</span>
+                      <input
+                        type="url"
+                        name="liffRiskAssessUrl"
+                        value={lineConfig.liffRiskAssessUrl}
+                        onChange={handleLineConfigInputChange}
+                        placeholder="https://..."
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-xs text-gray-600">Rich Menu ID (optional)</span>
+                      <input
+                        type="text"
+                        name="richMenuId"
+                        value={lineConfig.richMenuId}
+                        onChange={handleLineConfigInputChange}
+                        placeholder="richmenu-xxxxxxxx"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <p className="text-sm font-semibold text-gray-800">LIFF Preview Links</p>
+                    <div className="mt-2 flex flex-col gap-2 text-sm">
+                      {[
+                        { id: 'scammer', label: 'เปิดหน้า ตรวจสอบมิจฉาชีพ', href: lineConfig.liffScammerCheckUrl },
+                        { id: 'fakeNews', label: 'เปิดหน้า ตรวจสอบข่าวปลอม', href: lineConfig.liffFakeNewsUrl },
+                        { id: 'risk', label: 'เปิดหน้า ประเมินความเสี่ยง', href: lineConfig.liffRiskAssessUrl },
+                      ].map((entry) => (
+                        <a
+                          key={entry.id}
+                          href={entry.href || '#'}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`inline-flex items-center gap-1 ${
+                            entry.href ? 'text-blue-700 hover:underline' : 'text-gray-400 pointer-events-none'
+                          }`}
+                        >
+                          <ExternalLink size={14} />
+                          {entry.label}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+
+                  {lineConfig.updatedAt && (
+                    <p className="text-[11px] text-gray-500">
+                      Last updated: {new Date(lineConfig.updatedAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+
+                <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+                  <button
+                    type="submit"
+                    disabled={isLineConfigSaving}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-transparent bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-950 sm:ml-3 sm:w-auto disabled:bg-slate-500"
+                  >
+                    {isLineConfigSaving && <Loader2 size={14} className="animate-spin" />}
+                    <Save size={14} />
+                    Save settings
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsLineBotModalOpen(false)}
+                    className="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:w-auto"
+                  >
+                    Close
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
