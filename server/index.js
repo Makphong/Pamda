@@ -33,13 +33,60 @@ const allowedOrigins = String(process.env.CLIENT_ORIGIN || '')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+const normalizeOriginHost = (originInput) => {
+  const origin = String(originInput || '').trim();
+  if (!origin) return '';
+  try {
+    return String(new URL(origin).hostname || '').trim().toLowerCase();
+  } catch {
+    return '';
+  }
+};
+
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const wildcardOriginToRegex = (patternInput) => {
+  const pattern = String(patternInput || '').trim();
+  if (!pattern || !pattern.includes('*')) return null;
+  const regexText = `^${pattern.split('*').map(escapeRegex).join('.*')}$`;
+  try {
+    return new RegExp(regexText, 'i');
+  } catch {
+    return null;
+  }
+};
+
+const isTrustedLineOrigin = (originInput) => {
+  const host = normalizeOriginHost(originInput);
+  if (!host) return false;
+  return host === 'line.me' || host.endsWith('.line.me');
+};
+
+const isAllowedByConfiguredOrigins = (originInput) => {
+  const origin = String(originInput || '').trim();
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  return allowedOrigins.some((entry) => {
+    const regex = wildcardOriginToRegex(entry);
+    return regex ? regex.test(origin) : false;
+  });
+};
+
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      const shouldAllow =
+        !origin ||
+        allowedOrigins.length === 0 ||
+        isAllowedByConfiguredOrigins(origin) ||
+        isTrustedLineOrigin(origin);
+      if (shouldAllow) {
         callback(null, true);
         return;
       }
+      console.warn(
+        `CORS blocked origin: ${String(origin || '').trim()} | configured CLIENT_ORIGIN: ${allowedOrigins.join(', ')}`
+      );
       callback(new Error('CORS blocked by server policy.'));
     },
   })
