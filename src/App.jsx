@@ -15,6 +15,9 @@ import {
   CalendarDays,
   Check,
   ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
   FolderTree,
   CheckSquare,
   Copy,
@@ -48,7 +51,17 @@ import {
   List,
   ListOrdered,
   IndentIncrease,
-  IndentDecrease
+  IndentDecrease,
+  MousePointer2,
+  Hand,
+  StickyNote,
+  ZoomIn,
+  ZoomOut,
+  Type,
+  Heart,
+  Trophy,
+  Pin,
+  PinOff
 } from 'lucide-react';
 
 // --- Constants & Helpers ---
@@ -374,6 +387,911 @@ const normalizePersonalWorkspaceData = (dataInput) => {
     entriesByDate,
     removedHabitIds,
   };
+};
+const IDEAS_WORKSPACE_TOOLS = Object.freeze({
+  SELECT: 'select',
+  PAN: 'pan',
+  STICKY: 'sticky',
+  SHAPE: 'shape',
+});
+const IDEAS_NOTE_COLORS = Object.freeze([
+  '#A7F3D0',
+  '#FDE68A',
+  '#FBCFE8',
+  '#BFDBFE',
+  '#DDD6FE',
+  '#FDBA74',
+]);
+const IDEAS_NOTE_TEXT_SIZE_MIN_PX = 0;
+const IDEAS_NOTE_TEXT_SIZE_MAX_PX = 100;
+const IDEAS_NOTE_TEXT_SIZE_STEP_PX = 10;
+const IDEAS_NOTE_TEXT_SIZE_OPTIONS = Object.freeze(
+  Array.from({ length: Math.floor((IDEAS_NOTE_TEXT_SIZE_MAX_PX - IDEAS_NOTE_TEXT_SIZE_MIN_PX) / IDEAS_NOTE_TEXT_SIZE_STEP_PX) + 1 }, (_, index) => {
+    const value = IDEAS_NOTE_TEXT_SIZE_MIN_PX + index * IDEAS_NOTE_TEXT_SIZE_STEP_PX;
+    return {
+      id: String(value),
+      value,
+      label: `${value} px`,
+    };
+  })
+);
+const IDEAS_DEFAULT_SHAPE_FILL_COLOR = '#E5E7EB';
+const IDEAS_DEFAULT_SHAPE_BORDER_COLOR = '#6B7280';
+const IDEAS_SHAPE_FILL_COLOR_PRESETS = Object.freeze([
+  IDEAS_DEFAULT_SHAPE_FILL_COLOR,
+  ...IDEAS_NOTE_COLORS,
+]);
+const IDEAS_SHAPE_BORDER_COLOR_PRESETS = Object.freeze([
+  IDEAS_DEFAULT_SHAPE_BORDER_COLOR,
+  ...IDEAS_NOTE_COLORS,
+]);
+const IDEAS_NOTE_KINDS = Object.freeze({
+  STICKY: 'sticky',
+  TEXT: 'text',
+  SHAPE: 'shape',
+});
+const IDEAS_DEFAULT_NOTE_COLOR = IDEAS_NOTE_COLORS[0];
+const IDEAS_DEFAULT_NOTE_TEXT_SIZE = 16;
+const IDEAS_DEFAULT_PAGE_TITLE = 'Board 1';
+const IDEAS_MAX_PAGE_TITLE_LENGTH = 80;
+const IDEAS_NOTE_DEFAULTS = Object.freeze({
+  width: 228,
+  minHeight: 214,
+});
+const IDEAS_STICKY_RESIZE_DEFAULTS = Object.freeze({
+  width: IDEAS_NOTE_DEFAULTS.width,
+  height: IDEAS_NOTE_DEFAULTS.minHeight,
+  minWidth: 140,
+  minHeight: 120,
+  maxWidth: 1200,
+  maxHeight: 1200,
+});
+const IDEAS_SUBNOTE_DEFAULTS = Object.freeze({
+  width: 196,
+  height: 170,
+});
+const IDEAS_SHAPE_OPTIONS = Object.freeze([
+  {
+    id: 'rounded-rect',
+    label: 'Rounded',
+    borderRadius: '18px',
+    textPaddingX: 16,
+    textPaddingY: 12,
+  },
+  {
+    id: 'rectangle',
+    label: 'Rectangle',
+    borderRadius: '8px',
+    textPaddingX: 16,
+    textPaddingY: 12,
+  },
+  {
+    id: 'capsule',
+    label: 'Capsule',
+    borderRadius: '9999px',
+    textPaddingX: 24,
+    textPaddingY: 12,
+  },
+  {
+    id: 'circle',
+    label: 'Circle',
+    borderRadius: '9999px',
+    textPaddingX: 28,
+    textPaddingY: 18,
+  },
+  {
+    id: 'diamond',
+    label: 'Diamond',
+    clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
+    textPaddingX: 32,
+    textPaddingY: 26,
+  },
+  {
+    id: 'triangle',
+    label: 'Triangle',
+    clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)',
+    textPaddingX: 28,
+    textPaddingY: 34,
+  },
+  {
+    id: 'pentagon',
+    label: 'Pentagon',
+    clipPath: 'polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%)',
+    textPaddingX: 30,
+    textPaddingY: 24,
+  },
+  {
+    id: 'hexagon',
+    label: 'Hexagon',
+    clipPath: 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)',
+    textPaddingX: 28,
+    textPaddingY: 16,
+  },
+  {
+    id: 'octagon',
+    label: 'Octagon',
+    clipPath: 'polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%)',
+    textPaddingX: 24,
+    textPaddingY: 16,
+  },
+  {
+    id: 'parallelogram',
+    label: 'Parallelogram',
+    clipPath: 'polygon(18% 0%, 100% 0%, 82% 100%, 0% 100%)',
+    textPaddingX: 26,
+    textPaddingY: 14,
+  },
+  {
+    id: 'trapezoid',
+    label: 'Trapezoid',
+    clipPath: 'polygon(20% 0%, 80% 0%, 100% 100%, 0% 100%)',
+    textPaddingX: 24,
+    textPaddingY: 16,
+  },
+  {
+    id: 'star',
+    label: 'Star',
+    clipPath: 'polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)',
+    textPaddingX: 36,
+    textPaddingY: 30,
+  },
+  {
+    id: 'right-arrow',
+    label: 'Right Arrow',
+    clipPath: 'polygon(0% 22%, 70% 22%, 70% 0%, 100% 50%, 70% 100%, 70% 78%, 0% 78%)',
+    textPaddingX: 22,
+    textPaddingY: 14,
+  },
+  {
+    id: 'left-arrow',
+    label: 'Left Arrow',
+    clipPath: 'polygon(100% 22%, 30% 22%, 30% 0%, 0% 50%, 30% 100%, 30% 78%, 100% 78%)',
+    textPaddingX: 22,
+    textPaddingY: 14,
+  },
+]);
+const IDEAS_SHAPE_ID_SET = new Set(IDEAS_SHAPE_OPTIONS.map((option) => option.id));
+const IDEAS_DEFAULT_SHAPE_ID = IDEAS_SHAPE_OPTIONS[0].id;
+const IDEAS_SHAPE_DEFAULTS = Object.freeze({
+  width: 280,
+  height: 160,
+  minWidth: 120,
+  minHeight: 72,
+  maxWidth: 2400,
+  maxHeight: 1800,
+});
+const IDEAS_SHAPE_RESIZE_HANDLES = Object.freeze([
+  {
+    id: 'top-left',
+    className: '-left-1.5 -top-1.5 cursor-nwse-resize',
+  },
+  {
+    id: 'top-right',
+    className: '-right-1.5 -top-1.5 cursor-nesw-resize',
+  },
+  {
+    id: 'bottom-left',
+    className: '-left-1.5 -bottom-1.5 cursor-nesw-resize',
+  },
+  {
+    id: 'bottom-right',
+    className: '-right-1.5 -bottom-1.5 cursor-nwse-resize',
+  },
+]);
+const IDEAS_SHAPE_SIDES = Object.freeze({
+  LEFT: 'left',
+  RIGHT: 'right',
+  TOP: 'top',
+  BOTTOM: 'bottom',
+});
+const IDEAS_SHAPE_SIDE_SET = new Set(Object.values(IDEAS_SHAPE_SIDES));
+const IDEAS_SHAPE_QUICK_CONNECT_GAP = 96;
+const IDEAS_SHAPE_CONNECTION_PREVIEW_MIN_DRAG = 8;
+const IDEAS_ZOOM_MIN = 0.6;
+const IDEAS_ZOOM_MAX = 2.2;
+const IDEAS_ZOOM_STEP = 0.2;
+const IDEAS_DEFAULT_CAMERA = Object.freeze({
+  x: 0,
+  y: 0,
+  scale: 1,
+});
+const clampIdeasNumber = (valueInput, { min = -Infinity, max = Infinity, fallback = 0 } = {}) => {
+  const numericValue = Number(valueInput);
+  if (!Number.isFinite(numericValue)) return fallback;
+  if (numericValue < min) return min;
+  if (numericValue > max) return max;
+  return numericValue;
+};
+const normalizeIdeasCamera = (cameraInput) => {
+  const camera =
+    cameraInput && typeof cameraInput === 'object' && !Array.isArray(cameraInput)
+      ? cameraInput
+      : IDEAS_DEFAULT_CAMERA;
+  return {
+    x: clampIdeasNumber(camera.x, { min: -3200, max: 3200, fallback: IDEAS_DEFAULT_CAMERA.x }),
+    y: clampIdeasNumber(camera.y, { min: -2400, max: 2400, fallback: IDEAS_DEFAULT_CAMERA.y }),
+    scale: clampIdeasNumber(camera.scale, {
+      min: IDEAS_ZOOM_MIN,
+      max: IDEAS_ZOOM_MAX,
+      fallback: IDEAS_DEFAULT_CAMERA.scale,
+    }),
+  };
+};
+const normalizeIdeasShapeSide = (valueInput, fallback = IDEAS_SHAPE_SIDES.RIGHT) => {
+  const normalizedValue = String(valueInput || '').trim().toLowerCase();
+  return IDEAS_SHAPE_SIDE_SET.has(normalizedValue) ? normalizedValue : fallback;
+};
+const getIdeasShapeBounds = (noteInput) => {
+  if (normalizeIdeasNoteKind(noteInput?.kind) !== IDEAS_NOTE_KINDS.SHAPE) return null;
+  const x = Number(noteInput?.x || 0);
+  const y = Number(noteInput?.y || 0);
+  const width = clampIdeasNumber(noteInput?.width, {
+    min: IDEAS_SHAPE_DEFAULTS.minWidth,
+    max: IDEAS_SHAPE_DEFAULTS.maxWidth,
+    fallback: IDEAS_SHAPE_DEFAULTS.width,
+  });
+  const height = clampIdeasNumber(noteInput?.height, {
+    min: IDEAS_SHAPE_DEFAULTS.minHeight,
+    max: IDEAS_SHAPE_DEFAULTS.maxHeight,
+    fallback: IDEAS_SHAPE_DEFAULTS.height,
+  });
+  return {
+    x,
+    y,
+    width,
+    height,
+    left: x,
+    top: y,
+    right: x + width,
+    bottom: y + height,
+    centerX: x + width / 2,
+    centerY: y + height / 2,
+  };
+};
+const getIdeasShapeAnchorPoint = (noteInput, sideInput) => {
+  const bounds = getIdeasShapeBounds(noteInput);
+  if (!bounds) return null;
+  const side = normalizeIdeasShapeSide(sideInput);
+  if (side === IDEAS_SHAPE_SIDES.LEFT) {
+    return { x: bounds.left, y: bounds.centerY };
+  }
+  if (side === IDEAS_SHAPE_SIDES.TOP) {
+    return { x: bounds.centerX, y: bounds.top };
+  }
+  if (side === IDEAS_SHAPE_SIDES.BOTTOM) {
+    return { x: bounds.centerX, y: bounds.bottom };
+  }
+  return { x: bounds.right, y: bounds.centerY };
+};
+const getIdeasOppositeShapeSide = (sideInput) => {
+  const side = normalizeIdeasShapeSide(sideInput);
+  if (side === IDEAS_SHAPE_SIDES.LEFT) return IDEAS_SHAPE_SIDES.RIGHT;
+  if (side === IDEAS_SHAPE_SIDES.RIGHT) return IDEAS_SHAPE_SIDES.LEFT;
+  if (side === IDEAS_SHAPE_SIDES.TOP) return IDEAS_SHAPE_SIDES.BOTTOM;
+  return IDEAS_SHAPE_SIDES.TOP;
+};
+const resolveIdeasShapeConnectionSides = (fromNoteInput, toNoteInput) => {
+  const fromBounds = getIdeasShapeBounds(fromNoteInput);
+  const toBounds = getIdeasShapeBounds(toNoteInput);
+  if (!fromBounds || !toBounds) {
+    return {
+      fromSide: IDEAS_SHAPE_SIDES.RIGHT,
+      toSide: IDEAS_SHAPE_SIDES.LEFT,
+    };
+  }
+  const dx = toBounds.centerX - fromBounds.centerX;
+  const dy = toBounds.centerY - fromBounds.centerY;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? { fromSide: IDEAS_SHAPE_SIDES.RIGHT, toSide: IDEAS_SHAPE_SIDES.LEFT }
+      : { fromSide: IDEAS_SHAPE_SIDES.LEFT, toSide: IDEAS_SHAPE_SIDES.RIGHT };
+  }
+  return dy >= 0
+    ? { fromSide: IDEAS_SHAPE_SIDES.BOTTOM, toSide: IDEAS_SHAPE_SIDES.TOP }
+    : { fromSide: IDEAS_SHAPE_SIDES.TOP, toSide: IDEAS_SHAPE_SIDES.BOTTOM };
+};
+const resolveIdeasShapeSideByClientPoint = (rectInput, clientXInput, clientYInput) => {
+  const rect = rectInput && typeof rectInput === 'object' ? rectInput : null;
+  if (!rect) return IDEAS_SHAPE_SIDES.RIGHT;
+  const clientX = Number(clientXInput || 0);
+  const clientY = Number(clientYInput || 0);
+  const distanceEntries = [
+    { side: IDEAS_SHAPE_SIDES.LEFT, distance: Math.abs(clientX - rect.left) },
+    { side: IDEAS_SHAPE_SIDES.RIGHT, distance: Math.abs(rect.right - clientX) },
+    { side: IDEAS_SHAPE_SIDES.TOP, distance: Math.abs(clientY - rect.top) },
+    { side: IDEAS_SHAPE_SIDES.BOTTOM, distance: Math.abs(rect.bottom - clientY) },
+  ];
+  distanceEntries.sort((left, right) => left.distance - right.distance);
+  return normalizeIdeasShapeSide(distanceEntries[0]?.side, IDEAS_SHAPE_SIDES.RIGHT);
+};
+const resolveIdeasQuickCreateShapeRect = (sourceNoteInput, sideInput) => {
+  const sourceBounds = getIdeasShapeBounds(sourceNoteInput);
+  if (!sourceBounds) return null;
+  const side = normalizeIdeasShapeSide(sideInput, IDEAS_SHAPE_SIDES.RIGHT);
+  const nextWidth = sourceBounds.width;
+  const nextHeight = sourceBounds.height;
+  if (side === IDEAS_SHAPE_SIDES.LEFT) {
+    return {
+      x: sourceBounds.left - nextWidth - IDEAS_SHAPE_QUICK_CONNECT_GAP,
+      y: sourceBounds.centerY - nextHeight / 2,
+      width: nextWidth,
+      height: nextHeight,
+    };
+  }
+  if (side === IDEAS_SHAPE_SIDES.TOP) {
+    return {
+      x: sourceBounds.centerX - nextWidth / 2,
+      y: sourceBounds.top - nextHeight - IDEAS_SHAPE_QUICK_CONNECT_GAP,
+      width: nextWidth,
+      height: nextHeight,
+    };
+  }
+  if (side === IDEAS_SHAPE_SIDES.BOTTOM) {
+    return {
+      x: sourceBounds.centerX - nextWidth / 2,
+      y: sourceBounds.bottom + IDEAS_SHAPE_QUICK_CONNECT_GAP,
+      width: nextWidth,
+      height: nextHeight,
+    };
+  }
+  return {
+    x: sourceBounds.right + IDEAS_SHAPE_QUICK_CONNECT_GAP,
+    y: sourceBounds.centerY - nextHeight / 2,
+    width: nextWidth,
+    height: nextHeight,
+  };
+};
+const normalizeIdeasNoteTextSize = (valueInput) => {
+  if (typeof valueInput === 'string') {
+    const normalizedValue = valueInput.trim().toLowerCase();
+    if (normalizedValue === 'sm') return 12;
+    if (normalizedValue === 'md') return 16;
+    if (normalizedValue === 'lg') return 20;
+    const numericFromPx = Number(normalizedValue.replace(/px$/i, '').trim());
+    if (Number.isFinite(numericFromPx)) {
+      return clampIdeasNumber(Math.round(numericFromPx), {
+        min: IDEAS_NOTE_TEXT_SIZE_MIN_PX,
+        max: IDEAS_NOTE_TEXT_SIZE_MAX_PX,
+        fallback: IDEAS_DEFAULT_NOTE_TEXT_SIZE,
+      });
+    }
+  }
+  return clampIdeasNumber(Math.round(Number(valueInput)), {
+    min: IDEAS_NOTE_TEXT_SIZE_MIN_PX,
+    max: IDEAS_NOTE_TEXT_SIZE_MAX_PX,
+    fallback: IDEAS_DEFAULT_NOTE_TEXT_SIZE,
+  });
+};
+const snapIdeasTextSizeToStep = (valueInput, stepInput = IDEAS_NOTE_TEXT_SIZE_STEP_PX) => {
+  const normalizedSize = normalizeIdeasNoteTextSize(valueInput);
+  const step = Math.max(1, Math.round(Number(stepInput) || IDEAS_NOTE_TEXT_SIZE_STEP_PX));
+  const snappedSize = Math.round(normalizedSize / step) * step;
+  return clampIdeasNumber(snappedSize, {
+    min: IDEAS_NOTE_TEXT_SIZE_MIN_PX,
+    max: IDEAS_NOTE_TEXT_SIZE_MAX_PX,
+    fallback: IDEAS_DEFAULT_NOTE_TEXT_SIZE,
+  });
+};
+const normalizeIdeasShapeFillColor = (valueInput) => {
+  const normalizedValue = String(valueInput || '').trim().toLowerCase();
+  const matchedColor = IDEAS_SHAPE_FILL_COLOR_PRESETS.find(
+    (color) => color.toLowerCase() === normalizedValue
+  );
+  return matchedColor || IDEAS_DEFAULT_SHAPE_FILL_COLOR;
+};
+const normalizeIdeasShapeBorderColor = (valueInput) => {
+  const normalizedValue = String(valueInput || '').trim().toLowerCase();
+  const matchedColor = IDEAS_SHAPE_BORDER_COLOR_PRESETS.find(
+    (color) => color.toLowerCase() === normalizedValue
+  );
+  return matchedColor || IDEAS_DEFAULT_SHAPE_BORDER_COLOR;
+};
+const normalizeIdeasNoteColor = (valueInput) => {
+  const normalizedValue = String(valueInput || '').trim().toLowerCase();
+  const matchedColor = IDEAS_NOTE_COLORS.find((color) => color.toLowerCase() === normalizedValue);
+  return matchedColor || IDEAS_DEFAULT_NOTE_COLOR;
+};
+const normalizeIdeasNoteKind = (valueInput) => {
+  const normalizedValue = String(valueInput || '').trim().toLowerCase();
+  if (normalizedValue === IDEAS_NOTE_KINDS.TEXT) return IDEAS_NOTE_KINDS.TEXT;
+  if (normalizedValue === IDEAS_NOTE_KINDS.SHAPE) return IDEAS_NOTE_KINDS.SHAPE;
+  return IDEAS_NOTE_KINDS.STICKY;
+};
+const normalizeIdeasShapeType = (valueInput) => {
+  const normalizedValue = String(valueInput || '').trim().toLowerCase();
+  return IDEAS_SHAPE_ID_SET.has(normalizedValue) ? normalizedValue : IDEAS_DEFAULT_SHAPE_ID;
+};
+const normalizeIdeasParentNoteId = (valueInput, selfIdInput = '') => {
+  const parentId = String(valueInput || '').trim();
+  if (!parentId) return '';
+  const selfId = String(selfIdInput || '').trim();
+  return parentId === selfId ? '' : parentId;
+};
+const resolveIdeasShapeOption = (shapeTypeInput) =>
+  IDEAS_SHAPE_OPTIONS.find((option) => option.id === normalizeIdeasShapeType(shapeTypeInput)) ||
+  IDEAS_SHAPE_OPTIONS[0];
+const normalizeIdeasVoteUserIds = (valueInput) =>
+  Array.from(
+    new Set(
+      (Array.isArray(valueInput) ? valueInput : [])
+        .map((value) => String(value || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+const normalizeIdeasPageTitle = (valueInput, index = 0) => {
+  const trimmed = String(valueInput || '').replace(/\r/g, '').trim().slice(0, IDEAS_MAX_PAGE_TITLE_LENGTH);
+  if (trimmed) return trimmed;
+  return index > 0 ? `Board ${index + 1}` : IDEAS_DEFAULT_PAGE_TITLE;
+};
+const resolveIdeaVoteUserKey = (userInput) =>
+  String(
+    userInput?.id ||
+      userInput?.userId ||
+      userInput?.username ||
+      userInput?.email ||
+      ''
+  )
+    .trim()
+    .toLowerCase();
+const toIdeaWorkspaceNoteTimestampMs = (noteInput) => {
+  const updatedAtMs = toTimestampMs(noteInput?.updatedAt);
+  if (updatedAtMs > 0) return updatedAtMs;
+  return toTimestampMs(noteInput?.createdAt);
+};
+const toIdeaWorkspacePageTimestampMs = (pageInput) => {
+  const updatedAtMs = toTimestampMs(pageInput?.updatedAt);
+  if (updatedAtMs > 0) return updatedAtMs;
+  return toTimestampMs(pageInput?.createdAt);
+};
+const normalizeIdeasNote = (noteInput, index = 0) => {
+  const note = noteInput && typeof noteInput === 'object' && !Array.isArray(noteInput) ? noteInput : {};
+  const kind = normalizeIdeasNoteKind(note.kind);
+  const createdAtRaw = String(note.createdAt || '').trim();
+  const nowIso = new Date().toISOString();
+  const createdAt =
+    createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime()) ? createdAtRaw : nowIso;
+  const updatedAtRaw = String(note.updatedAt || '').trim();
+  const updatedAt =
+    updatedAtRaw && !Number.isNaN(new Date(updatedAtRaw).getTime()) ? updatedAtRaw : createdAt;
+  const parentNoteId =
+    kind === IDEAS_NOTE_KINDS.STICKY ? normalizeIdeasParentNoteId(note.parentNoteId, note.id) : '';
+  const isShapeNote = kind === IDEAS_NOTE_KINDS.SHAPE;
+  const isStickyNote = kind === IDEAS_NOTE_KINDS.STICKY;
+  const shapeFillColor = normalizeIdeasShapeFillColor(
+    note.shapeFillColor !== undefined && note.shapeFillColor !== null
+      ? note.shapeFillColor
+      : null
+  );
+  const shapeBorderColor = normalizeIdeasShapeBorderColor(note.shapeBorderColor);
+  const width = clampIdeasNumber(note.width, {
+    min: isShapeNote
+      ? IDEAS_SHAPE_DEFAULTS.minWidth
+      : isStickyNote
+        ? IDEAS_STICKY_RESIZE_DEFAULTS.minWidth
+        : IDEAS_NOTE_DEFAULTS.width,
+    max: isShapeNote
+      ? IDEAS_SHAPE_DEFAULTS.maxWidth
+      : isStickyNote
+        ? IDEAS_STICKY_RESIZE_DEFAULTS.maxWidth
+        : IDEAS_NOTE_DEFAULTS.width,
+    fallback: isShapeNote
+      ? IDEAS_SHAPE_DEFAULTS.width
+      : isStickyNote
+        ? IDEAS_STICKY_RESIZE_DEFAULTS.width
+        : IDEAS_NOTE_DEFAULTS.width,
+  });
+  const height = clampIdeasNumber(note.height, {
+    min: isShapeNote
+      ? IDEAS_SHAPE_DEFAULTS.minHeight
+      : isStickyNote
+        ? IDEAS_STICKY_RESIZE_DEFAULTS.minHeight
+        : IDEAS_NOTE_DEFAULTS.minHeight,
+    max: isShapeNote
+      ? IDEAS_SHAPE_DEFAULTS.maxHeight
+      : isStickyNote
+        ? IDEAS_STICKY_RESIZE_DEFAULTS.maxHeight
+        : IDEAS_NOTE_DEFAULTS.minHeight,
+    fallback: isShapeNote
+      ? IDEAS_SHAPE_DEFAULTS.height
+      : isStickyNote
+        ? IDEAS_STICKY_RESIZE_DEFAULTS.height
+        : IDEAS_NOTE_DEFAULTS.minHeight,
+  });
+  return {
+    id: String(note.id || '').trim() || `idea_note_${index}_${generateId()}`,
+    kind,
+    text: String(note.text || '').replace(/\r/g, '').slice(0, 1200),
+    x: clampIdeasNumber(note.x, { min: -4800, max: 4800, fallback: 0 }),
+    y: clampIdeasNumber(note.y, { min: -3600, max: 3600, fallback: 0 }),
+    width,
+    height,
+    shapeType: normalizeIdeasShapeType(note.shapeType),
+    parentNoteId,
+    isSubnotesCollapsed: kind === IDEAS_NOTE_KINDS.STICKY ? Boolean(note.isSubnotesCollapsed) : false,
+    color: normalizeIdeasNoteColor(note.color),
+    shapeFillColor,
+    shapeBorderColor,
+    textSize: normalizeIdeasNoteTextSize(note.textSize),
+    createdBy: String(note.createdBy || '').trim(),
+    voteUserIds: parentNoteId ? [] : normalizeIdeasVoteUserIds(note.voteUserIds),
+    createdAt,
+    updatedAt,
+  };
+};
+const normalizeIdeasNotes = (notesInput) => {
+  const noteMap = new Map();
+  (Array.isArray(notesInput) ? notesInput : []).forEach((noteInput, index) => {
+    const note = normalizeIdeasNote(noteInput, index);
+    if (!note?.id) return;
+    const existing = noteMap.get(note.id);
+    if (!existing || toIdeaWorkspaceNoteTimestampMs(note) >= toIdeaWorkspaceNoteTimestampMs(existing)) {
+      noteMap.set(note.id, note);
+    }
+  });
+  return Array.from(noteMap.values()).sort(
+    (left, right) => toIdeaWorkspaceNoteTimestampMs(right) - toIdeaWorkspaceNoteTimestampMs(left)
+  );
+};
+const mergeIdeasNotesByTimestamp = (baseNotesInput, incomingNotesInput) => {
+  const mergedById = new Map();
+  [...normalizeIdeasNotes(baseNotesInput), ...normalizeIdeasNotes(incomingNotesInput)].forEach((note) => {
+    if (!note?.id) return;
+    const existing = mergedById.get(note.id);
+    if (!existing || toIdeaWorkspaceNoteTimestampMs(note) >= toIdeaWorkspaceNoteTimestampMs(existing)) {
+      mergedById.set(note.id, note);
+    }
+  });
+  return Array.from(mergedById.values()).sort(
+    (left, right) => toIdeaWorkspaceNoteTimestampMs(right) - toIdeaWorkspaceNoteTimestampMs(left)
+  );
+};
+const toIdeaWorkspaceShapeConnectionTimestampMs = (connectionInput) => {
+  const updatedAtMs = toTimestampMs(connectionInput?.updatedAt);
+  if (updatedAtMs > 0) return updatedAtMs;
+  return toTimestampMs(connectionInput?.createdAt);
+};
+const normalizeIdeasShapeConnection = (connectionInput, index = 0) => {
+  const connection =
+    connectionInput && typeof connectionInput === 'object' && !Array.isArray(connectionInput)
+      ? connectionInput
+      : {};
+  const fromNoteId = String(connection.fromNoteId || '').trim();
+  const toNoteId = String(connection.toNoteId || '').trim();
+  if (!fromNoteId || !toNoteId || fromNoteId === toNoteId) return null;
+  const createdAtRaw = String(connection.createdAt || '').trim();
+  const nowIso = new Date().toISOString();
+  const createdAt =
+    createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime()) ? createdAtRaw : nowIso;
+  const updatedAtRaw = String(connection.updatedAt || '').trim();
+  const updatedAt =
+    updatedAtRaw && !Number.isNaN(new Date(updatedAtRaw).getTime()) ? updatedAtRaw : createdAt;
+  return {
+    id: String(connection.id || '').trim() || `idea_shape_connection_${index}_${generateId()}`,
+    fromNoteId,
+    toNoteId,
+    createdAt,
+    updatedAt,
+  };
+};
+const normalizeIdeasShapeConnections = (connectionsInput, notesInput = []) => {
+  const noteKindById = new Map();
+  (Array.isArray(notesInput) ? notesInput : []).forEach((noteInput) => {
+    const noteId = String(noteInput?.id || '').trim();
+    if (!noteId) return;
+    noteKindById.set(noteId, normalizeIdeasNoteKind(noteInput?.kind));
+  });
+  const connectionMap = new Map();
+  (Array.isArray(connectionsInput) ? connectionsInput : []).forEach((connectionInput, index) => {
+    const connection = normalizeIdeasShapeConnection(connectionInput, index);
+    if (!connection) return;
+    if (noteKindById.size > 0) {
+      const fromKind = noteKindById.get(connection.fromNoteId);
+      const toKind = noteKindById.get(connection.toNoteId);
+      if (fromKind !== IDEAS_NOTE_KINDS.SHAPE || toKind !== IDEAS_NOTE_KINDS.SHAPE) return;
+    }
+    const existing = connectionMap.get(connection.id);
+    if (
+      !existing ||
+      toIdeaWorkspaceShapeConnectionTimestampMs(connection) >=
+        toIdeaWorkspaceShapeConnectionTimestampMs(existing)
+    ) {
+      connectionMap.set(connection.id, connection);
+    }
+  });
+  const latestByPair = new Map();
+  Array.from(connectionMap.values()).forEach((connection) => {
+    const pairKey = `${connection.fromNoteId}->${connection.toNoteId}`;
+    const existing = latestByPair.get(pairKey);
+    if (
+      !existing ||
+      toIdeaWorkspaceShapeConnectionTimestampMs(connection) >=
+        toIdeaWorkspaceShapeConnectionTimestampMs(existing)
+    ) {
+      latestByPair.set(pairKey, connection);
+    }
+  });
+  return Array.from(latestByPair.values()).sort(
+    (left, right) =>
+      toIdeaWorkspaceShapeConnectionTimestampMs(right) -
+      toIdeaWorkspaceShapeConnectionTimestampMs(left)
+  );
+};
+const mergeIdeasShapeConnectionsByTimestamp = (
+  baseConnectionsInput,
+  incomingConnectionsInput,
+  notesInput = []
+) => {
+  const mergedById = new Map();
+  [
+    ...normalizeIdeasShapeConnections(baseConnectionsInput, notesInput),
+    ...normalizeIdeasShapeConnections(incomingConnectionsInput, notesInput),
+  ].forEach((connection) => {
+    if (!connection?.id) return;
+    const existing = mergedById.get(connection.id);
+    if (
+      !existing ||
+      toIdeaWorkspaceShapeConnectionTimestampMs(connection) >=
+        toIdeaWorkspaceShapeConnectionTimestampMs(existing)
+    ) {
+      mergedById.set(connection.id, connection);
+    }
+  });
+  return Array.from(mergedById.values()).sort(
+    (left, right) =>
+      toIdeaWorkspaceShapeConnectionTimestampMs(right) -
+      toIdeaWorkspaceShapeConnectionTimestampMs(left)
+  );
+};
+const createIdeasShapeConnection = ({ fromNoteId = '', toNoteId = '' } = {}) => {
+  const nowIso = new Date().toISOString();
+  return normalizeIdeasShapeConnection({
+    id: `idea_shape_connection_${generateId()}`,
+    fromNoteId,
+    toNoteId,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  });
+};
+const normalizeIdeasPage = (pageInput, index = 0) => {
+  const page = pageInput && typeof pageInput === 'object' && !Array.isArray(pageInput) ? pageInput : {};
+  const createdAtRaw = String(page.createdAt || '').trim();
+  const nowIso = new Date().toISOString();
+  const createdAt =
+    createdAtRaw && !Number.isNaN(new Date(createdAtRaw).getTime()) ? createdAtRaw : nowIso;
+  const updatedAtRaw = String(page.updatedAt || '').trim();
+  const updatedAt =
+    updatedAtRaw && !Number.isNaN(new Date(updatedAtRaw).getTime()) ? updatedAtRaw : createdAt;
+  const normalizedNotes = normalizeIdeasNotes(page.notes);
+  return {
+    id: String(page.id || '').trim() || `idea_page_${index}_${generateId()}`,
+    title: normalizeIdeasPageTitle(page.title, index),
+    isPinned: Boolean(page.isPinned),
+    notes: normalizedNotes,
+    shapeConnections: normalizeIdeasShapeConnections(page?.shapeConnections, normalizedNotes),
+    camera: normalizeIdeasCamera(page.camera),
+    noteDefaults: {
+      color: normalizeIdeasNoteColor(page?.noteDefaults?.color),
+      textSize: normalizeIdeasNoteTextSize(page?.noteDefaults?.textSize),
+      shapeFillColor: normalizeIdeasShapeFillColor(page?.noteDefaults?.shapeFillColor),
+      shapeBorderColor: normalizeIdeasShapeBorderColor(page?.noteDefaults?.shapeBorderColor),
+    },
+    createdAt,
+    updatedAt,
+  };
+};
+const createIdeasWorkspacePage = ({
+  title = IDEAS_DEFAULT_PAGE_TITLE,
+  notes = [],
+  shapeConnections = [],
+  camera = IDEAS_DEFAULT_CAMERA,
+  noteDefaults = {},
+  isPinned = false,
+} = {}) => {
+  const nowIso = new Date().toISOString();
+  return normalizeIdeasPage({
+    id: `idea_page_${generateId()}`,
+    title,
+    isPinned,
+    notes,
+    shapeConnections,
+    camera,
+    noteDefaults,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  });
+};
+const normalizeIdeasPages = (pagesInput, fallbackPageInput = null) => {
+  const pageOrder = [];
+  const pageMap = new Map();
+  (Array.isArray(pagesInput) ? pagesInput : []).forEach((pageInput, index) => {
+    const page = normalizeIdeasPage(pageInput, index);
+    if (!page?.id) return;
+    if (!pageOrder.includes(page.id)) {
+      pageOrder.push(page.id);
+    }
+    const existing = pageMap.get(page.id);
+    if (!existing || toIdeaWorkspacePageTimestampMs(page) >= toIdeaWorkspacePageTimestampMs(existing)) {
+      pageMap.set(page.id, page);
+    }
+  });
+  const normalizedPages = pageOrder.map((pageId) => pageMap.get(pageId)).filter(Boolean);
+  if (normalizedPages.length > 0) {
+    return normalizedPages;
+  }
+  const fallback = fallbackPageInput && typeof fallbackPageInput === 'object' ? fallbackPageInput : {};
+  const fallbackNotes = normalizeIdeasNotes(fallback.notes);
+  return [
+    createIdeasWorkspacePage({
+      title: normalizeIdeasPageTitle(fallback.title, 0),
+      notes: fallbackNotes,
+      shapeConnections: normalizeIdeasShapeConnections(
+        fallback.shapeConnections,
+        fallbackNotes
+      ),
+      camera: normalizeIdeasCamera(fallback.camera),
+      noteDefaults: {
+        color: normalizeIdeasNoteColor(fallback?.noteDefaults?.color),
+        textSize: normalizeIdeasNoteTextSize(fallback?.noteDefaults?.textSize),
+      },
+      isPinned: Boolean(fallback.isPinned),
+    }),
+  ];
+};
+const normalizeIdeasWorkspaceData = (dataInput) => {
+  const data = dataInput && typeof dataInput === 'object' && !Array.isArray(dataInput) ? dataInput : {};
+  const legacyNoteDefaultsInput =
+    data.noteDefaults && typeof data.noteDefaults === 'object' && !Array.isArray(data.noteDefaults)
+      ? data.noteDefaults
+      : {};
+  const pages = normalizeIdeasPages(data.pages, {
+    title: IDEAS_DEFAULT_PAGE_TITLE,
+    notes: data.notes,
+    shapeConnections: data.shapeConnections,
+    camera: data.camera,
+    noteDefaults: {
+      color: normalizeIdeasNoteColor(legacyNoteDefaultsInput.color),
+      textSize: normalizeIdeasNoteTextSize(legacyNoteDefaultsInput.textSize),
+      shapeFillColor: normalizeIdeasShapeFillColor(legacyNoteDefaultsInput.shapeFillColor),
+      shapeBorderColor: normalizeIdeasShapeBorderColor(legacyNoteDefaultsInput.shapeBorderColor),
+    },
+    isPinned: true,
+  });
+  const requestedActivePageId = String(data.activePageId || '').trim();
+  const activePage =
+    pages.find((page) => String(page?.id || '').trim() === requestedActivePageId) || pages[0] || null;
+  const activePageId = String(activePage?.id || '').trim();
+  const updatedAtRaw = String(data.updatedAt || '').trim();
+  return {
+    pages,
+    activePageId,
+    notes: activePage ? normalizeIdeasNotes(activePage.notes) : [],
+    shapeConnections: activePage ? normalizeIdeasShapeConnections(activePage.shapeConnections, activePage.notes) : [],
+    camera: activePage ? normalizeIdeasCamera(activePage.camera) : normalizeIdeasCamera(null),
+    noteDefaults: activePage
+      ? {
+          color: normalizeIdeasNoteColor(activePage?.noteDefaults?.color),
+          textSize: normalizeIdeasNoteTextSize(activePage?.noteDefaults?.textSize),
+          shapeFillColor: normalizeIdeasShapeFillColor(activePage?.noteDefaults?.shapeFillColor),
+          shapeBorderColor: normalizeIdeasShapeBorderColor(activePage?.noteDefaults?.shapeBorderColor),
+        }
+      : {
+          color: IDEAS_DEFAULT_NOTE_COLOR,
+          textSize: IDEAS_DEFAULT_NOTE_TEXT_SIZE,
+          shapeFillColor: IDEAS_DEFAULT_SHAPE_FILL_COLOR,
+          shapeBorderColor: IDEAS_DEFAULT_SHAPE_BORDER_COLOR,
+        },
+    updatedAt:
+      updatedAtRaw && !Number.isNaN(new Date(updatedAtRaw).getTime()) ? updatedAtRaw : null,
+  };
+};
+const createIdeasWorkspaceNote = ({
+  kind = IDEAS_NOTE_KINDS.STICKY,
+  text = '',
+  x = 0,
+  y = 0,
+  width = null,
+  height = null,
+  shapeType = IDEAS_DEFAULT_SHAPE_ID,
+  parentNoteId = '',
+  isSubnotesCollapsed = false,
+  color = IDEAS_DEFAULT_NOTE_COLOR,
+  shapeFillColor = IDEAS_DEFAULT_SHAPE_FILL_COLOR,
+  shapeBorderColor = IDEAS_DEFAULT_SHAPE_BORDER_COLOR,
+  textSize = IDEAS_DEFAULT_NOTE_TEXT_SIZE,
+  createdBy = '',
+} = {}) => {
+  const normalizedKind = normalizeIdeasNoteKind(kind);
+  const nowIso = new Date().toISOString();
+  return normalizeIdeasNote({
+    id: `idea_note_${generateId()}`,
+    kind: normalizedKind,
+    text,
+    x,
+    y,
+    width:
+      width !== null && width !== undefined
+        ? width
+        : normalizedKind === IDEAS_NOTE_KINDS.SHAPE
+          ? IDEAS_SHAPE_DEFAULTS.width
+          : IDEAS_STICKY_RESIZE_DEFAULTS.width,
+    height:
+      height !== null && height !== undefined
+        ? height
+        : normalizedKind === IDEAS_NOTE_KINDS.SHAPE
+          ? IDEAS_SHAPE_DEFAULTS.height
+          : IDEAS_STICKY_RESIZE_DEFAULTS.height,
+    shapeType,
+    parentNoteId: normalizedKind === IDEAS_NOTE_KINDS.STICKY ? parentNoteId : '',
+    isSubnotesCollapsed: normalizedKind === IDEAS_NOTE_KINDS.STICKY ? Boolean(isSubnotesCollapsed) : false,
+    color,
+    shapeFillColor,
+    shapeBorderColor,
+    textSize,
+    createdBy,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  });
+};
+const mergeIdeasWorkspaceData = (baseDataInput, incomingDataInput) => {
+  const baseData = normalizeIdeasWorkspaceData(baseDataInput);
+  const incomingData = normalizeIdeasWorkspaceData(incomingDataInput);
+  const pageOrder = Array.from(
+    new Set(
+      [...(Array.isArray(baseData.pages) ? baseData.pages : []), ...(Array.isArray(incomingData.pages) ? incomingData.pages : [])]
+        .map((page) => String(page?.id || '').trim())
+        .filter(Boolean)
+    )
+  );
+  const basePageById = new Map((Array.isArray(baseData.pages) ? baseData.pages : []).map((page) => [page.id, page]));
+  const incomingPageById = new Map(
+    (Array.isArray(incomingData.pages) ? incomingData.pages : []).map((page) => [page.id, page])
+  );
+  const mergedPages = pageOrder
+    .map((pageId, index) => {
+      const basePage = basePageById.get(pageId);
+      const incomingPage = incomingPageById.get(pageId);
+      if (!basePage) return normalizeIdeasPage(incomingPage, index);
+      if (!incomingPage) return normalizeIdeasPage(basePage, index);
+      const baseMs = toIdeaWorkspacePageTimestampMs(basePage);
+      const incomingMs = toIdeaWorkspacePageTimestampMs(incomingPage);
+      const preferredPage = incomingMs >= baseMs ? incomingPage : basePage;
+      const baseCreatedMs = toTimestampMs(basePage.createdAt);
+      const incomingCreatedMs = toTimestampMs(incomingPage.createdAt);
+      const mergedCreatedAt =
+        baseCreatedMs > 0 && incomingCreatedMs > 0
+          ? baseCreatedMs <= incomingCreatedMs
+            ? basePage.createdAt
+            : incomingPage.createdAt
+          : String(preferredPage.createdAt || '').trim() || new Date().toISOString();
+      const mergedNotes = mergeIdeasNotesByTimestamp(basePage.notes, incomingPage.notes);
+      return normalizeIdeasPage(
+        {
+          ...preferredPage,
+          createdAt: mergedCreatedAt,
+          notes: mergedNotes,
+          shapeConnections: mergeIdeasShapeConnectionsByTimestamp(
+            basePage.shapeConnections,
+            incomingPage.shapeConnections,
+            mergedNotes
+          ),
+        },
+        index
+      );
+    })
+    .filter(Boolean);
+  const baseUpdatedMs = toTimestampMs(baseData.updatedAt);
+  const incomingUpdatedMs = toTimestampMs(incomingData.updatedAt);
+  const preferredData = incomingUpdatedMs >= baseUpdatedMs ? incomingData : baseData;
+  const preferredActivePageId = String(preferredData.activePageId || '').trim();
+  const mergedActivePageId = mergedPages.some((page) => page.id === preferredActivePageId)
+    ? preferredActivePageId
+    : String(mergedPages[0]?.id || '').trim();
+
+  return normalizeIdeasWorkspaceData({
+    pages: mergedPages,
+    activePageId: mergedActivePageId,
+    updatedAt: preferredData.updatedAt,
+  });
 };
 const hasPersonalListContent = (itemsInput) =>
   (Array.isArray(itemsInput) ? itemsInput : []).some((item) => String(item || '').trim().length > 0);
@@ -977,7 +1895,7 @@ const STARTUP_VIEW_MODES = {
   LAST: 'last',
 };
 const VALID_STARTUP_VIEWS = new Set(Object.values(STARTUP_VIEW_MODES));
-const PROJECT_DASHBOARD_TABS = ['organization', 'tasks', 'team', 'notes', 'announcements'];
+const PROJECT_DASHBOARD_TABS = ['organization', 'tasks', 'ideas', 'notes', 'team', 'announcements'];
 const DEFAULT_PROJECT_DASHBOARD_TAB = PROJECT_DASHBOARD_TABS[0];
 const PROJECT_DASHBOARD_TAB_SET = new Set(PROJECT_DASHBOARD_TABS);
 const DEFAULT_LAST_VISITED_VIEW = {
@@ -1144,6 +2062,7 @@ const PROJECT_UPDATE_TOAST_AUTO_CLOSE_MS = 5000;
 const PROJECT_UPDATE_TOAST_EXIT_MS = 280;
 const COLLABORATIVE_REFRESH_INTERVAL_MS = 5000;
 const COLLABORATIVE_REFRESH_ACTIVE_NOTES_INTERVAL_MS = 1800;
+const COLLABORATIVE_REFRESH_ACTIVE_IDEAS_INTERVAL_MS = 1800;
 const COLLABORATIVE_REFRESH_ACTIVE_OTHER_INTERVAL_MS = 6500;
 const PROJECT_OWNER_LOOKUP_CACHE_TTL_MS = 10 * 60 * 1000;
 const STABLE_FALLBACK_ISO = new Date(0).toISOString();
@@ -3221,6 +4140,10 @@ const mergeAccountDbPayloadForConflict = (basePayloadInput, incomingPayloadInput
     ...incomingPayload,
     projects: mergeAccountProjectsForConflict(basePayload.projects, incomingPayload.projects),
     events: mergeAccountEventsForConflict(basePayload.events, incomingPayload.events),
+    ideasWorkspaceData: mergeIdeasWorkspaceData(
+      basePayload.ideasWorkspaceData,
+      incomingPayload.ideasWorkspaceData
+    ),
     projectTodosByProjectId: mergeProjectTodosByProjectId(
       basePayload.projectTodosByProjectId,
       incomingPayload.projectTodosByProjectId
@@ -9359,7 +10282,9 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     const collaborativeRefreshIntervalMs = activeDashboardProjectId
       ? activeDashboardTab === 'notes'
         ? COLLABORATIVE_REFRESH_ACTIVE_NOTES_INTERVAL_MS
-        : COLLABORATIVE_REFRESH_ACTIVE_OTHER_INTERVAL_MS
+        : activeDashboardTab === 'ideas'
+          ? COLLABORATIVE_REFRESH_ACTIVE_IDEAS_INTERVAL_MS
+          : COLLABORATIVE_REFRESH_ACTIVE_OTHER_INTERVAL_MS
       : COLLABORATIVE_REFRESH_INTERVAL_MS;
     const refreshInterval = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
@@ -13069,6 +13994,3859 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 // Sub-Components
 // ==========================================
 
+const IdeasToolbarButton = ({
+  title = '',
+  isActive = false,
+  disabled = false,
+  onClick,
+  children,
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    disabled={disabled}
+    title={title}
+    className={`h-9 min-w-9 px-2 rounded-lg border inline-flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors ${
+      isActive
+        ? 'bg-violet-600 border-violet-600 text-white shadow-sm'
+        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+    } ${disabled ? 'opacity-45 cursor-not-allowed hover:bg-white' : ''}`}
+  >
+    {children}
+  </button>
+);
+
+const IdeasWorkspace = ({
+  data,
+  onChangeData,
+  currentUser,
+  projectMemberCount = 0,
+  isCompactViewport = false,
+}) => {
+  const workspaceRootRef = useRef(null);
+  const viewportRef = useRef(null);
+  const floatingToolbarRef = useRef(null);
+  const pagePickerRef = useRef(null);
+  const shapePickerRef = useRef(null);
+  const noteElementMapRef = useRef(new Map());
+  const pointerInteractionRef = useRef({ cleanup: null });
+  const shapeArrowMarkerIdRef = useRef(`idea-shape-arrow-${generateId()}`);
+  const normalizedData = useMemo(() => normalizeIdeasWorkspaceData(data), [data]);
+  const [activeTool, setActiveTool] = useState(IDEAS_WORKSPACE_TOOLS.SELECT);
+  const [selectedNoteId, setSelectedNoteId] = useState('');
+  const [selectedNoteIds, setSelectedNoteIds] = useState([]);
+  const [editingNoteId, setEditingNoteId] = useState('');
+  const [isPagePickerOpen, setIsPagePickerOpen] = useState(false);
+  const [isCreatePagePopupOpen, setIsCreatePagePopupOpen] = useState(false);
+  const [createPageTitleInput, setCreatePageTitleInput] = useState('');
+  const [createPagePinInput, setCreatePagePinInput] = useState(false);
+  const [createPageError, setCreatePageError] = useState('');
+  const [isShapePickerOpen, setIsShapePickerOpen] = useState(false);
+  const [shapeSearchKeyword, setShapeSearchKeyword] = useState('');
+  const [activeShapeType, setActiveShapeType] = useState(IDEAS_DEFAULT_SHAPE_ID);
+  const [isTopVotesPopupOpen, setIsTopVotesPopupOpen] = useState(false);
+  const [floatingToolbarPosition, setFloatingToolbarPosition] = useState({
+    left: 0,
+    top: 0,
+    placement: 'top',
+    isVisible: false,
+  });
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFullscreenSupported, setIsFullscreenSupported] = useState(true);
+  const [pendingTextFocusNoteId, setPendingTextFocusNoteId] = useState('');
+  const [marqueeSelection, setMarqueeSelection] = useState(null);
+  const [activeConnectorId, setActiveConnectorId] = useState('');
+  const [activeShapeConnectionId, setActiveShapeConnectionId] = useState('');
+  const [shapeDrawDraft, setShapeDrawDraft] = useState(null);
+  const [shapeQuickConnectState, setShapeQuickConnectState] = useState(null);
+  const [shapeQuickConnectDraft, setShapeQuickConnectDraft] = useState(null);
+  const normalizedSelectedNoteIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (Array.isArray(selectedNoteIds) ? selectedNoteIds : [])
+            .map((noteId) => String(noteId || '').trim())
+            .filter(Boolean)
+        )
+      ),
+    [selectedNoteIds]
+  );
+  const normalizedSelectedNoteId = String(selectedNoteId || '').trim();
+  const selectedNoteIdSet = useMemo(
+    () => new Set(normalizedSelectedNoteIds),
+    [normalizedSelectedNoteIds]
+  );
+  const primarySelectedNoteId =
+    normalizedSelectedNoteId || normalizedSelectedNoteIds[0] || '';
+  const selectedNote = useMemo(
+    () =>
+      normalizedData.notes.find((note) => String(note?.id || '').trim() === primarySelectedNoteId) ||
+      null,
+    [normalizedData.notes, primarySelectedNoteId]
+  );
+  const normalizedEditingNoteId = String(editingNoteId || '').trim();
+  const activePageId = String(normalizedData.activePageId || '').trim();
+  const activePage =
+    normalizedData.pages.find((page) => String(page?.id || '').trim() === activePageId) ||
+    normalizedData.pages[0] ||
+    null;
+  const orderedPages = useMemo(
+    () =>
+      [...(Array.isArray(normalizedData.pages) ? normalizedData.pages : [])].sort((left, right) => {
+        if (Boolean(left?.isPinned) !== Boolean(right?.isPinned)) {
+          return Boolean(left?.isPinned) ? -1 : 1;
+        }
+        const leftCreatedMs = toTimestampMs(left?.createdAt);
+        const rightCreatedMs = toTimestampMs(right?.createdAt);
+        if (leftCreatedMs !== rightCreatedMs) {
+          return leftCreatedMs - rightCreatedMs;
+        }
+        return String(left?.title || '').localeCompare(String(right?.title || ''), undefined, {
+          sensitivity: 'base',
+        });
+      }),
+    [normalizedData.pages]
+  );
+  const currentVoteUserKey = resolveIdeaVoteUserKey(currentUser);
+  const stickyNotesWithVotes = useMemo(
+    () =>
+      normalizedData.notes
+        .map((note) => ({
+          note,
+          voteCount: normalizeIdeasVoteUserIds(note?.voteUserIds).length,
+        }))
+        .filter(
+          (entry) =>
+            normalizeIdeasNoteKind(entry?.note?.kind) === IDEAS_NOTE_KINDS.STICKY &&
+            !normalizeIdeasParentNoteId(entry?.note?.parentNoteId, entry?.note?.id) &&
+            entry.voteCount > 0
+        )
+        .sort((left, right) => {
+          if (right.voteCount !== left.voteCount) return right.voteCount - left.voteCount;
+          return (
+            toIdeaWorkspaceNoteTimestampMs(right.note) - toIdeaWorkspaceNoteTimestampMs(left.note)
+          );
+        }),
+    [normalizedData.notes]
+  );
+  const votedMemberCount = useMemo(
+    () =>
+      new Set(
+        stickyNotesWithVotes.flatMap((entry) => normalizeIdeasVoteUserIds(entry?.note?.voteUserIds))
+      ).size,
+    [stickyNotesWithVotes]
+  );
+  const normalizedProjectMemberCount = Math.max(1, Number(projectMemberCount || 0) || 0);
+  const activeFloatingToolbarNoteId =
+    normalizedEditingNoteId && normalizedEditingNoteId === normalizedSelectedNoteId
+      ? normalizedEditingNoteId
+      : '';
+  const activeFloatingToolbarNote =
+    normalizedData.notes.find((note) => String(note?.id || '').trim() === activeFloatingToolbarNoteId) || null;
+  const activeTextSize = normalizeIdeasNoteTextSize(
+    selectedNote?.textSize || normalizedData.noteDefaults.textSize
+  );
+  const activeTextSizeSelectValue = String(snapIdeasTextSizeToStep(activeTextSize));
+  const activeColor = normalizeIdeasNoteColor(selectedNote?.color || normalizedData.noteDefaults.color);
+  const activeShapeFillColor = normalizeIdeasShapeFillColor(
+    selectedNote?.shapeFillColor || normalizedData.noteDefaults.shapeFillColor
+  );
+  const activeShapeBorderColor = normalizeIdeasShapeBorderColor(
+    selectedNote?.shapeBorderColor || normalizedData.noteDefaults.shapeBorderColor
+  );
+  const selectedNoteKind = normalizeIdeasNoteKind(selectedNote?.kind);
+  const isSelectedTextNote = selectedNoteKind === IDEAS_NOTE_KINDS.TEXT;
+  const isSelectedShapeNote = selectedNoteKind === IDEAS_NOTE_KINDS.SHAPE;
+  const activeShapeOption = useMemo(
+    () => resolveIdeasShapeOption(activeShapeType),
+    [activeShapeType]
+  );
+  const filteredShapeOptions = useMemo(() => {
+    const keyword = String(shapeSearchKeyword || '').trim().toLowerCase();
+    if (!keyword) return IDEAS_SHAPE_OPTIONS;
+    return IDEAS_SHAPE_OPTIONS.filter((option) => String(option.label || '').toLowerCase().includes(keyword));
+  }, [shapeSearchKeyword]);
+  const notesById = useMemo(() => {
+    const noteMap = new Map();
+    (Array.isArray(normalizedData.notes) ? normalizedData.notes : []).forEach((note) => {
+      const noteId = String(note?.id || '').trim();
+      if (!noteId) return;
+      noteMap.set(noteId, note);
+    });
+    return noteMap;
+  }, [normalizedData.notes]);
+  const stickyChildCountByParentId = useMemo(() => {
+    const countByParentId = new Map();
+    (Array.isArray(normalizedData.notes) ? normalizedData.notes : []).forEach((note) => {
+      if (normalizeIdeasNoteKind(note?.kind) !== IDEAS_NOTE_KINDS.STICKY) return;
+      const parentId = normalizeIdeasParentNoteId(note?.parentNoteId, note?.id);
+      if (!parentId) return;
+      countByParentId.set(parentId, Number(countByParentId.get(parentId) || 0) + 1);
+    });
+    return countByParentId;
+  }, [normalizedData.notes]);
+  const isIdeaNoteVisible = useCallback(
+    (noteInput) => {
+      const noteId = String(noteInput?.id || '').trim();
+      if (!noteId) return false;
+      let parentId = normalizeIdeasParentNoteId(noteInput?.parentNoteId, noteId);
+      if (!parentId) return true;
+      const visited = new Set([noteId]);
+      while (parentId) {
+        if (visited.has(parentId)) return true;
+        visited.add(parentId);
+        const parentNote = notesById.get(parentId);
+        if (!parentNote) return true;
+        if (normalizeIdeasNoteKind(parentNote?.kind) !== IDEAS_NOTE_KINDS.STICKY) return true;
+        if (Boolean(parentNote?.isSubnotesCollapsed)) return false;
+        parentId = normalizeIdeasParentNoteId(parentNote?.parentNoteId, parentNote?.id);
+      }
+      return true;
+    },
+    [notesById]
+  );
+  const visibleNotes = useMemo(
+    () => (Array.isArray(normalizedData.notes) ? normalizedData.notes : []).filter((note) => isIdeaNoteVisible(note)),
+    [isIdeaNoteVisible, normalizedData.notes]
+  );
+  const visibleNoteIdSet = useMemo(
+    () => new Set(visibleNotes.map((note) => String(note?.id || '').trim()).filter(Boolean)),
+    [visibleNotes]
+  );
+  const shapeConnectionEntries = useMemo(
+    () =>
+      (Array.isArray(normalizedData.shapeConnections) ? normalizedData.shapeConnections : [])
+        .map((connection) => {
+          const connectionId = String(connection?.id || '').trim();
+          if (!connectionId) return null;
+          const fromId = String(connection?.fromNoteId || '').trim();
+          const toId = String(connection?.toNoteId || '').trim();
+          if (!fromId || !toId || fromId === toId) return null;
+          if (!visibleNoteIdSet.has(fromId) || !visibleNoteIdSet.has(toId)) return null;
+          const fromNote = notesById.get(fromId);
+          const toNote = notesById.get(toId);
+          if (!fromNote || !toNote) return null;
+          if (
+            normalizeIdeasNoteKind(fromNote?.kind) !== IDEAS_NOTE_KINDS.SHAPE ||
+            normalizeIdeasNoteKind(toNote?.kind) !== IDEAS_NOTE_KINDS.SHAPE
+          ) {
+            return null;
+          }
+          const sides = resolveIdeasShapeConnectionSides(fromNote, toNote);
+          const startPoint = getIdeasShapeAnchorPoint(fromNote, sides.fromSide);
+          const endPoint = getIdeasShapeAnchorPoint(toNote, sides.toSide);
+          if (!startPoint || !endPoint) return null;
+          return {
+            id: connectionId,
+            fromId,
+            toId,
+            x1: startPoint.x,
+            y1: startPoint.y,
+            x2: endPoint.x,
+            y2: endPoint.y,
+            midX: (startPoint.x + endPoint.x) / 2,
+            midY: (startPoint.y + endPoint.y) / 2,
+          };
+        })
+        .filter(Boolean),
+    [normalizedData.shapeConnections, notesById, visibleNoteIdSet]
+  );
+  const shapeQuickConnectDraftRender = useMemo(() => {
+    if (!shapeQuickConnectDraft) return null;
+    const sourceNoteId = String(shapeQuickConnectDraft?.sourceNoteId || '').trim();
+    const sourceSide = normalizeIdeasShapeSide(shapeQuickConnectDraft?.side, IDEAS_SHAPE_SIDES.RIGHT);
+    if (!sourceNoteId) return null;
+    const sourceNote = notesById.get(sourceNoteId);
+    if (normalizeIdeasNoteKind(sourceNote?.kind) !== IDEAS_NOTE_KINDS.SHAPE) return null;
+    const startPoint = getIdeasShapeAnchorPoint(sourceNote, sourceSide);
+    if (!startPoint) return null;
+    const targetNoteId = String(shapeQuickConnectDraft?.targetNoteId || '').trim();
+    if (targetNoteId) {
+      const targetNote = notesById.get(targetNoteId);
+      if (normalizeIdeasNoteKind(targetNote?.kind) !== IDEAS_NOTE_KINDS.SHAPE) return null;
+      const targetSides = resolveIdeasShapeConnectionSides(sourceNote, targetNote);
+      const endPoint = getIdeasShapeAnchorPoint(targetNote, targetSides.toSide);
+      if (!endPoint) return null;
+      return {
+        sourceNoteId,
+        targetNoteId,
+        x1: startPoint.x,
+        y1: startPoint.y,
+        x2: endPoint.x,
+        y2: endPoint.y,
+        previewRect: null,
+      };
+    }
+    const previewRectRaw =
+      shapeQuickConnectDraft?.previewRect &&
+      typeof shapeQuickConnectDraft.previewRect === 'object' &&
+      !Array.isArray(shapeQuickConnectDraft.previewRect)
+        ? shapeQuickConnectDraft.previewRect
+        : null;
+    if (!previewRectRaw) return null;
+    const previewNote = {
+      kind: IDEAS_NOTE_KINDS.SHAPE,
+      x: previewRectRaw.x,
+      y: previewRectRaw.y,
+      width: previewRectRaw.width,
+      height: previewRectRaw.height,
+    };
+    const endPoint = getIdeasShapeAnchorPoint(
+      previewNote,
+      getIdeasOppositeShapeSide(sourceSide)
+    );
+    if (!endPoint) return null;
+    return {
+      sourceNoteId,
+      targetNoteId: '',
+      x1: startPoint.x,
+      y1: startPoint.y,
+      x2: endPoint.x,
+      y2: endPoint.y,
+      previewRect: {
+        x: Number(previewRectRaw.x || 0),
+        y: Number(previewRectRaw.y || 0),
+        width: clampIdeasNumber(previewRectRaw.width, {
+          min: IDEAS_SHAPE_DEFAULTS.minWidth,
+          max: IDEAS_SHAPE_DEFAULTS.maxWidth,
+          fallback: IDEAS_SHAPE_DEFAULTS.width,
+        }),
+        height: clampIdeasNumber(previewRectRaw.height, {
+          min: IDEAS_SHAPE_DEFAULTS.minHeight,
+          max: IDEAS_SHAPE_DEFAULTS.maxHeight,
+          fallback: IDEAS_SHAPE_DEFAULTS.height,
+        }),
+      },
+    };
+  }, [notesById, shapeQuickConnectDraft]);
+  const stickySubnoteConnectorEntries = useMemo(
+    () =>
+      visibleNotes
+        .map((note) => {
+          if (normalizeIdeasNoteKind(note?.kind) !== IDEAS_NOTE_KINDS.STICKY) return null;
+          const childId = String(note?.id || '').trim();
+          if (!childId) return null;
+          const parentId = normalizeIdeasParentNoteId(note?.parentNoteId, childId);
+          if (!parentId) return null;
+          if (!visibleNoteIdSet.has(parentId)) return null;
+          const parentNote = notesById.get(parentId);
+          if (!parentNote) return null;
+          if (normalizeIdeasNoteKind(parentNote?.kind) !== IDEAS_NOTE_KINDS.STICKY) return null;
+          const parentWidth = clampIdeasNumber(parentNote?.width, {
+            min: IDEAS_STICKY_RESIZE_DEFAULTS.minWidth,
+            max: IDEAS_STICKY_RESIZE_DEFAULTS.maxWidth,
+            fallback: IDEAS_STICKY_RESIZE_DEFAULTS.width,
+          });
+          const parentHeight = clampIdeasNumber(parentNote?.height, {
+            min: IDEAS_STICKY_RESIZE_DEFAULTS.minHeight,
+            max: IDEAS_STICKY_RESIZE_DEFAULTS.maxHeight,
+            fallback: IDEAS_STICKY_RESIZE_DEFAULTS.height,
+          });
+          const childWidth = clampIdeasNumber(note?.width, {
+            min: IDEAS_STICKY_RESIZE_DEFAULTS.minWidth,
+            max: IDEAS_STICKY_RESIZE_DEFAULTS.maxWidth,
+            fallback: IDEAS_STICKY_RESIZE_DEFAULTS.width,
+          });
+          const childHeight = clampIdeasNumber(note?.height, {
+            min: IDEAS_STICKY_RESIZE_DEFAULTS.minHeight,
+            max: IDEAS_STICKY_RESIZE_DEFAULTS.maxHeight,
+            fallback: IDEAS_STICKY_RESIZE_DEFAULTS.height,
+          });
+          const x1 = Number(parentNote?.x || 0) + parentWidth / 2;
+          const y1 = Number(parentNote?.y || 0) + parentHeight / 2;
+          const x2 = Number(note?.x || 0) + childWidth / 2;
+          const y2 = Number(note?.y || 0) + childHeight / 2;
+          return {
+            id: `idea-subnote-link-${parentId}-${childId}`,
+            parentId,
+            childId,
+            x1,
+            y1,
+            x2,
+            y2,
+            midX: (x1 + x2) / 2,
+            midY: (y1 + y2) / 2,
+          };
+        })
+        .filter(Boolean),
+    [notesById, visibleNoteIdSet, visibleNotes]
+  );
+  const selectedParentNoteId =
+    selectedNoteKind === IDEAS_NOTE_KINDS.STICKY
+      ? normalizeIdeasParentNoteId(selectedNote?.parentNoteId, selectedNote?.id)
+      : '';
+  const isSelectedSubnote = selectedNoteKind === IDEAS_NOTE_KINDS.STICKY && Boolean(selectedParentNoteId);
+  const selectedSubnoteCount =
+    !isSelectedSubnote && selectedNoteKind === IDEAS_NOTE_KINDS.STICKY
+      ? Number(stickyChildCountByParentId.get(String(selectedNote?.id || '').trim()) || 0)
+      : 0;
+  const isSelectedRootSubnotesCollapsed = Boolean(selectedNote?.isSubnotesCollapsed);
+  const singleSelectedShapeNoteId =
+    selectedNoteKind === IDEAS_NOTE_KINDS.SHAPE && normalizedSelectedNoteIds.length === 1
+      ? String(selectedNote?.id || '').trim()
+      : '';
+  const shouldShowShapeQuickConnectHandle =
+    activeTool === IDEAS_WORKSPACE_TOOLS.SELECT && Boolean(singleSelectedShapeNoteId);
+  const selectedStickyNoteIds = useMemo(
+    () =>
+      normalizedSelectedNoteIds.filter((noteId) => {
+        const targetNote = notesById.get(noteId);
+        return normalizeIdeasNoteKind(targetNote?.kind) === IDEAS_NOTE_KINDS.STICKY;
+      }),
+    [normalizedSelectedNoteIds, notesById]
+  );
+  const isBulkStickySelectionActive =
+    normalizedSelectedNoteIds.length > 1 && selectedStickyNoteIds.length > 0;
+
+  useEffect(() => {
+    if (!activeConnectorId) return;
+    const hasConnector = stickySubnoteConnectorEntries.some((entry) => entry.id === activeConnectorId);
+    if (!hasConnector) {
+      setActiveConnectorId('');
+    }
+  }, [activeConnectorId, stickySubnoteConnectorEntries]);
+
+  useEffect(() => {
+    if (!activeShapeConnectionId) return;
+    const hasShapeConnection = shapeConnectionEntries.some((entry) => entry.id === activeShapeConnectionId);
+    if (!hasShapeConnection) {
+      setActiveShapeConnectionId('');
+    }
+  }, [activeShapeConnectionId, shapeConnectionEntries]);
+
+  useEffect(() => {
+    if (!singleSelectedShapeNoteId) {
+      setShapeQuickConnectState(null);
+      setShapeQuickConnectDraft(null);
+      return;
+    }
+    setShapeQuickConnectState((previous) => {
+      if (previous?.noteId === singleSelectedShapeNoteId) {
+        return previous;
+      }
+      return {
+        noteId: singleSelectedShapeNoteId,
+        side: IDEAS_SHAPE_SIDES.RIGHT,
+      };
+    });
+  }, [singleSelectedShapeNoteId]);
+
+  useEffect(() => {
+    if (activeTool === IDEAS_WORKSPACE_TOOLS.SELECT) return;
+    if (!shapeQuickConnectDraft) return;
+    setShapeQuickConnectDraft(null);
+  }, [activeTool, shapeQuickConnectDraft]);
+
+  useEffect(() => {
+    if (!shapeQuickConnectDraft) return;
+    const sourceId = String(shapeQuickConnectDraft?.sourceNoteId || '').trim();
+    const targetId = String(shapeQuickConnectDraft?.targetNoteId || '').trim();
+    if (!sourceId || !notesById.has(sourceId)) {
+      setShapeQuickConnectDraft(null);
+      return;
+    }
+    if (targetId && !notesById.has(targetId)) {
+      setShapeQuickConnectDraft((previous) =>
+        previous
+          ? {
+              ...previous,
+              targetNoteId: '',
+            }
+          : previous
+      );
+    }
+  }, [notesById, shapeQuickConnectDraft]);
+
+  const applyWorkspaceUpdate = useCallback(
+    (updater) => {
+      if (typeof onChangeData !== 'function') return;
+      onChangeData((prevInput) => {
+        const previousData = normalizeIdeasWorkspaceData(prevInput);
+        const nextDataRaw =
+          typeof updater === 'function' ? updater(previousData) : normalizeIdeasWorkspaceData(updater);
+        const normalizedNextData = normalizeIdeasWorkspaceData(nextDataRaw);
+        if (isJsonEqual(previousData, normalizedNextData)) {
+          return previousData;
+        }
+        return {
+          ...normalizedNextData,
+          updatedAt: new Date().toISOString(),
+        };
+      });
+    },
+    [onChangeData]
+  );
+
+  const applyActivePageUpdate = useCallback(
+    (updater) => {
+      applyWorkspaceUpdate((prevData) => {
+        const pages = Array.isArray(prevData.pages) ? prevData.pages : [];
+        if (pages.length === 0) return prevData;
+        const normalizedActivePageId =
+          String(prevData.activePageId || '').trim() || String(pages[0]?.id || '').trim();
+        if (!normalizedActivePageId) return prevData;
+        let didUpdate = false;
+        const nextPages = pages.map((page, index) => {
+          if (String(page?.id || '').trim() !== normalizedActivePageId) return page;
+          const patchRaw = typeof updater === 'function' ? updater(page) : updater;
+          const patch =
+            patchRaw && typeof patchRaw === 'object' && !Array.isArray(patchRaw) ? patchRaw : {};
+          const nextPage = normalizeIdeasPage(
+            {
+              ...page,
+              ...patch,
+            },
+            index
+          );
+          if (!isJsonEqual(page, nextPage)) {
+            didUpdate = true;
+          }
+          return nextPage;
+        });
+        if (!didUpdate) return prevData;
+        return {
+          ...prevData,
+          pages: nextPages,
+          activePageId: normalizedActivePageId,
+        };
+      });
+    },
+    [applyWorkspaceUpdate]
+  );
+
+  useEffect(() => {
+    if (!normalizedSelectedNoteId) return;
+    const hasSelectedNote = normalizedData.notes.some(
+      (note) => String(note?.id || '').trim() === normalizedSelectedNoteId
+    );
+    if (!hasSelectedNote) {
+      setSelectedNoteId('');
+    }
+  }, [normalizedData.notes, normalizedSelectedNoteId]);
+
+  useEffect(() => {
+    setSelectedNoteIds((previous) => {
+      const previousIds = Array.isArray(previous) ? previous : [];
+      const nextIds = previousIds.filter((noteId) =>
+        normalizedData.notes.some((note) => String(note?.id || '').trim() === String(noteId || '').trim())
+      );
+      if (nextIds.length === previousIds.length && nextIds.every((noteId, index) => noteId === previousIds[index])) {
+        return previous;
+      }
+      return nextIds;
+    });
+  }, [normalizedData.notes]);
+
+  useEffect(() => {
+    if (normalizedSelectedNoteIds.length === 0) {
+      if (normalizedSelectedNoteId) {
+        setSelectedNoteId('');
+      }
+      if (normalizedEditingNoteId) {
+        setEditingNoteId('');
+      }
+      return;
+    }
+    if (!normalizedSelectedNoteIds.includes(normalizedSelectedNoteId)) {
+      setSelectedNoteId(normalizedSelectedNoteIds[0]);
+    }
+  }, [
+    normalizedEditingNoteId,
+    normalizedSelectedNoteId,
+    normalizedSelectedNoteIds,
+  ]);
+
+  useEffect(() => {
+    setSelectedNoteIds((previous) => {
+      const previousIds = Array.isArray(previous) ? previous : [];
+      const nextIds = previousIds.filter((noteId) => visibleNoteIdSet.has(String(noteId || '').trim()));
+      if (nextIds.length === previousIds.length && nextIds.every((noteId, index) => noteId === previousIds[index])) {
+        return previous;
+      }
+      return nextIds;
+    });
+  }, [visibleNoteIdSet]);
+
+  useEffect(() => {
+    if (!normalizedEditingNoteId) return;
+    const hasEditingNote = normalizedData.notes.some(
+      (note) => String(note?.id || '').trim() === normalizedEditingNoteId
+    );
+    if (!hasEditingNote || normalizedEditingNoteId !== normalizedSelectedNoteId) {
+      setEditingNoteId('');
+    }
+  }, [normalizedData.notes, normalizedEditingNoteId, normalizedSelectedNoteId]);
+
+  useEffect(() => {
+    if (activeTool !== IDEAS_WORKSPACE_TOOLS.SELECT && normalizedEditingNoteId) {
+      setEditingNoteId('');
+    }
+  }, [activeTool, normalizedEditingNoteId]);
+
+  useEffect(() => {
+    if (activeTool !== IDEAS_WORKSPACE_TOOLS.SELECT && marqueeSelection) {
+      setMarqueeSelection(null);
+    }
+  }, [activeTool, marqueeSelection]);
+
+  useEffect(() => {
+    if (activeTool !== IDEAS_WORKSPACE_TOOLS.SHAPE && shapeDrawDraft) {
+      setShapeDrawDraft(null);
+    }
+  }, [activeTool, shapeDrawDraft]);
+
+  useEffect(() => {
+    if (!isPagePickerOpen) return undefined;
+    const handleOutsidePointerDown = (event) => {
+      const targetNode = event.target;
+      if (
+        pagePickerRef.current instanceof HTMLElement &&
+        targetNode instanceof Node &&
+        !pagePickerRef.current.contains(targetNode)
+      ) {
+        setIsPagePickerOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', handleOutsidePointerDown);
+    return () => window.removeEventListener('pointerdown', handleOutsidePointerDown);
+  }, [isPagePickerOpen]);
+
+  useEffect(() => {
+    if (!isShapePickerOpen) return undefined;
+    const handleOutsidePointerDown = (event) => {
+      const targetNode = event.target;
+      if (
+        shapePickerRef.current instanceof HTMLElement &&
+        targetNode instanceof Node &&
+        !shapePickerRef.current.contains(targetNode)
+      ) {
+        setIsShapePickerOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', handleOutsidePointerDown);
+    return () => window.removeEventListener('pointerdown', handleOutsidePointerDown);
+  }, [isShapePickerOpen]);
+
+  useEffect(() => {
+    if (activeTool !== IDEAS_WORKSPACE_TOOLS.SHAPE && isShapePickerOpen) {
+      setIsShapePickerOpen(false);
+    }
+  }, [activeTool, isShapePickerOpen]);
+
+  useEffect(() => {
+    setIsTopVotesPopupOpen(false);
+  }, [activePageId]);
+
+  const setIdeaNoteElementRef = useCallback((noteIdInput, element) => {
+    const noteId = String(noteIdInput || '').trim();
+    if (!noteId) return;
+    if (element instanceof HTMLElement) {
+      noteElementMapRef.current.set(noteId, element);
+      return;
+    }
+    noteElementMapRef.current.delete(noteId);
+  }, []);
+
+  const clearPointerInteraction = useCallback(() => {
+    const cleanup = pointerInteractionRef.current?.cleanup;
+    pointerInteractionRef.current = { cleanup: null };
+    if (typeof cleanup === 'function') {
+      cleanup();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const syncFullscreenState = () => {
+      const fullscreenElement =
+        document.fullscreenElement || document.webkitFullscreenElement || null;
+      setIsFullscreen(Boolean(fullscreenElement));
+    };
+    syncFullscreenState();
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+    document.addEventListener('webkitfullscreenchange', syncFullscreenState);
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState);
+      document.removeEventListener('webkitfullscreenchange', syncFullscreenState);
+    };
+  }, []);
+
+  useEffect(() => {
+    const target = workspaceRootRef.current;
+    if (!target) {
+      setIsFullscreenSupported(false);
+      return;
+    }
+    const canRequestFullscreen =
+      typeof target.requestFullscreen === 'function' ||
+      typeof target.webkitRequestFullscreen === 'function';
+    const canExitFullscreen =
+      (typeof document !== 'undefined' && typeof document.exitFullscreen === 'function') ||
+      (typeof document !== 'undefined' && typeof document.webkitExitFullscreen === 'function');
+    setIsFullscreenSupported(Boolean(canRequestFullscreen && canExitFullscreen));
+  }, []);
+
+  useEffect(
+    () => () => {
+      clearPointerInteraction();
+    },
+    [clearPointerInteraction]
+  );
+
+  const bindWindowPointerInteraction = useCallback(
+    (onMove, onEnd) => {
+      clearPointerInteraction();
+      const handlePointerMove = (moveEvent) => {
+        if (typeof onMove === 'function') {
+          onMove(moveEvent);
+        }
+      };
+      const handlePointerEnd = () => {
+        window.removeEventListener('pointermove', handlePointerMove);
+        window.removeEventListener('pointerup', handlePointerEnd);
+        window.removeEventListener('pointercancel', handlePointerEnd);
+        pointerInteractionRef.current = { cleanup: null };
+        if (typeof onEnd === 'function') {
+          onEnd();
+        }
+      };
+      pointerInteractionRef.current = { cleanup: handlePointerEnd };
+      window.addEventListener('pointermove', handlePointerMove, { passive: false });
+      window.addEventListener('pointerup', handlePointerEnd);
+      window.addEventListener('pointercancel', handlePointerEnd);
+    },
+    [clearPointerInteraction]
+  );
+
+  const getWorldPointFromClient = useCallback(
+    (clientX, clientY, cameraInput = normalizedData.camera) => {
+      const viewportElement = viewportRef.current;
+      if (!viewportElement) {
+        return { x: 0, y: 0 };
+      }
+      const rect = viewportElement.getBoundingClientRect();
+      const camera = normalizeIdeasCamera(cameraInput);
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      return {
+        x: (clientX - centerX - camera.x) / camera.scale,
+        y: (clientY - centerY - camera.y) / camera.scale,
+      };
+    },
+    [normalizedData.camera]
+  );
+
+  const getNoteWorldBounds = useCallback((noteInput) => {
+    const note = noteInput && typeof noteInput === 'object' ? noteInput : null;
+    const noteId = String(note?.id || '').trim();
+    if (!note || !noteId) return null;
+    const noteKind = normalizeIdeasNoteKind(note.kind);
+    const element = noteElementMapRef.current.get(noteId);
+    let width = Number(element?.offsetWidth || 0);
+    let height = Number(element?.offsetHeight || 0);
+    if (width <= 0 || height <= 0) {
+      if (noteKind === IDEAS_NOTE_KINDS.SHAPE) {
+        width = clampIdeasNumber(note?.width, {
+          min: IDEAS_SHAPE_DEFAULTS.minWidth,
+          max: IDEAS_SHAPE_DEFAULTS.maxWidth,
+          fallback: IDEAS_SHAPE_DEFAULTS.width,
+        });
+        height = clampIdeasNumber(note?.height, {
+          min: IDEAS_SHAPE_DEFAULTS.minHeight,
+          max: IDEAS_SHAPE_DEFAULTS.maxHeight,
+          fallback: IDEAS_SHAPE_DEFAULTS.height,
+        });
+      } else if (noteKind === IDEAS_NOTE_KINDS.STICKY) {
+        width = clampIdeasNumber(note?.width, {
+          min: IDEAS_STICKY_RESIZE_DEFAULTS.minWidth,
+          max: IDEAS_STICKY_RESIZE_DEFAULTS.maxWidth,
+          fallback: IDEAS_STICKY_RESIZE_DEFAULTS.width,
+        });
+        height = clampIdeasNumber(note?.height, {
+          min: IDEAS_STICKY_RESIZE_DEFAULTS.minHeight,
+          max: IDEAS_STICKY_RESIZE_DEFAULTS.maxHeight,
+          fallback: IDEAS_STICKY_RESIZE_DEFAULTS.height,
+        });
+      } else {
+        width = 180;
+        height = 42;
+      }
+    }
+    const x = Number(note?.x || 0);
+    const y = Number(note?.y || 0);
+    return {
+      left: x,
+      top: y,
+      right: x + Math.max(0, width),
+      bottom: y + Math.max(0, height),
+    };
+  }, []);
+
+  const upsertShapeConnectionList = useCallback((connectionsInput, fromNoteIdInput, toNoteIdInput) => {
+    const fromNoteId = String(fromNoteIdInput || '').trim();
+    const toNoteId = String(toNoteIdInput || '').trim();
+    const existingConnections = Array.isArray(connectionsInput) ? connectionsInput : [];
+    if (!fromNoteId || !toNoteId || fromNoteId === toNoteId) {
+      return existingConnections;
+    }
+    const nowIso = new Date().toISOString();
+    const hasSameConnection = existingConnections.some((connection) => {
+      const fromId = String(connection?.fromNoteId || '').trim();
+      const toId = String(connection?.toNoteId || '').trim();
+      return fromId === fromNoteId && toId === toNoteId;
+    });
+    if (hasSameConnection) {
+      return existingConnections.map((connection) => {
+        const fromId = String(connection?.fromNoteId || '').trim();
+        const toId = String(connection?.toNoteId || '').trim();
+        if (fromId !== fromNoteId || toId !== toNoteId) return connection;
+        return (
+          normalizeIdeasShapeConnection({
+            ...connection,
+            updatedAt: nowIso,
+          }) || connection
+        );
+      });
+    }
+    const nextConnection = createIdeasShapeConnection({
+      fromNoteId,
+      toNoteId,
+    });
+    if (!nextConnection) return existingConnections;
+    return [nextConnection, ...existingConnections];
+  }, []);
+
+  const resolveShapeTargetNoteIdFromClientPoint = useCallback(
+    (clientXInput, clientYInput, sourceNoteIdInput = '') => {
+      const sourceNoteId = String(sourceNoteIdInput || '').trim();
+      if (typeof document === 'undefined') return '';
+      const hoveredElement = document.elementFromPoint(clientXInput, clientYInput);
+      if (!(hoveredElement instanceof HTMLElement)) return '';
+      const noteElement = hoveredElement.closest('[data-idea-note-id]');
+      if (!(noteElement instanceof HTMLElement)) return '';
+      const targetNoteId = String(noteElement.dataset.ideaNoteId || '').trim();
+      if (!targetNoteId || targetNoteId === sourceNoteId) return '';
+      if (!visibleNoteIdSet.has(targetNoteId)) return '';
+      const targetNote = notesById.get(targetNoteId);
+      if (normalizeIdeasNoteKind(targetNote?.kind) !== IDEAS_NOTE_KINDS.SHAPE) return '';
+      return targetNoteId;
+    },
+    [notesById, visibleNoteIdSet]
+  );
+
+  const updateShapeQuickConnectSideFromClient = useCallback(
+    (noteIdInput, clientXInput, clientYInput) => {
+      const noteId = String(noteIdInput || '').trim();
+      if (!noteId) return;
+      const noteElement = noteElementMapRef.current.get(noteId);
+      if (!(noteElement instanceof HTMLElement)) return;
+      const rect = noteElement.getBoundingClientRect();
+      const resolvedSide = resolveIdeasShapeSideByClientPoint(rect, clientXInput, clientYInput);
+      setShapeQuickConnectState((previous) => {
+        if (previous?.noteId === noteId && previous?.side === resolvedSide) {
+          return previous;
+        }
+        return {
+          noteId,
+          side: resolvedSide,
+        };
+      });
+    },
+    []
+  );
+
+  const handleShapeHoverForQuickConnect = useCallback(
+    (event, noteInput) => {
+      if (event.buttons !== 0) return;
+      if (activeTool !== IDEAS_WORKSPACE_TOOLS.SELECT) return;
+      const noteId = String(noteInput?.id || '').trim();
+      if (!noteId || noteId !== singleSelectedShapeNoteId) return;
+      updateShapeQuickConnectSideFromClient(noteId, event.clientX, event.clientY);
+    },
+    [activeTool, singleSelectedShapeNoteId, updateShapeQuickConnectSideFromClient]
+  );
+
+  const handleStartShapeQuickConnectInteraction = useCallback(
+    (event, sourceNoteInput, sideInput = IDEAS_SHAPE_SIDES.RIGHT) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const sourceNoteId = String(sourceNoteInput?.id || '').trim();
+      if (!sourceNoteId) return;
+      const sourceNote = notesById.get(sourceNoteId);
+      if (normalizeIdeasNoteKind(sourceNote?.kind) !== IDEAS_NOTE_KINDS.SHAPE) return;
+      const sourceBounds = getIdeasShapeBounds(sourceNote);
+      if (!sourceBounds) return;
+      const sourceSide = normalizeIdeasShapeSide(sideInput, IDEAS_SHAPE_SIDES.RIGHT);
+      const defaultRect = resolveIdeasQuickCreateShapeRect(sourceNote, sourceSide);
+      if (!defaultRect) return;
+      const cameraSnapshot = normalizeIdeasCamera(normalizedData.camera);
+      const startClientX = Number(event.clientX || 0);
+      const startClientY = Number(event.clientY || 0);
+      let hasDragged = false;
+      let latestTargetNoteId = '';
+      let latestPreviewRect = { ...defaultRect };
+      setShapeQuickConnectDraft({
+        sourceNoteId,
+        side: sourceSide,
+        targetNoteId: '',
+        previewRect: latestPreviewRect,
+      });
+      bindWindowPointerInteraction(
+        (moveEvent) => {
+          moveEvent.preventDefault();
+          const dx = Number(moveEvent.clientX || 0) - startClientX;
+          const dy = Number(moveEvent.clientY || 0) - startClientY;
+          hasDragged = Math.hypot(dx, dy) >= IDEAS_SHAPE_CONNECTION_PREVIEW_MIN_DRAG;
+          const targetNoteId = resolveShapeTargetNoteIdFromClientPoint(
+            moveEvent.clientX,
+            moveEvent.clientY,
+            sourceNoteId
+          );
+          latestTargetNoteId = targetNoteId;
+          if (targetNoteId) {
+            setShapeQuickConnectDraft((previous) =>
+              previous
+                ? {
+                    ...previous,
+                    targetNoteId,
+                    previewRect: null,
+                  }
+                : previous
+            );
+            return;
+          }
+          const currentWorldPoint = getWorldPointFromClient(
+            moveEvent.clientX,
+            moveEvent.clientY,
+            cameraSnapshot
+          );
+          latestPreviewRect = hasDragged
+            ? {
+                x: currentWorldPoint.x - sourceBounds.width / 2,
+                y: currentWorldPoint.y - sourceBounds.height / 2,
+                width: sourceBounds.width,
+                height: sourceBounds.height,
+              }
+            : { ...defaultRect };
+          setShapeQuickConnectDraft((previous) =>
+            previous
+              ? {
+                  ...previous,
+                  targetNoteId: '',
+                  previewRect: latestPreviewRect,
+                }
+              : previous
+          );
+        },
+        () => {
+          setShapeQuickConnectDraft(null);
+          if (latestTargetNoteId) {
+            applyActivePageUpdate((page) => ({
+              ...page,
+              shapeConnections: upsertShapeConnectionList(
+                page.shapeConnections,
+                sourceNoteId,
+                latestTargetNoteId
+              ),
+            }));
+            return;
+          }
+          const createdBy =
+            String(currentUser?.username || '').trim() ||
+            String(currentUser?.email || '').trim() ||
+            String(sourceNote?.createdBy || '').trim() ||
+            'Team member';
+          const nextShape = createIdeasWorkspaceNote({
+            kind: IDEAS_NOTE_KINDS.SHAPE,
+            x: latestPreviewRect.x,
+            y: latestPreviewRect.y,
+            width: latestPreviewRect.width,
+            height: latestPreviewRect.height,
+            shapeType: normalizeIdeasShapeType(sourceNote?.shapeType || activeShapeType),
+            text: '',
+            color: normalizeIdeasNoteColor(sourceNote?.color || normalizedData.noteDefaults.color),
+            shapeFillColor: normalizeIdeasShapeFillColor(
+              sourceNote?.shapeFillColor || normalizedData.noteDefaults.shapeFillColor
+            ),
+            shapeBorderColor: normalizeIdeasShapeBorderColor(
+              sourceNote?.shapeBorderColor || normalizedData.noteDefaults.shapeBorderColor
+            ),
+            textSize: normalizeIdeasNoteTextSize(sourceNote?.textSize || normalizedData.noteDefaults.textSize),
+            createdBy,
+          });
+          applyActivePageUpdate((page) => ({
+            ...page,
+            notes: [nextShape, ...(Array.isArray(page.notes) ? page.notes : [])],
+            shapeConnections: upsertShapeConnectionList(
+              page.shapeConnections,
+              sourceNoteId,
+              nextShape.id
+            ),
+          }));
+          setSelectedNoteId(nextShape.id);
+          setSelectedNoteIds([nextShape.id]);
+          setEditingNoteId('');
+          setShapeQuickConnectState({
+            noteId: nextShape.id,
+            side: sourceSide,
+          });
+        }
+      );
+    },
+    [
+      activeShapeType,
+      applyActivePageUpdate,
+      bindWindowPointerInteraction,
+      currentUser?.email,
+      currentUser?.username,
+      getWorldPointFromClient,
+      normalizedData.camera,
+      normalizedData.noteDefaults.color,
+      normalizedData.noteDefaults.shapeBorderColor,
+      normalizedData.noteDefaults.shapeFillColor,
+      normalizedData.noteDefaults.textSize,
+      notesById,
+      resolveShapeTargetNoteIdFromClientPoint,
+      upsertShapeConnectionList,
+    ]
+  );
+
+  const handleAddNoteAtWorld = useCallback(
+    (xInput, yInput, options = {}) => {
+      const optionsInput = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+      const shouldFocusText = optionsInput.focusText === true;
+      const noteKind = normalizeIdeasNoteKind(optionsInput.kind);
+      const noteShapeType = normalizeIdeasShapeType(optionsInput.shapeType);
+      const noteParentId = normalizeIdeasParentNoteId(optionsInput.parentNoteId);
+      const shouldCollapseSubnotes = Boolean(optionsInput.isSubnotesCollapsed);
+      const noteText = String(optionsInput.text || '').replace(/\r/g, '').slice(0, 1200);
+      const noteWidth = clampIdeasNumber(optionsInput.width, {
+        min:
+          noteKind === IDEAS_NOTE_KINDS.SHAPE
+            ? IDEAS_SHAPE_DEFAULTS.minWidth
+            : noteKind === IDEAS_NOTE_KINDS.STICKY
+              ? IDEAS_STICKY_RESIZE_DEFAULTS.minWidth
+              : IDEAS_NOTE_DEFAULTS.width,
+        max:
+          noteKind === IDEAS_NOTE_KINDS.SHAPE
+            ? IDEAS_SHAPE_DEFAULTS.maxWidth
+            : noteKind === IDEAS_NOTE_KINDS.STICKY
+              ? IDEAS_STICKY_RESIZE_DEFAULTS.maxWidth
+              : IDEAS_NOTE_DEFAULTS.width,
+        fallback:
+          noteKind === IDEAS_NOTE_KINDS.SHAPE
+            ? IDEAS_SHAPE_DEFAULTS.width
+            : noteKind === IDEAS_NOTE_KINDS.STICKY
+              ? IDEAS_STICKY_RESIZE_DEFAULTS.width
+              : IDEAS_NOTE_DEFAULTS.width,
+      });
+      const noteHeight = clampIdeasNumber(optionsInput.height, {
+        min:
+          noteKind === IDEAS_NOTE_KINDS.SHAPE
+            ? IDEAS_SHAPE_DEFAULTS.minHeight
+            : noteKind === IDEAS_NOTE_KINDS.STICKY
+              ? IDEAS_STICKY_RESIZE_DEFAULTS.minHeight
+              : IDEAS_NOTE_DEFAULTS.minHeight,
+        max:
+          noteKind === IDEAS_NOTE_KINDS.SHAPE
+            ? IDEAS_SHAPE_DEFAULTS.maxHeight
+            : noteKind === IDEAS_NOTE_KINDS.STICKY
+              ? IDEAS_STICKY_RESIZE_DEFAULTS.maxHeight
+              : IDEAS_NOTE_DEFAULTS.minHeight,
+        fallback:
+          noteKind === IDEAS_NOTE_KINDS.SHAPE
+            ? IDEAS_SHAPE_DEFAULTS.height
+            : noteKind === IDEAS_NOTE_KINDS.STICKY
+              ? IDEAS_STICKY_RESIZE_DEFAULTS.height
+              : IDEAS_NOTE_DEFAULTS.minHeight,
+      });
+      const author =
+        String(currentUser?.username || '').trim() ||
+        String(currentUser?.email || '').trim() ||
+        'Team member';
+      const noteShapeFillColor = normalizeIdeasShapeFillColor(
+        optionsInput.shapeFillColor !== undefined && optionsInput.shapeFillColor !== null
+          ? optionsInput.shapeFillColor
+          : normalizedData.noteDefaults.shapeFillColor
+      );
+      const noteShapeBorderColor = normalizeIdeasShapeBorderColor(
+        optionsInput.shapeBorderColor !== undefined && optionsInput.shapeBorderColor !== null
+          ? optionsInput.shapeBorderColor
+          : normalizedData.noteDefaults.shapeBorderColor
+      );
+      const nextNote = createIdeasWorkspaceNote({
+        kind: noteKind,
+        text: noteText,
+        x: xInput,
+        y: yInput,
+        width: noteWidth,
+        height: noteHeight,
+        shapeType: noteShapeType,
+        parentNoteId: noteParentId,
+        isSubnotesCollapsed: shouldCollapseSubnotes,
+        color: normalizedData.noteDefaults.color,
+        shapeFillColor: noteShapeFillColor,
+        shapeBorderColor: noteShapeBorderColor,
+        textSize: normalizedData.noteDefaults.textSize,
+        createdBy: author,
+      });
+      applyActivePageUpdate((page) => ({
+        ...page,
+        notes: [nextNote, ...(Array.isArray(page.notes) ? page.notes : [])],
+      }));
+      setSelectedNoteId(nextNote.id);
+      setSelectedNoteIds([nextNote.id]);
+      if (shouldFocusText) {
+        setEditingNoteId(nextNote.id);
+        setPendingTextFocusNoteId(nextNote.id);
+      }
+      return nextNote.id;
+    },
+    [
+      applyActivePageUpdate,
+      currentUser?.email,
+      currentUser?.username,
+      normalizedData.noteDefaults.color,
+      normalizedData.noteDefaults.shapeBorderColor,
+      normalizedData.noteDefaults.shapeFillColor,
+      normalizedData.noteDefaults.textSize,
+    ]
+  );
+
+  const handleAddNoteAtCenter = useCallback((options = {}) => {
+    const camera = normalizeIdeasCamera(normalizedData.camera);
+    const centerWorldX = -camera.x / camera.scale;
+    const centerWorldY = -camera.y / camera.scale;
+    const optionsInput = options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+    const noteKind = normalizeIdeasNoteKind(optionsInput.kind);
+    if (noteKind === IDEAS_NOTE_KINDS.TEXT) {
+      handleAddNoteAtWorld(centerWorldX - 90, centerWorldY - 16, optionsInput);
+      return;
+    }
+    if (noteKind === IDEAS_NOTE_KINDS.SHAPE) {
+      const shapeWidth = clampIdeasNumber(optionsInput.width, {
+        min: IDEAS_SHAPE_DEFAULTS.minWidth,
+        max: IDEAS_SHAPE_DEFAULTS.maxWidth,
+        fallback: IDEAS_SHAPE_DEFAULTS.width,
+      });
+      const shapeHeight = clampIdeasNumber(optionsInput.height, {
+        min: IDEAS_SHAPE_DEFAULTS.minHeight,
+        max: IDEAS_SHAPE_DEFAULTS.maxHeight,
+        fallback: IDEAS_SHAPE_DEFAULTS.height,
+      });
+      handleAddNoteAtWorld(centerWorldX - shapeWidth / 2, centerWorldY - shapeHeight / 2, {
+        ...optionsInput,
+        width: shapeWidth,
+        height: shapeHeight,
+      });
+      return;
+    }
+    handleAddNoteAtWorld(centerWorldX - IDEAS_NOTE_DEFAULTS.width / 2, centerWorldY - 88, optionsInput);
+  }, [handleAddNoteAtWorld, normalizedData.camera]);
+
+  const handleDeleteSelectedNote = useCallback(() => {
+    const idsToDelete = Array.from(
+      new Set(
+        (normalizedSelectedNoteIds.length > 0
+          ? normalizedSelectedNoteIds
+          : [String(selectedNote?.id || '').trim()]
+        ).filter(Boolean)
+      )
+    );
+    if (idsToDelete.length === 0) return;
+    const idsToDeleteSet = new Set(idsToDelete);
+    applyActivePageUpdate((page) => ({
+      ...page,
+      notes: (Array.isArray(page.notes) ? page.notes : [])
+        .filter((note) => !idsToDeleteSet.has(String(note?.id || '').trim()))
+        .map((note) => {
+          if (normalizeIdeasNoteKind(note?.kind) !== IDEAS_NOTE_KINDS.STICKY) return note;
+          const parentId = normalizeIdeasParentNoteId(note?.parentNoteId, note?.id);
+          if (!idsToDeleteSet.has(parentId)) return note;
+          return normalizeIdeasNote({
+            ...note,
+            parentNoteId: '',
+            width: IDEAS_STICKY_RESIZE_DEFAULTS.width,
+            height: IDEAS_STICKY_RESIZE_DEFAULTS.height,
+            updatedAt: new Date().toISOString(),
+          });
+        }),
+      shapeConnections: (Array.isArray(page.shapeConnections) ? page.shapeConnections : []).filter(
+        (connection) =>
+          !idsToDeleteSet.has(String(connection?.fromNoteId || '').trim()) &&
+          !idsToDeleteSet.has(String(connection?.toNoteId || '').trim())
+      ),
+    }));
+    setSelectedNoteId('');
+    setSelectedNoteIds([]);
+    setEditingNoteId('');
+    setShapeQuickConnectState(null);
+    setShapeQuickConnectDraft(null);
+  }, [applyActivePageUpdate, normalizedSelectedNoteIds, selectedNote?.id]);
+
+  const handleDuplicateSelectedNote = useCallback(() => {
+    const idsToDuplicateSet = new Set(
+      (normalizedSelectedNoteIds.length > 0
+        ? normalizedSelectedNoteIds
+        : [String(selectedNote?.id || '').trim()]
+      ).filter(Boolean)
+    );
+    if (idsToDuplicateSet.size === 0) return;
+    const notesToDuplicate = (Array.isArray(normalizedData.notes) ? normalizedData.notes : []).filter((note) =>
+      idsToDuplicateSet.has(String(note?.id || '').trim())
+    );
+    if (notesToDuplicate.length === 0) return;
+    const nowIso = new Date().toISOString();
+    const duplicatedNotes = notesToDuplicate.map((sourceNote) =>
+      normalizeIdeasNote({
+        ...sourceNote,
+        id: `idea_note_${generateId()}`,
+        x: Number(sourceNote.x || 0) + 30,
+        y: Number(sourceNote.y || 0) + 30,
+        createdBy:
+          String(currentUser?.username || '').trim() ||
+          String(currentUser?.email || '').trim() ||
+          String(sourceNote.createdBy || '').trim(),
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      })
+    );
+    applyActivePageUpdate((page) => ({
+      ...page,
+      notes: [...duplicatedNotes, ...(Array.isArray(page.notes) ? page.notes : [])],
+    }));
+    const duplicatedNoteIds = duplicatedNotes.map((note) => String(note?.id || '').trim()).filter(Boolean);
+    setSelectedNoteId(duplicatedNoteIds[0] || '');
+    setSelectedNoteIds(duplicatedNoteIds);
+    setEditingNoteId('');
+  }, [
+    applyActivePageUpdate,
+    currentUser?.email,
+    currentUser?.username,
+    normalizedData.notes,
+    normalizedSelectedNoteIds,
+    selectedNote?.id,
+  ]);
+
+  const handleSetZoom = useCallback(
+    (nextScaleInput) => {
+      applyActivePageUpdate((page) => {
+        const currentCamera = normalizeIdeasCamera(page.camera);
+        const nextScale = clampIdeasNumber(nextScaleInput, {
+          min: IDEAS_ZOOM_MIN,
+          max: IDEAS_ZOOM_MAX,
+          fallback: currentCamera.scale,
+        });
+        if (Math.abs(nextScale - currentCamera.scale) < 0.0001) {
+          return page;
+        }
+        return {
+          ...page,
+          camera: normalizeIdeasCamera({
+            ...currentCamera,
+            scale: nextScale,
+          }),
+        };
+      });
+    },
+    [applyActivePageUpdate]
+  );
+
+  const handleBoardWheel = useCallback(
+    (event) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const currentScale = normalizeIdeasCamera(normalizedData.camera).scale;
+      const nextScale = currentScale + (event.deltaY < 0 ? IDEAS_ZOOM_STEP / 2 : -IDEAS_ZOOM_STEP / 2);
+      handleSetZoom(nextScale);
+    },
+    [handleSetZoom, normalizedData.camera]
+  );
+
+  const handleResetView = useCallback(() => {
+    applyActivePageUpdate((page) => ({
+      ...page,
+      camera: { ...IDEAS_DEFAULT_CAMERA },
+    }));
+  }, [applyActivePageUpdate]);
+
+  const handleToggleFullscreen = useCallback(async () => {
+    const target = workspaceRootRef.current;
+    if (!target || typeof document === 'undefined') return;
+    try {
+      const fullscreenElement =
+        document.fullscreenElement || document.webkitFullscreenElement || null;
+      if (fullscreenElement) {
+        if (typeof document.exitFullscreen === 'function') {
+          await document.exitFullscreen();
+        } else if (typeof document.webkitExitFullscreen === 'function') {
+          document.webkitExitFullscreen();
+        }
+        return;
+      }
+      if (typeof target.requestFullscreen === 'function') {
+        await target.requestFullscreen();
+      } else if (typeof target.webkitRequestFullscreen === 'function') {
+        target.webkitRequestFullscreen();
+      }
+    } catch {
+      // Keep UI responsive when browser blocks fullscreen (policy/user settings).
+    }
+  }, []);
+
+  const handleApplyColor = useCallback(
+    (colorInput) => {
+      const normalizedColor = normalizeIdeasNoteColor(colorInput);
+      applyActivePageUpdate((page) => {
+        const selectedIds = Array.from(
+          new Set(
+            (normalizedSelectedNoteIds.length > 0
+              ? normalizedSelectedNoteIds
+              : [String(selectedNoteId || '').trim()]
+            ).filter(Boolean)
+          )
+        );
+        const selectedIdSet = new Set(selectedIds);
+        const nextNoteDefaults = {
+          ...page.noteDefaults,
+          color: normalizedColor,
+        };
+        if (selectedIds.length === 0) {
+          return {
+            ...page,
+            noteDefaults: nextNoteDefaults,
+          };
+        }
+        return {
+          ...page,
+          noteDefaults: nextNoteDefaults,
+          notes: (Array.isArray(page.notes) ? page.notes : []).map((note) =>
+            selectedIdSet.has(String(note?.id || '').trim()) &&
+            normalizeIdeasNoteKind(note?.kind) === IDEAS_NOTE_KINDS.STICKY
+              ? normalizeIdeasNote({
+                  ...note,
+                  color: normalizedColor,
+                  updatedAt: new Date().toISOString(),
+                })
+              : note
+          ),
+        };
+      });
+    },
+    [applyActivePageUpdate, normalizedSelectedNoteIds, selectedNoteId]
+  );
+
+  const handleApplyShapeFillColor = useCallback(
+    (colorInput) => {
+      const normalizedColor = normalizeIdeasShapeFillColor(colorInput);
+      applyActivePageUpdate((page) => {
+        const selectedIds = Array.from(
+          new Set(
+            (normalizedSelectedNoteIds.length > 0
+              ? normalizedSelectedNoteIds
+              : [String(selectedNoteId || '').trim()]
+            ).filter(Boolean)
+          )
+        );
+        const selectedIdSet = new Set(selectedIds);
+        const nextNoteDefaults = {
+          ...page.noteDefaults,
+          shapeFillColor: normalizedColor,
+        };
+        if (selectedIds.length === 0) {
+          return {
+            ...page,
+            noteDefaults: nextNoteDefaults,
+          };
+        }
+        return {
+          ...page,
+          noteDefaults: nextNoteDefaults,
+          notes: (Array.isArray(page.notes) ? page.notes : []).map((note) =>
+            selectedIdSet.has(String(note?.id || '').trim()) &&
+            normalizeIdeasNoteKind(note?.kind) === IDEAS_NOTE_KINDS.SHAPE
+              ? normalizeIdeasNote({
+                  ...note,
+                  shapeFillColor: normalizedColor,
+                  updatedAt: new Date().toISOString(),
+                })
+              : note
+          ),
+        };
+      });
+    },
+    [applyActivePageUpdate, normalizedSelectedNoteIds, selectedNoteId]
+  );
+
+  const handleApplyShapeBorderColor = useCallback(
+    (colorInput) => {
+      const normalizedColor = normalizeIdeasShapeBorderColor(colorInput);
+      applyActivePageUpdate((page) => {
+        const selectedIds = Array.from(
+          new Set(
+            (normalizedSelectedNoteIds.length > 0
+              ? normalizedSelectedNoteIds
+              : [String(selectedNoteId || '').trim()]
+            ).filter(Boolean)
+          )
+        );
+        const selectedIdSet = new Set(selectedIds);
+        const nextNoteDefaults = {
+          ...page.noteDefaults,
+          shapeBorderColor: normalizedColor,
+        };
+        if (selectedIds.length === 0) {
+          return {
+            ...page,
+            noteDefaults: nextNoteDefaults,
+          };
+        }
+        return {
+          ...page,
+          noteDefaults: nextNoteDefaults,
+          notes: (Array.isArray(page.notes) ? page.notes : []).map((note) =>
+            selectedIdSet.has(String(note?.id || '').trim()) &&
+            normalizeIdeasNoteKind(note?.kind) === IDEAS_NOTE_KINDS.SHAPE
+              ? normalizeIdeasNote({
+                  ...note,
+                  shapeBorderColor: normalizedColor,
+                  updatedAt: new Date().toISOString(),
+                })
+              : note
+          ),
+        };
+      });
+    },
+    [applyActivePageUpdate, normalizedSelectedNoteIds, selectedNoteId]
+  );
+
+  const handleApplyTextSize = useCallback(
+    (sizeInput) => {
+      const normalizedSize = snapIdeasTextSizeToStep(sizeInput);
+      applyActivePageUpdate((page) => {
+        const selectedIds = Array.from(
+          new Set(
+            (normalizedSelectedNoteIds.length > 0
+              ? normalizedSelectedNoteIds
+              : [String(selectedNoteId || '').trim()]
+            ).filter(Boolean)
+          )
+        );
+        const selectedIdSet = new Set(selectedIds);
+        const nextNoteDefaults = {
+          ...page.noteDefaults,
+          textSize: normalizedSize,
+        };
+        if (selectedIds.length === 0) {
+          return {
+            ...page,
+            noteDefaults: nextNoteDefaults,
+          };
+        }
+        return {
+          ...page,
+          noteDefaults: nextNoteDefaults,
+          notes: (Array.isArray(page.notes) ? page.notes : []).map((note) =>
+            selectedIdSet.has(String(note?.id || '').trim())
+              ? normalizeIdeasNote({
+                  ...note,
+                  textSize: normalizedSize,
+                  updatedAt: new Date().toISOString(),
+                })
+              : note
+          ),
+        };
+      });
+    },
+    [applyActivePageUpdate, normalizedSelectedNoteIds, selectedNoteId]
+  );
+
+  const handleCreateTextNote = useCallback(() => {
+    handleAddNoteAtCenter({
+      kind: IDEAS_NOTE_KINDS.TEXT,
+      text: 'Add text',
+      focusText: true,
+    });
+  }, [handleAddNoteAtCenter]);
+
+  const handleCreateSubnoteFromSelected = useCallback(() => {
+    if (!selectedNote) return;
+    if (normalizeIdeasNoteKind(selectedNote?.kind) !== IDEAS_NOTE_KINDS.STICKY) return;
+    const parentNoteId = String(selectedNote?.id || '').trim();
+    if (!parentNoteId) return;
+    const selectedIsSubnote = Boolean(normalizeIdeasParentNoteId(selectedNote?.parentNoteId, selectedNote?.id));
+    if (selectedIsSubnote) return;
+    const relatedSubnoteCount = Number(stickyChildCountByParentId.get(parentNoteId) || 0);
+    const column = relatedSubnoteCount % 3;
+    const row = Math.floor(relatedSubnoteCount / 3);
+    const parentWidth = clampIdeasNumber(selectedNote?.width, {
+      min: IDEAS_STICKY_RESIZE_DEFAULTS.minWidth,
+      max: IDEAS_STICKY_RESIZE_DEFAULTS.maxWidth,
+      fallback: IDEAS_STICKY_RESIZE_DEFAULTS.width,
+    });
+    const nextSubnote = createIdeasWorkspaceNote({
+      kind: IDEAS_NOTE_KINDS.STICKY,
+      parentNoteId,
+      text: '',
+      x: Number(selectedNote?.x || 0) + parentWidth + 56 + column * 16,
+      y: Number(selectedNote?.y || 0) + row * 22,
+      width: IDEAS_SUBNOTE_DEFAULTS.width,
+      height: IDEAS_SUBNOTE_DEFAULTS.height,
+      color: normalizeIdeasNoteColor(selectedNote?.color || normalizedData.noteDefaults.color),
+      textSize: normalizeIdeasNoteTextSize(selectedNote?.textSize || normalizedData.noteDefaults.textSize),
+      createdBy:
+        String(currentUser?.username || '').trim() ||
+        String(currentUser?.email || '').trim() ||
+        String(selectedNote?.createdBy || '').trim() ||
+        'Team member',
+    });
+    applyActivePageUpdate((page) => ({
+      ...page,
+      notes: [
+        nextSubnote,
+        ...(Array.isArray(page.notes) ? page.notes : []).map((note) =>
+          String(note?.id || '').trim() === parentNoteId
+            ? normalizeIdeasNote({
+                ...note,
+                isSubnotesCollapsed: false,
+                updatedAt: new Date().toISOString(),
+              })
+            : note
+        ),
+      ],
+    }));
+    setSelectedNoteId(nextSubnote.id);
+    setSelectedNoteIds([nextSubnote.id]);
+    setEditingNoteId(nextSubnote.id);
+    setPendingTextFocusNoteId(nextSubnote.id);
+  }, [
+    applyActivePageUpdate,
+    currentUser?.email,
+    currentUser?.username,
+    normalizedData.noteDefaults.color,
+    normalizedData.noteDefaults.textSize,
+    selectedNote,
+    stickyChildCountByParentId,
+  ]);
+
+  const handleToggleSelectedSubnotesCollapsed = useCallback(() => {
+    if (!selectedNote) return;
+    if (normalizeIdeasNoteKind(selectedNote?.kind) !== IDEAS_NOTE_KINDS.STICKY) return;
+    const selectedId = String(selectedNote?.id || '').trim();
+    if (!selectedId) return;
+    if (Boolean(normalizeIdeasParentNoteId(selectedNote?.parentNoteId, selectedNote?.id))) return;
+    if (Number(stickyChildCountByParentId.get(selectedId) || 0) <= 0) return;
+    applyActivePageUpdate((page) => ({
+      ...page,
+      notes: (Array.isArray(page.notes) ? page.notes : []).map((note) =>
+        String(note?.id || '').trim() === selectedId
+          ? normalizeIdeasNote({
+              ...note,
+              isSubnotesCollapsed: !Boolean(note?.isSubnotesCollapsed),
+              updatedAt: new Date().toISOString(),
+            })
+          : note
+      ),
+    }));
+    setEditingNoteId('');
+  }, [applyActivePageUpdate, selectedNote, stickyChildCountByParentId]);
+
+  const handleDetachSubnoteConnection = useCallback(
+    (subnoteIdInput, event = null) => {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      const subnoteId = String(subnoteIdInput || '').trim();
+      if (!subnoteId) return;
+      applyActivePageUpdate((page) => {
+        let didUpdate = false;
+        const nextNotes = (Array.isArray(page.notes) ? page.notes : []).map((note) => {
+          if (String(note?.id || '').trim() !== subnoteId) return note;
+          if (normalizeIdeasNoteKind(note?.kind) !== IDEAS_NOTE_KINDS.STICKY) return note;
+          const parentId = normalizeIdeasParentNoteId(note?.parentNoteId, note?.id);
+          if (!parentId) return note;
+          didUpdate = true;
+          return normalizeIdeasNote({
+            ...note,
+            parentNoteId: '',
+            width: IDEAS_STICKY_RESIZE_DEFAULTS.width,
+            height: IDEAS_STICKY_RESIZE_DEFAULTS.height,
+            updatedAt: new Date().toISOString(),
+          });
+        });
+        if (!didUpdate) return page;
+        return {
+          ...page,
+          notes: nextNotes,
+        };
+      });
+      setActiveConnectorId('');
+    },
+    [applyActivePageUpdate]
+  );
+
+  const handleDeleteShapeConnection = useCallback(
+    (connectionIdInput, event = null) => {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      const connectionId = String(connectionIdInput || '').trim();
+      if (!connectionId) return;
+      applyActivePageUpdate((page) => {
+        const currentConnections = Array.isArray(page.shapeConnections) ? page.shapeConnections : [];
+        const nextConnections = currentConnections.filter(
+          (connection) => String(connection?.id || '').trim() !== connectionId
+        );
+        if (nextConnections.length === currentConnections.length) return page;
+        return {
+          ...page,
+          shapeConnections: nextConnections,
+        };
+      });
+      setActiveShapeConnectionId((previous) => (previous === connectionId ? '' : previous));
+    },
+    [applyActivePageUpdate]
+  );
+
+  const handleToggleShapePicker = useCallback(() => {
+    if (activeTool === IDEAS_WORKSPACE_TOOLS.SHAPE) {
+      setActiveTool(IDEAS_WORKSPACE_TOOLS.SELECT);
+      setIsShapePickerOpen(false);
+      setShapeDrawDraft(null);
+      return;
+    }
+    setActiveTool(IDEAS_WORKSPACE_TOOLS.SHAPE);
+    setIsShapePickerOpen(true);
+  }, [activeTool]);
+
+  const handleSelectShapeOption = useCallback((shapeTypeInput) => {
+    setActiveShapeType(normalizeIdeasShapeType(shapeTypeInput));
+    setActiveTool(IDEAS_WORKSPACE_TOOLS.SHAPE);
+    setIsShapePickerOpen(false);
+  }, []);
+
+  const handleToggleStickyVote = useCallback(
+    (noteIdInput, event = null) => {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      const noteId = String(noteIdInput || '').trim();
+      if (!noteId || !currentVoteUserKey) return;
+      applyActivePageUpdate((page) => ({
+        ...page,
+        notes: (Array.isArray(page.notes) ? page.notes : []).map((note) => {
+          if (String(note?.id || '').trim() !== noteId) return note;
+          if (normalizeIdeasNoteKind(note.kind) !== IDEAS_NOTE_KINDS.STICKY) return note;
+          if (normalizeIdeasParentNoteId(note?.parentNoteId, note?.id)) return note;
+          const currentVotes = normalizeIdeasVoteUserIds(note.voteUserIds);
+          const hasCurrentVote = currentVotes.includes(currentVoteUserKey);
+          const nextVotes = hasCurrentVote
+            ? currentVotes.filter((voteUserId) => voteUserId !== currentVoteUserKey)
+            : [...currentVotes, currentVoteUserKey];
+          return normalizeIdeasNote({
+            ...note,
+            voteUserIds: nextVotes,
+            updatedAt: new Date().toISOString(),
+          });
+        }),
+      }));
+    },
+    [applyActivePageUpdate, currentVoteUserKey]
+  );
+
+  const handleClearStickyVotes = useCallback(() => {
+    if (stickyNotesWithVotes.length === 0) return;
+    const shouldClearVotes = window.confirm('ล้างโหวตทั้งหมดในหน้า Board นี้ใช่หรือไม่');
+    if (!shouldClearVotes) return;
+    applyActivePageUpdate((page) => {
+      const notes = Array.isArray(page.notes) ? page.notes : [];
+      let hasVoteToClear = false;
+      const nextNotes = notes.map((note) => {
+        if (normalizeIdeasNoteKind(note?.kind) !== IDEAS_NOTE_KINDS.STICKY) return note;
+        const voteUserIds = normalizeIdeasVoteUserIds(note?.voteUserIds);
+        if (voteUserIds.length === 0) return note;
+        hasVoteToClear = true;
+        return normalizeIdeasNote({
+          ...note,
+          voteUserIds: [],
+          updatedAt: new Date().toISOString(),
+        });
+      });
+      if (!hasVoteToClear) return page;
+      return {
+        ...page,
+        notes: nextNotes,
+      };
+    });
+  }, [applyActivePageUpdate, stickyNotesWithVotes.length]);
+
+  const handleSelectIdeasPage = useCallback(
+    (pageIdInput) => {
+      const pageId = String(pageIdInput || '').trim();
+      if (!pageId) return;
+      applyWorkspaceUpdate((prevData) => {
+        const pages = Array.isArray(prevData.pages) ? prevData.pages : [];
+        const hasTargetPage = pages.some((page) => String(page?.id || '').trim() === pageId);
+        if (!hasTargetPage) return prevData;
+        if (String(prevData.activePageId || '').trim() === pageId) return prevData;
+        return {
+          ...prevData,
+          activePageId: pageId,
+        };
+      });
+      setSelectedNoteId('');
+      setSelectedNoteIds([]);
+      setEditingNoteId('');
+      setPendingTextFocusNoteId('');
+      setIsPagePickerOpen(false);
+    },
+    [applyWorkspaceUpdate]
+  );
+
+  const resolveDefaultIdeasPageTitle = useCallback(() => {
+    const nextPageIndex = Math.max(
+      1,
+      (Array.isArray(normalizedData.pages) ? normalizedData.pages.length : 0) + 1
+    );
+    return `Board ${nextPageIndex}`;
+  }, [normalizedData.pages]);
+
+  const handleOpenCreateIdeasPagePopup = useCallback(() => {
+    setCreatePageTitleInput(resolveDefaultIdeasPageTitle());
+    setCreatePagePinInput(false);
+    setCreatePageError('');
+    setIsPagePickerOpen(false);
+    setIsCreatePagePopupOpen(true);
+  }, [resolveDefaultIdeasPageTitle]);
+
+  const handleCloseCreateIdeasPagePopup = useCallback(() => {
+    setIsCreatePagePopupOpen(false);
+    setCreatePageError('');
+  }, []);
+
+  const handleCreateIdeasPage = useCallback(
+    (event = null) => {
+      if (event && typeof event.preventDefault === 'function') {
+        event.preventDefault();
+      }
+      const titleInput = String(createPageTitleInput || '').trim();
+      if (!titleInput) {
+        setCreatePageError('กรุณาระบุชื่อ Board');
+        return;
+      }
+      const pageCount = Array.isArray(normalizedData.pages) ? normalizedData.pages.length : 0;
+      const nextPage = createIdeasWorkspacePage({
+        title: normalizeIdeasPageTitle(titleInput, pageCount),
+        isPinned: Boolean(createPagePinInput),
+        noteDefaults: normalizedData.noteDefaults,
+      });
+      applyWorkspaceUpdate((prevData) => ({
+        ...prevData,
+        pages: [...(Array.isArray(prevData.pages) ? prevData.pages : []), nextPage],
+        activePageId: nextPage.id,
+      }));
+      setSelectedNoteId('');
+      setSelectedNoteIds([]);
+      setEditingNoteId('');
+      setPendingTextFocusNoteId('');
+      setIsCreatePagePopupOpen(false);
+      setCreatePageError('');
+    },
+    [
+      applyWorkspaceUpdate,
+      createPagePinInput,
+      createPageTitleInput,
+      normalizedData.noteDefaults,
+      normalizedData.pages,
+    ]
+  );
+
+  const handleRenameIdeasPage = useCallback(
+    (pageIdInput) => {
+      const pageId = String(pageIdInput || '').trim();
+      if (!pageId) return;
+      const targetPage = (Array.isArray(normalizedData.pages) ? normalizedData.pages : []).find(
+        (page) => String(page?.id || '').trim() === pageId
+      );
+      if (!targetPage) return;
+      const nextTitleInput = window.prompt('เปลี่ยนชื่อหน้า Board', String(targetPage.title || '').trim());
+      if (nextTitleInput === null) return;
+      const nextTitle = normalizeIdeasPageTitle(nextTitleInput);
+      applyWorkspaceUpdate((prevData) => ({
+        ...prevData,
+        pages: (Array.isArray(prevData.pages) ? prevData.pages : []).map((page, index) =>
+          String(page?.id || '').trim() === pageId
+            ? normalizeIdeasPage(
+                {
+                  ...page,
+                  title: nextTitle,
+                  updatedAt: new Date().toISOString(),
+                },
+                index
+              )
+            : page
+        ),
+      }));
+    },
+    [applyWorkspaceUpdate, normalizedData.pages]
+  );
+
+  const handleToggleIdeasPagePin = useCallback(
+    (pageIdInput) => {
+      const pageId = String(pageIdInput || '').trim();
+      if (!pageId) return;
+      applyWorkspaceUpdate((prevData) => ({
+        ...prevData,
+        pages: (Array.isArray(prevData.pages) ? prevData.pages : []).map((page, index) =>
+          String(page?.id || '').trim() === pageId
+            ? normalizeIdeasPage(
+                {
+                  ...page,
+                  isPinned: !Boolean(page?.isPinned),
+                  updatedAt: new Date().toISOString(),
+                },
+                index
+              )
+            : page
+        ),
+      }));
+    },
+    [applyWorkspaceUpdate]
+  );
+
+  const handleDeleteIdeasPage = useCallback(
+    (pageIdInput) => {
+      const pageId = String(pageIdInput || '').trim();
+      if (!pageId) return;
+      const pages = Array.isArray(normalizedData.pages) ? normalizedData.pages : [];
+      if (pages.length <= 1) return;
+      const targetPage = pages.find((page) => String(page?.id || '').trim() === pageId);
+      if (!targetPage) return;
+      const confirmed = window.confirm(`ลบหน้า "${targetPage.title}" ใช่ไหม?`);
+      if (!confirmed) return;
+      applyWorkspaceUpdate((prevData) => {
+        const previousPages = Array.isArray(prevData.pages) ? prevData.pages : [];
+        if (previousPages.length <= 1) return prevData;
+        const nextPages = previousPages.filter(
+          (page) => String(page?.id || '').trim() !== pageId
+        );
+        if (nextPages.length === previousPages.length) return prevData;
+        const previousActivePageId = String(prevData.activePageId || '').trim();
+        const nextActivePageId =
+          previousActivePageId && previousActivePageId !== pageId
+            ? previousActivePageId
+            : String(nextPages[0]?.id || '').trim();
+        return {
+          ...prevData,
+          pages: nextPages,
+          activePageId: nextActivePageId,
+        };
+      });
+      setSelectedNoteId('');
+      setSelectedNoteIds([]);
+      setEditingNoteId('');
+      setPendingTextFocusNoteId('');
+    },
+    [applyWorkspaceUpdate, normalizedData.pages]
+  );
+
+  const startPanInteraction = useCallback(
+    (event) => {
+      const startCamera = normalizeIdeasCamera(normalizedData.camera);
+      const startX = Number(event.clientX || 0);
+      const startY = Number(event.clientY || 0);
+      bindWindowPointerInteraction((moveEvent) => {
+        moveEvent.preventDefault();
+        const dx = Number(moveEvent.clientX || 0) - startX;
+        const dy = Number(moveEvent.clientY || 0) - startY;
+        applyActivePageUpdate((page) => ({
+          ...page,
+          camera: normalizeIdeasCamera({
+            ...startCamera,
+            x: startCamera.x + dx,
+            y: startCamera.y + dy,
+          }),
+        }));
+      });
+    },
+    [applyActivePageUpdate, bindWindowPointerInteraction, normalizedData.camera]
+  );
+
+  const startNoteDragInteraction = useCallback(
+    (event, note) => {
+      const noteId = String(note?.id || '').trim();
+      if (!noteId) return;
+      const cameraSnapshot = normalizeIdeasCamera(normalizedData.camera);
+      const startPoint = getWorldPointFromClient(event.clientX, event.clientY, cameraSnapshot);
+      const dragNoteIds = selectedNoteIdSet.has(noteId)
+        ? normalizedSelectedNoteIds
+        : [noteId];
+      const dragNoteIdSet = new Set(dragNoteIds);
+      const originById = new Map();
+      (Array.isArray(normalizedData.notes) ? normalizedData.notes : []).forEach((item) => {
+        const itemId = String(item?.id || '').trim();
+        if (!dragNoteIdSet.has(itemId)) return;
+        originById.set(itemId, {
+          x: Number(item?.x || 0),
+          y: Number(item?.y || 0),
+        });
+      });
+      bindWindowPointerInteraction((moveEvent) => {
+        moveEvent.preventDefault();
+        const currentPoint = getWorldPointFromClient(
+          moveEvent.clientX,
+          moveEvent.clientY,
+          cameraSnapshot
+        );
+        const deltaX = currentPoint.x - startPoint.x;
+        const deltaY = currentPoint.y - startPoint.y;
+        applyActivePageUpdate((page) => {
+          let didUpdate = false;
+          const nextNotes = (Array.isArray(page.notes) ? page.notes : []).map((item) => {
+            const itemId = String(item?.id || '').trim();
+            if (!dragNoteIdSet.has(itemId)) return item;
+            const origin = originById.get(itemId);
+            if (!origin) return item;
+            const nextX = clampIdeasNumber(origin.x + deltaX, {
+              min: -4800,
+              max: 4800,
+              fallback: origin.x,
+            });
+            const nextY = clampIdeasNumber(origin.y + deltaY, {
+              min: -3600,
+              max: 3600,
+              fallback: origin.y,
+            });
+            didUpdate = true;
+            return normalizeIdeasNote({
+              ...item,
+              x: nextX,
+              y: nextY,
+              updatedAt: new Date().toISOString(),
+            });
+          });
+          if (!didUpdate) return page;
+          return {
+            ...page,
+            notes: nextNotes,
+          };
+        });
+      });
+    },
+    [
+      applyActivePageUpdate,
+      bindWindowPointerInteraction,
+      getWorldPointFromClient,
+      normalizedData.camera,
+      normalizedData.notes,
+      normalizedSelectedNoteIds,
+      selectedNoteIdSet,
+    ]
+  );
+
+  const startShapeResizeInteraction = useCallback(
+    (event, note, handleIdInput) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const noteId = String(note?.id || '').trim();
+      if (!noteId) return;
+      const noteKind = normalizeIdeasNoteKind(note?.kind);
+      if (noteKind !== IDEAS_NOTE_KINDS.SHAPE) return;
+      const handleId = String(handleIdInput || '').trim().toLowerCase();
+      if (!handleId) return;
+      const cameraSnapshot = normalizeIdeasCamera(normalizedData.camera);
+      const startPoint = getWorldPointFromClient(event.clientX, event.clientY, cameraSnapshot);
+      const originX = Number(note?.x || 0);
+      const originY = Number(note?.y || 0);
+      const originWidth = clampIdeasNumber(note?.width, {
+        min: IDEAS_SHAPE_DEFAULTS.minWidth,
+        max: IDEAS_SHAPE_DEFAULTS.maxWidth,
+        fallback: IDEAS_SHAPE_DEFAULTS.width,
+      });
+      const originHeight = clampIdeasNumber(note?.height, {
+        min: IDEAS_SHAPE_DEFAULTS.minHeight,
+        max: IDEAS_SHAPE_DEFAULTS.maxHeight,
+        fallback: IDEAS_SHAPE_DEFAULTS.height,
+      });
+      bindWindowPointerInteraction((moveEvent) => {
+        moveEvent.preventDefault();
+        const currentPoint = getWorldPointFromClient(
+          moveEvent.clientX,
+          moveEvent.clientY,
+          cameraSnapshot
+        );
+        const dx = currentPoint.x - startPoint.x;
+        const dy = currentPoint.y - startPoint.y;
+        const isLeftHandle = handleId.includes('left');
+        const isRightHandle = handleId.includes('right');
+        const isTopHandle = handleId.includes('top');
+        const isBottomHandle = handleId.includes('bottom');
+        let nextX = originX;
+        let nextY = originY;
+        let nextWidth = originWidth;
+        let nextHeight = originHeight;
+
+        if (isLeftHandle) {
+          nextX = originX + dx;
+          nextWidth = originWidth - dx;
+        }
+        if (isRightHandle) {
+          nextWidth = originWidth + dx;
+        }
+        if (isTopHandle) {
+          nextY = originY + dy;
+          nextHeight = originHeight - dy;
+        }
+        if (isBottomHandle) {
+          nextHeight = originHeight + dy;
+        }
+
+        if (nextWidth < IDEAS_SHAPE_DEFAULTS.minWidth) {
+          nextWidth = IDEAS_SHAPE_DEFAULTS.minWidth;
+          if (isLeftHandle) {
+            nextX = originX + (originWidth - IDEAS_SHAPE_DEFAULTS.minWidth);
+          }
+        }
+        if (nextHeight < IDEAS_SHAPE_DEFAULTS.minHeight) {
+          nextHeight = IDEAS_SHAPE_DEFAULTS.minHeight;
+          if (isTopHandle) {
+            nextY = originY + (originHeight - IDEAS_SHAPE_DEFAULTS.minHeight);
+          }
+        }
+
+        nextX = clampIdeasNumber(nextX, {
+          min: -4800,
+          max: 4800,
+          fallback: originX,
+        });
+        nextY = clampIdeasNumber(nextY, {
+          min: -3600,
+          max: 3600,
+          fallback: originY,
+        });
+        nextWidth = clampIdeasNumber(nextWidth, {
+          min: IDEAS_SHAPE_DEFAULTS.minWidth,
+          max: IDEAS_SHAPE_DEFAULTS.maxWidth,
+          fallback: originWidth,
+        });
+        nextHeight = clampIdeasNumber(nextHeight, {
+          min: IDEAS_SHAPE_DEFAULTS.minHeight,
+          max: IDEAS_SHAPE_DEFAULTS.maxHeight,
+          fallback: originHeight,
+        });
+
+        applyActivePageUpdate((page) => {
+          let didUpdate = false;
+          const nextNotes = (Array.isArray(page.notes) ? page.notes : []).map((item) => {
+            if (String(item?.id || '').trim() !== noteId) return item;
+            if (normalizeIdeasNoteKind(item?.kind) !== IDEAS_NOTE_KINDS.SHAPE) return item;
+            didUpdate = true;
+            return normalizeIdeasNote({
+              ...item,
+              x: nextX,
+              y: nextY,
+              width: nextWidth,
+              height: nextHeight,
+              updatedAt: new Date().toISOString(),
+            });
+          });
+          if (!didUpdate) return page;
+          return {
+            ...page,
+            notes: nextNotes,
+          };
+        });
+      });
+    },
+    [applyActivePageUpdate, bindWindowPointerInteraction, getWorldPointFromClient, normalizedData.camera]
+  );
+
+  const startStickySubnoteResizeInteraction = useCallback(
+    (event, note, handleIdInput) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const noteId = String(note?.id || '').trim();
+      if (!noteId) return;
+      if (normalizeIdeasNoteKind(note?.kind) !== IDEAS_NOTE_KINDS.STICKY) return;
+      const parentId = normalizeIdeasParentNoteId(note?.parentNoteId, note?.id);
+      if (!parentId) return;
+      const handleId = String(handleIdInput || '').trim().toLowerCase();
+      if (!handleId) return;
+      const cameraSnapshot = normalizeIdeasCamera(normalizedData.camera);
+      const startPoint = getWorldPointFromClient(event.clientX, event.clientY, cameraSnapshot);
+      const originX = Number(note?.x || 0);
+      const originY = Number(note?.y || 0);
+      const originWidth = clampIdeasNumber(note?.width, {
+        min: IDEAS_STICKY_RESIZE_DEFAULTS.minWidth,
+        max: IDEAS_STICKY_RESIZE_DEFAULTS.maxWidth,
+        fallback: IDEAS_STICKY_RESIZE_DEFAULTS.width,
+      });
+      const originHeight = clampIdeasNumber(note?.height, {
+        min: IDEAS_STICKY_RESIZE_DEFAULTS.minHeight,
+        max: IDEAS_STICKY_RESIZE_DEFAULTS.maxHeight,
+        fallback: IDEAS_STICKY_RESIZE_DEFAULTS.height,
+      });
+      bindWindowPointerInteraction((moveEvent) => {
+        moveEvent.preventDefault();
+        const currentPoint = getWorldPointFromClient(
+          moveEvent.clientX,
+          moveEvent.clientY,
+          cameraSnapshot
+        );
+        const dx = currentPoint.x - startPoint.x;
+        const dy = currentPoint.y - startPoint.y;
+        const isLeftHandle = handleId.includes('left');
+        const isRightHandle = handleId.includes('right');
+        const isTopHandle = handleId.includes('top');
+        const isBottomHandle = handleId.includes('bottom');
+        let nextX = originX;
+        let nextY = originY;
+        let nextWidth = originWidth;
+        let nextHeight = originHeight;
+
+        if (isLeftHandle) {
+          nextX = originX + dx;
+          nextWidth = originWidth - dx;
+        }
+        if (isRightHandle) {
+          nextWidth = originWidth + dx;
+        }
+        if (isTopHandle) {
+          nextY = originY + dy;
+          nextHeight = originHeight - dy;
+        }
+        if (isBottomHandle) {
+          nextHeight = originHeight + dy;
+        }
+
+        if (nextWidth < IDEAS_STICKY_RESIZE_DEFAULTS.minWidth) {
+          nextWidth = IDEAS_STICKY_RESIZE_DEFAULTS.minWidth;
+          if (isLeftHandle) {
+            nextX = originX + (originWidth - IDEAS_STICKY_RESIZE_DEFAULTS.minWidth);
+          }
+        }
+        if (nextHeight < IDEAS_STICKY_RESIZE_DEFAULTS.minHeight) {
+          nextHeight = IDEAS_STICKY_RESIZE_DEFAULTS.minHeight;
+          if (isTopHandle) {
+            nextY = originY + (originHeight - IDEAS_STICKY_RESIZE_DEFAULTS.minHeight);
+          }
+        }
+
+        nextX = clampIdeasNumber(nextX, {
+          min: -4800,
+          max: 4800,
+          fallback: originX,
+        });
+        nextY = clampIdeasNumber(nextY, {
+          min: -3600,
+          max: 3600,
+          fallback: originY,
+        });
+        nextWidth = clampIdeasNumber(nextWidth, {
+          min: IDEAS_STICKY_RESIZE_DEFAULTS.minWidth,
+          max: IDEAS_STICKY_RESIZE_DEFAULTS.maxWidth,
+          fallback: originWidth,
+        });
+        nextHeight = clampIdeasNumber(nextHeight, {
+          min: IDEAS_STICKY_RESIZE_DEFAULTS.minHeight,
+          max: IDEAS_STICKY_RESIZE_DEFAULTS.maxHeight,
+          fallback: originHeight,
+        });
+
+        applyActivePageUpdate((page) => {
+          let didUpdate = false;
+          const nextNotes = (Array.isArray(page.notes) ? page.notes : []).map((item) => {
+            if (String(item?.id || '').trim() !== noteId) return item;
+            if (normalizeIdeasNoteKind(item?.kind) !== IDEAS_NOTE_KINDS.STICKY) return item;
+            const targetParentId = normalizeIdeasParentNoteId(item?.parentNoteId, item?.id);
+            if (!targetParentId) return item;
+            didUpdate = true;
+            return normalizeIdeasNote({
+              ...item,
+              x: nextX,
+              y: nextY,
+              width: nextWidth,
+              height: nextHeight,
+              updatedAt: new Date().toISOString(),
+            });
+          });
+          if (!didUpdate) return page;
+          return {
+            ...page,
+            notes: nextNotes,
+          };
+        });
+      });
+    },
+    [applyActivePageUpdate, bindWindowPointerInteraction, getWorldPointFromClient, normalizedData.camera]
+  );
+
+  const handleBoardPointerDown = useCallback(
+    (event) => {
+      if (event.button !== 0) return;
+      setActiveConnectorId('');
+      setActiveShapeConnectionId('');
+      setShapeQuickConnectDraft(null);
+      if (activeTool === IDEAS_WORKSPACE_TOOLS.PAN) {
+        event.preventDefault();
+        startPanInteraction(event);
+        return;
+      }
+      if (activeTool === IDEAS_WORKSPACE_TOOLS.STICKY) {
+        event.preventDefault();
+        const worldPoint = getWorldPointFromClient(event.clientX, event.clientY);
+        handleAddNoteAtWorld(worldPoint.x - IDEAS_NOTE_DEFAULTS.width / 2, worldPoint.y - 88, {
+          kind: IDEAS_NOTE_KINDS.STICKY,
+        });
+        return;
+      }
+      if (activeTool === IDEAS_WORKSPACE_TOOLS.SHAPE) {
+        event.preventDefault();
+        const cameraSnapshot = normalizeIdeasCamera(normalizedData.camera);
+        const startPoint = getWorldPointFromClient(event.clientX, event.clientY, cameraSnapshot);
+        let latestPoint = { ...startPoint };
+        setShapeDrawDraft({
+          isActive: true,
+          shapeType: activeShapeType,
+          startX: startPoint.x,
+          startY: startPoint.y,
+          currentX: startPoint.x,
+          currentY: startPoint.y,
+        });
+        bindWindowPointerInteraction(
+          (moveEvent) => {
+            moveEvent.preventDefault();
+            const currentPoint = getWorldPointFromClient(
+              moveEvent.clientX,
+              moveEvent.clientY,
+              cameraSnapshot
+            );
+            latestPoint = currentPoint;
+            setShapeDrawDraft((previous) =>
+              previous
+                ? {
+                    ...previous,
+                    currentX: currentPoint.x,
+                    currentY: currentPoint.y,
+                  }
+                : previous
+            );
+          },
+          () => {
+            setShapeDrawDraft(null);
+            const rawWidth = Math.abs(latestPoint.x - startPoint.x);
+            const rawHeight = Math.abs(latestPoint.y - startPoint.y);
+            if (rawWidth < 6 || rawHeight < 6) {
+              setActiveTool(IDEAS_WORKSPACE_TOOLS.SELECT);
+              return;
+            }
+            const nextWidth = clampIdeasNumber(rawWidth, {
+              min: IDEAS_SHAPE_DEFAULTS.minWidth,
+              max: IDEAS_SHAPE_DEFAULTS.maxWidth,
+              fallback: IDEAS_SHAPE_DEFAULTS.width,
+            });
+            const nextHeight = clampIdeasNumber(rawHeight, {
+              min: IDEAS_SHAPE_DEFAULTS.minHeight,
+              max: IDEAS_SHAPE_DEFAULTS.maxHeight,
+              fallback: IDEAS_SHAPE_DEFAULTS.height,
+            });
+            const nextX = Math.min(startPoint.x, latestPoint.x);
+            const nextY = Math.min(startPoint.y, latestPoint.y);
+            handleAddNoteAtWorld(nextX, nextY, {
+              kind: IDEAS_NOTE_KINDS.SHAPE,
+              shapeType: activeShapeType,
+              width: nextWidth,
+              height: nextHeight,
+              focusText: true,
+            });
+            setActiveTool(IDEAS_WORKSPACE_TOOLS.SELECT);
+          }
+        );
+        return;
+      }
+      if (activeTool !== IDEAS_WORKSPACE_TOOLS.SELECT) {
+        setSelectedNoteId('');
+        setSelectedNoteIds([]);
+        setEditingNoteId('');
+        return;
+      }
+      event.preventDefault();
+      const cameraSnapshot = normalizeIdeasCamera(normalizedData.camera);
+      const startPoint = getWorldPointFromClient(event.clientX, event.clientY, cameraSnapshot);
+      let latestPoint = { ...startPoint };
+      setMarqueeSelection({
+        isActive: true,
+        startX: startPoint.x,
+        startY: startPoint.y,
+        currentX: startPoint.x,
+        currentY: startPoint.y,
+      });
+      bindWindowPointerInteraction(
+        (moveEvent) => {
+          moveEvent.preventDefault();
+          const currentPoint = getWorldPointFromClient(
+            moveEvent.clientX,
+            moveEvent.clientY,
+            cameraSnapshot
+          );
+          latestPoint = currentPoint;
+          setMarqueeSelection((previous) =>
+            previous
+              ? {
+                  ...previous,
+                  currentX: currentPoint.x,
+                  currentY: currentPoint.y,
+                }
+              : previous
+          );
+        },
+        () => {
+          const dragDx = Math.abs(latestPoint.x - startPoint.x);
+          const dragDy = Math.abs(latestPoint.y - startPoint.y);
+          const didDrag = dragDx > 3 || dragDy > 3;
+          setMarqueeSelection(null);
+          if (!didDrag) {
+            setSelectedNoteId('');
+            setSelectedNoteIds([]);
+            setEditingNoteId('');
+            return;
+          }
+          const selectionRect = {
+            left: Math.min(startPoint.x, latestPoint.x),
+            top: Math.min(startPoint.y, latestPoint.y),
+            right: Math.max(startPoint.x, latestPoint.x),
+            bottom: Math.max(startPoint.y, latestPoint.y),
+          };
+          const intersectedNotes = visibleNotes.filter((note) => {
+            const bounds = getNoteWorldBounds(note);
+            if (!bounds) return false;
+            return !(
+              bounds.right < selectionRect.left ||
+              bounds.left > selectionRect.right ||
+              bounds.bottom < selectionRect.top ||
+              bounds.top > selectionRect.bottom
+            );
+          });
+          if (intersectedNotes.length === 0) {
+            setSelectedNoteId('');
+            setSelectedNoteIds([]);
+            setEditingNoteId('');
+            return;
+          }
+          const nextSelectedIds = Array.from(
+            new Set(intersectedNotes.map((note) => String(note?.id || '').trim()).filter(Boolean))
+          );
+          const firstNoteId = String(nextSelectedIds[0] || '').trim();
+          setSelectedNoteId(firstNoteId);
+          setSelectedNoteIds(nextSelectedIds);
+          setEditingNoteId('');
+        }
+      );
+    },
+    [
+      activeShapeType,
+      activeTool,
+      bindWindowPointerInteraction,
+      getNoteWorldBounds,
+      getWorldPointFromClient,
+      handleAddNoteAtWorld,
+      normalizedData.camera,
+      startPanInteraction,
+      visibleNotes,
+    ]
+  );
+
+  const handleNotePointerDown = useCallback(
+    (event, note) => {
+      event.stopPropagation();
+      if (event.button !== 0) return;
+      setActiveConnectorId('');
+      setActiveShapeConnectionId('');
+      setShapeQuickConnectDraft(null);
+      const noteId = String(note?.id || '').trim();
+      if (!noteId) return;
+      const wasSelected = selectedNoteIdSet.has(noteId);
+      const isEditingCurrentNote = noteId === normalizedEditingNoteId;
+      const noteKind = normalizeIdeasNoteKind(note?.kind);
+      setSelectedNoteId(noteId);
+      if (!wasSelected) {
+        setSelectedNoteIds([noteId]);
+      }
+      if (!wasSelected && normalizedEditingNoteId) {
+        setEditingNoteId('');
+      }
+      if (noteKind === IDEAS_NOTE_KINDS.SHAPE) {
+        updateShapeQuickConnectSideFromClient(noteId, event.clientX, event.clientY);
+      }
+      if (activeTool === IDEAS_WORKSPACE_TOOLS.PAN) {
+        event.preventDefault();
+        startPanInteraction(event);
+        return;
+      }
+      if (activeTool !== IDEAS_WORKSPACE_TOOLS.SELECT) return;
+      const isEditableTarget =
+        event.target instanceof HTMLElement &&
+        Boolean(event.target.closest('textarea,input,[contenteditable="true"]'));
+      if (isEditingCurrentNote && isEditableTarget) return;
+      if (isEditableTarget && wasSelected) {
+        event.preventDefault();
+        setEditingNoteId(noteId);
+        setPendingTextFocusNoteId(noteId);
+        return;
+      }
+      event.preventDefault();
+      if (isEditingCurrentNote) {
+        setEditingNoteId('');
+      }
+      startNoteDragInteraction(event, note);
+    },
+    [
+      activeTool,
+      normalizedEditingNoteId,
+      selectedNoteIdSet,
+      startNoteDragInteraction,
+      startPanInteraction,
+      updateShapeQuickConnectSideFromClient,
+    ]
+  );
+
+  const handleNoteTextChange = useCallback(
+    (noteIdInput, textInput) => {
+      const noteId = String(noteIdInput || '').trim();
+      if (!noteId) return;
+      const textValue = String(textInput || '').replace(/\r/g, '').slice(0, 1200);
+      applyActivePageUpdate((page) => ({
+        ...page,
+        notes: (Array.isArray(page.notes) ? page.notes : []).map((note) =>
+          String(note?.id || '').trim() === noteId
+            ? normalizeIdeasNote({
+                ...note,
+                text: textValue,
+                updatedAt: new Date().toISOString(),
+              })
+            : note
+        ),
+      }));
+    },
+    [applyActivePageUpdate]
+  );
+
+  const handleNoteTextBlur = useCallback(
+    (event, noteIdInput) => {
+      const noteId = String(noteIdInput || '').trim();
+      if (!noteId || noteId !== normalizedEditingNoteId) return;
+      const nextTarget = event.relatedTarget;
+      if (
+        nextTarget instanceof HTMLElement &&
+        nextTarget.closest('[data-idea-floating-toolbar="true"]')
+      ) {
+        return;
+      }
+      setEditingNoteId('');
+    },
+    [normalizedEditingNoteId]
+  );
+
+  useEffect(() => {
+    const handleDeleteByKeyboard = (event) => {
+      const keyboardTarget = event.target;
+      const isEditingText =
+        keyboardTarget instanceof HTMLElement &&
+        Boolean(keyboardTarget.closest('textarea,input,[contenteditable="true"]'));
+      const key = String(event.key || '').toLowerCase();
+      if (key === 'escape') {
+        if (!normalizedEditingNoteId) return;
+        event.preventDefault();
+        setEditingNoteId('');
+        return;
+      }
+      if (isEditingText) return;
+      if (key === 'delete' || key === 'backspace') {
+        if (!selectedNote) return;
+        event.preventDefault();
+        handleDeleteSelectedNote();
+        return;
+      }
+      if (key === 't') {
+        event.preventDefault();
+        handleCreateTextNote();
+      }
+    };
+    window.addEventListener('keydown', handleDeleteByKeyboard);
+    return () => window.removeEventListener('keydown', handleDeleteByKeyboard);
+  }, [handleCreateTextNote, handleDeleteSelectedNote, normalizedEditingNoteId, selectedNote]);
+
+  useEffect(() => {
+    const targetNoteId = String(pendingTextFocusNoteId || '').trim();
+    if (!targetNoteId) return;
+    if (targetNoteId !== normalizedEditingNoteId) return;
+    const hasTargetNote = normalizedData.notes.some(
+      (note) => String(note?.id || '').trim() === targetNoteId
+    );
+    if (!hasTargetNote) return;
+    const rootElement = workspaceRootRef.current;
+    if (!rootElement) return;
+    const targetTextarea = rootElement.querySelector(
+      `textarea[data-idea-note-textarea-id="${targetNoteId}"]`
+    );
+    if (!(targetTextarea instanceof HTMLTextAreaElement)) return;
+    window.requestAnimationFrame(() => {
+      targetTextarea.focus();
+      const currentText = String(targetTextarea.value || '');
+      const shouldSelectAll = currentText.trim().toLowerCase() === 'add text';
+      if (shouldSelectAll) {
+        targetTextarea.setSelectionRange(0, currentText.length);
+      } else {
+        const textLength = currentText.length;
+        targetTextarea.setSelectionRange(textLength, textLength);
+      }
+      setPendingTextFocusNoteId('');
+    });
+  }, [normalizedData.notes, normalizedEditingNoteId, pendingTextFocusNoteId]);
+
+  useEffect(() => {
+    if (!activeFloatingToolbarNoteId) {
+      setFloatingToolbarPosition((previous) =>
+        previous.isVisible
+          ? {
+              ...previous,
+              isVisible: false,
+            }
+          : previous
+      );
+      return undefined;
+    }
+    const rootElement = workspaceRootRef.current;
+    const viewportElement = viewportRef.current;
+    const toolbarElement = floatingToolbarRef.current;
+    const noteElement = noteElementMapRef.current.get(activeFloatingToolbarNoteId);
+    if (!rootElement || !viewportElement || !toolbarElement || !noteElement) {
+      setFloatingToolbarPosition((previous) =>
+        previous.isVisible
+          ? {
+              ...previous,
+              isVisible: false,
+            }
+          : previous
+      );
+      return undefined;
+    }
+
+    const clamp = (valueInput, minInput, maxInput) => {
+      if (maxInput < minInput) return minInput;
+      return Math.min(Math.max(valueInput, minInput), maxInput);
+    };
+
+    const updateFloatingToolbarPosition = () => {
+      const rootRect = rootElement.getBoundingClientRect();
+      const viewportRect = viewportElement.getBoundingClientRect();
+      const noteRect = noteElement.getBoundingClientRect();
+      const toolbarRect = toolbarElement.getBoundingClientRect();
+      const padding = 12;
+      const spacing = 10;
+      const availableTop = noteRect.top - viewportRect.top;
+      const availableBottom = viewportRect.bottom - noteRect.bottom;
+      let shouldPlaceBelow =
+        noteRect.top - toolbarRect.height - spacing < viewportRect.top + padding;
+      if (
+        shouldPlaceBelow &&
+        noteRect.bottom + toolbarRect.height + spacing > viewportRect.bottom - padding &&
+        availableTop > availableBottom
+      ) {
+        shouldPlaceBelow = false;
+      }
+      let targetTop = shouldPlaceBelow
+        ? noteRect.bottom - rootRect.top + spacing
+        : noteRect.top - rootRect.top - toolbarRect.height - spacing;
+      const minTop = viewportRect.top - rootRect.top + padding;
+      const maxTop = viewportRect.bottom - rootRect.top - toolbarRect.height - padding;
+      targetTop = clamp(targetTop, minTop, maxTop);
+
+      let targetLeft = noteRect.left - rootRect.left + noteRect.width / 2 - toolbarRect.width / 2;
+      const minLeft = viewportRect.left - rootRect.left + padding;
+      const maxLeft = viewportRect.right - rootRect.left - toolbarRect.width - padding;
+      targetLeft = clamp(targetLeft, minLeft, maxLeft);
+
+      setFloatingToolbarPosition((previous) => {
+        const next = {
+          left: Math.round(targetLeft),
+          top: Math.round(targetTop),
+          placement: shouldPlaceBelow ? 'bottom' : 'top',
+          isVisible: true,
+        };
+        if (
+          previous.isVisible === next.isVisible &&
+          previous.placement === next.placement &&
+          previous.left === next.left &&
+          previous.top === next.top
+        ) {
+          return previous;
+        }
+        return next;
+      });
+    };
+
+    let frameId = window.requestAnimationFrame(updateFloatingToolbarPosition);
+    const handleViewportChange = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(updateFloatingToolbarPosition);
+    };
+
+    window.addEventListener('resize', handleViewportChange);
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(handleViewportChange);
+      resizeObserver.observe(viewportElement);
+      resizeObserver.observe(toolbarElement);
+      resizeObserver.observe(noteElement);
+    }
+
+    return () => {
+      window.removeEventListener('resize', handleViewportChange);
+      window.cancelAnimationFrame(frameId);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+    };
+  }, [
+    activeFloatingToolbarNote,
+    activeFloatingToolbarNoteId,
+    normalizedData.camera,
+    activeFloatingToolbarNote?.text,
+    activeFloatingToolbarNote?.textSize,
+  ]);
+
+  const activeCamera = normalizeIdeasCamera(normalizedData.camera);
+  const boardTransformStyle = {
+    transform: `translate(-50%, -50%) translate(${activeCamera.x}px, ${activeCamera.y}px) scale(${activeCamera.scale})`,
+    transformOrigin: '0 0',
+  };
+  const boardCursorClass =
+    activeTool === IDEAS_WORKSPACE_TOOLS.PAN
+      ? 'cursor-grab active:cursor-grabbing'
+      : activeTool === IDEAS_WORKSPACE_TOOLS.STICKY || activeTool === IDEAS_WORKSPACE_TOOLS.SHAPE
+        ? 'cursor-copy'
+        : 'cursor-default';
+  const toolIconClass = isCompactViewport ? 'w-3.5 h-3.5' : 'w-4 h-4';
+  const selectedShapeQuickConnectSide =
+    shouldShowShapeQuickConnectHandle && shapeQuickConnectState?.noteId === singleSelectedShapeNoteId
+      ? normalizeIdeasShapeSide(shapeQuickConnectState?.side, IDEAS_SHAPE_SIDES.RIGHT)
+      : IDEAS_SHAPE_SIDES.RIGHT;
+  const shapeQuickConnectButtonStyleBySide = {
+    [IDEAS_SHAPE_SIDES.LEFT]: {
+      left: '-42px',
+      top: '50%',
+      transform: 'translateY(-50%)',
+    },
+    [IDEAS_SHAPE_SIDES.RIGHT]: {
+      right: '-42px',
+      top: '50%',
+      transform: 'translateY(-50%)',
+    },
+    [IDEAS_SHAPE_SIDES.TOP]: {
+      top: '-42px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+    },
+    [IDEAS_SHAPE_SIDES.BOTTOM]: {
+      bottom: '-42px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+    },
+  };
+
+  return (
+    <section ref={workspaceRootRef} className="relative h-full w-full overflow-hidden bg-slate-100">
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-white to-slate-100" />
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute left-4 top-4 rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-600 shadow-sm backdrop-blur">
+          <p className="font-semibold text-slate-700">Brainstorming Board</p>
+          <p className="mt-0.5">
+            เลือกเครื่องมือด้านล่างเพื่อเพิ่ม, ลาก, จัดการ Post-it ได้ทันที
+          </p>
+        </div>
+      </div>
+      {stickyNotesWithVotes.length > 0 && (
+        <div className="absolute right-4 top-4 z-10">
+          <div className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/85 px-3 py-2 text-xs shadow-sm backdrop-blur">
+            <span className="font-semibold text-amber-700">
+              โหวตแล้ว {votedMemberCount}/{normalizedProjectMemberCount} คน
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsTopVotesPopupOpen(true)}
+              className="h-7 w-7 inline-flex items-center justify-center rounded-lg border border-amber-300 bg-white text-amber-700 hover:bg-amber-100 transition-colors"
+              title="ดูโพสต์ที่โหวตสูงสุด"
+            >
+              <Trophy className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+      {activeFloatingToolbarNoteId && (
+        <div
+          ref={floatingToolbarRef}
+          data-idea-floating-toolbar="true"
+          className={`absolute z-20 ${floatingToolbarPosition.isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+          style={{
+            left: `${floatingToolbarPosition.left}px`,
+            top: `${floatingToolbarPosition.top}px`,
+          }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
+        >
+          <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 px-2.5 py-2 shadow-xl backdrop-blur">
+            {selectedNoteKind === IDEAS_NOTE_KINDS.STICKY && (
+              <div className="inline-flex items-center gap-1.5 pr-2 mr-1 border-r border-slate-200">
+                {IDEAS_NOTE_COLORS.map((color) => {
+                  const isActiveColor = color.toLowerCase() === activeColor.toLowerCase();
+                  return (
+                    <button
+                      key={`idea-floating-color-${color}`}
+                      type="button"
+                      onClick={() => handleApplyColor(color)}
+                      title="Note color"
+                      className={`w-6 h-6 rounded-full border transition-transform ${
+                        isActiveColor
+                          ? 'border-slate-700 scale-110'
+                          : 'border-slate-300 hover:scale-105'
+                      }`}
+                      style={{ backgroundColor: color }}
+                    />
+                  );
+                })}
+              </div>
+            )}
+            {selectedNoteKind === IDEAS_NOTE_KINDS.SHAPE && (
+              <div className="inline-flex items-center gap-2.5 pr-2 mr-1 border-r border-slate-200">
+                <div className="inline-flex items-center gap-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Fill</span>
+                  {IDEAS_SHAPE_FILL_COLOR_PRESETS.map((color, index) => {
+                    const isActiveColor = color.toLowerCase() === activeShapeFillColor.toLowerCase();
+                    return (
+                      <button
+                        key={`idea-shape-fill-swatch-${color}`}
+                        type="button"
+                        onClick={() => handleApplyShapeFillColor(color)}
+                        title={index === 0 ? 'Fill: Default' : `Fill color ${index}`}
+                        className={`w-5 h-5 rounded-full border transition-transform ${
+                          isActiveColor
+                            ? 'border-slate-700 scale-110'
+                            : 'border-slate-300 hover:scale-105'
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="inline-flex items-center gap-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Border</span>
+                  {IDEAS_SHAPE_BORDER_COLOR_PRESETS.map((color, index) => {
+                    const isActiveColor = color.toLowerCase() === activeShapeBorderColor.toLowerCase();
+                    return (
+                      <button
+                        key={`idea-shape-border-swatch-${color}`}
+                        type="button"
+                        onClick={() => handleApplyShapeBorderColor(color)}
+                        title={index === 0 ? 'Border: Default' : `Border color ${index}`}
+                        className={`w-5 h-5 rounded-full border transition-transform ${
+                          isActiveColor
+                            ? 'border-slate-700 scale-110'
+                            : 'border-slate-300 hover:scale-105'
+                        }`}
+                        style={{ backgroundColor: color }}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="inline-flex items-center gap-1 text-slate-700 text-xs font-semibold">
+              <Type className="w-3.5 h-3.5" />
+              {isSelectedTextNote ? 'Text' : isSelectedShapeNote ? 'Shape' : 'Post-it'}
+            </div>
+            <div className="relative">
+              <select
+                value={activeTextSizeSelectValue}
+                onChange={(event) => handleApplyTextSize(event.target.value)}
+                className="h-8 appearance-none rounded-lg border border-slate-300 bg-white px-2.5 pr-7 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-violet-500"
+                title="Text size"
+              >
+                {IDEAS_NOTE_TEXT_SIZE_OPTIONS.map((sizeOption) => (
+                  <option
+                    key={`idea-note-size-floating-${sizeOption.value}`}
+                    value={String(sizeOption.value)}
+                  >
+                    {sizeOption.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+            {selectedNoteKind === IDEAS_NOTE_KINDS.STICKY && !isSelectedSubnote && (
+              <>
+                <div className="w-px h-7 bg-slate-200 mx-0.5" />
+                <button
+                  type="button"
+                  onClick={handleCreateSubnoteFromSelected}
+                  className="h-8 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  title="สร้าง Subnote"
+                >
+                  + Subnote
+                </button>
+                <button
+                  type="button"
+                  onClick={handleToggleSelectedSubnotesCollapsed}
+                  disabled={selectedSubnoteCount <= 0}
+                  className={`h-8 rounded-lg border px-2.5 text-xs font-semibold transition-colors ${
+                    selectedSubnoteCount <= 0
+                      ? 'border-slate-200 bg-white text-slate-300 cursor-not-allowed'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                  title={isSelectedRootSubnotesCollapsed ? 'เปิด Subnote' : 'ปิด Subnote'}
+                >
+                  {isSelectedRootSubnotesCollapsed ? 'เปิด Subnote' : 'ปิด Subnote'}
+                </button>
+              </>
+            )}
+            {selectedNoteKind === IDEAS_NOTE_KINDS.STICKY && isSelectedSubnote && (
+              <>
+                <div className="w-px h-7 bg-slate-200 mx-0.5" />
+                <button
+                  type="button"
+                  onClick={(event) => handleDetachSubnoteConnection(selectedNote?.id, event)}
+                  className="h-8 rounded-lg border border-rose-200 bg-rose-50 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                  title="ลบเส้นเชื่อมและแยกเป็น Post-it หลัก"
+                >
+                  ปลดเส้น
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      {isBulkStickySelectionActive && (
+        <div
+          className="absolute left-1/2 -translate-x-1/2 top-4 z-20"
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/95 px-2.5 py-2 shadow-xl backdrop-blur">
+            <div className="text-[11px] font-semibold text-slate-600 px-1">
+              เลือก {selectedStickyNoteIds.length} Post-it
+            </div>
+            <div className="w-px h-7 bg-slate-200" />
+            <div className="inline-flex items-center gap-1.5">
+              {IDEAS_NOTE_COLORS.map((color) => {
+                const isActiveColor = color.toLowerCase() === activeColor.toLowerCase();
+                return (
+                  <button
+                    key={`idea-bulk-color-${color}`}
+                    type="button"
+                    onClick={() => handleApplyColor(color)}
+                    title="เปลี่ยนสี Post-it ที่เลือก"
+                    className={`w-6 h-6 rounded-full border transition-transform ${
+                      isActiveColor
+                        ? 'border-slate-700 scale-110'
+                        : 'border-slate-300 hover:scale-105'
+                    }`}
+                    style={{ backgroundColor: color }}
+                  />
+                );
+              })}
+            </div>
+            <div className="relative">
+              <select
+                value={activeTextSizeSelectValue}
+                onChange={(event) => handleApplyTextSize(event.target.value)}
+                className="h-8 appearance-none rounded-lg border border-slate-300 bg-white px-2.5 pr-7 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-violet-500"
+                title="เปลี่ยนขนาดตัวอักษร Post-it ที่เลือก"
+              >
+                {IDEAS_NOTE_TEXT_SIZE_OPTIONS.map((sizeOption) => (
+                  <option
+                    key={`idea-bulk-size-${sizeOption.value}`}
+                    value={String(sizeOption.value)}
+                  >
+                    {sizeOption.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div
+        ref={viewportRef}
+        className={`relative h-full w-full ${boardCursorClass}`}
+        onPointerDown={handleBoardPointerDown}
+        onWheel={handleBoardWheel}
+      >
+        <div className="absolute left-1/2 top-1/2" style={boardTransformStyle}>
+          <div
+            className="absolute pointer-events-none"
+            style={{
+              left: -5600,
+              top: -4200,
+              width: 11200,
+              height: 8400,
+              backgroundColor: '#f8fafc',
+              backgroundImage:
+                'radial-gradient(circle, rgba(100, 116, 139, 0.32) 1.1px, rgba(0, 0, 0, 0) 1.2px)',
+              backgroundSize: '24px 24px',
+            }}
+          />
+
+          {marqueeSelection?.isActive && (
+            <div
+              className="absolute pointer-events-none border border-blue-400 bg-blue-400/12"
+              style={{
+                left: `${Math.min(marqueeSelection.startX, marqueeSelection.currentX)}px`,
+                top: `${Math.min(marqueeSelection.startY, marqueeSelection.currentY)}px`,
+                width: `${Math.abs(marqueeSelection.currentX - marqueeSelection.startX)}px`,
+                height: `${Math.abs(marqueeSelection.currentY - marqueeSelection.startY)}px`,
+                zIndex: 18,
+              }}
+            />
+          )}
+
+          {shapeDrawDraft?.isActive &&
+            (() => {
+              const draftShapeOption = resolveIdeasShapeOption(shapeDrawDraft.shapeType || activeShapeType);
+              const draftShapeClipPath = draftShapeOption.clipPath || undefined;
+              return (
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: `${Math.min(shapeDrawDraft.startX, shapeDrawDraft.currentX)}px`,
+                    top: `${Math.min(shapeDrawDraft.startY, shapeDrawDraft.currentY)}px`,
+                    width: `${Math.abs(shapeDrawDraft.currentX - shapeDrawDraft.startX)}px`,
+                    height: `${Math.abs(shapeDrawDraft.currentY - shapeDrawDraft.startY)}px`,
+                    zIndex: 19,
+                  }}
+                >
+                  <div
+                    className="absolute inset-0"
+                    style={{
+                      borderRadius: draftShapeOption.borderRadius,
+                      clipPath: draftShapeClipPath,
+                      backgroundColor: 'rgba(37, 99, 235, 0.75)',
+                    }}
+                  />
+                  <div
+                    className="absolute inset-[2px]"
+                    style={{
+                      borderRadius: draftShapeOption.borderRadius,
+                      clipPath: draftShapeClipPath,
+                      backgroundColor: 'rgba(191, 219, 254, 0.22)',
+                    }}
+                  />
+                </div>
+              );
+            })()}
+
+          {(shapeConnectionEntries.length > 0 || shapeQuickConnectDraftRender) && (
+            <>
+              <svg
+                className="absolute left-0 top-0 overflow-visible"
+                width="1"
+                height="1"
+                aria-hidden="true"
+              >
+                <defs>
+                  <marker
+                    id={shapeArrowMarkerIdRef.current}
+                    markerWidth="8"
+                    markerHeight="8"
+                    refX="7"
+                    refY="4"
+                    orient="auto"
+                    markerUnits="strokeWidth"
+                  >
+                    <path d="M0,0 L0,8 L8,4 z" fill="rgba(100, 116, 139, 0.92)" />
+                  </marker>
+                </defs>
+                {shapeConnectionEntries.map((connection) => (
+                  <g key={connection.id}>
+                    <line
+                      x1={connection.x1}
+                      y1={connection.y1}
+                      x2={connection.x2}
+                      y2={connection.y2}
+                      stroke="rgba(100, 116, 139, 0.82)"
+                      strokeWidth="2.2"
+                      markerEnd={`url(#${shapeArrowMarkerIdRef.current})`}
+                      pointerEvents="none"
+                    />
+                    <line
+                      x1={connection.x1}
+                      y1={connection.y1}
+                      x2={connection.x2}
+                      y2={connection.y2}
+                      stroke="rgba(0, 0, 0, 0)"
+                      strokeWidth="14"
+                      style={{ cursor: 'pointer' }}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setActiveConnectorId('');
+                        setActiveShapeConnectionId((previous) =>
+                          previous === connection.id ? '' : connection.id
+                        );
+                      }}
+                    />
+                  </g>
+                ))}
+                {shapeQuickConnectDraftRender && (
+                  <line
+                    x1={shapeQuickConnectDraftRender.x1}
+                    y1={shapeQuickConnectDraftRender.y1}
+                    x2={shapeQuickConnectDraftRender.x2}
+                    y2={shapeQuickConnectDraftRender.y2}
+                    stroke="rgba(37, 99, 235, 0.95)"
+                    strokeWidth="2.4"
+                    strokeDasharray={shapeQuickConnectDraftRender.targetNoteId ? '0' : '5 4'}
+                    markerEnd={`url(#${shapeArrowMarkerIdRef.current})`}
+                    pointerEvents="none"
+                  />
+                )}
+              </svg>
+              {shapeConnectionEntries
+                .filter((connection) => connection.id === activeShapeConnectionId)
+                .map((connection) => (
+                  <button
+                    key={`${connection.id}-delete`}
+                    type="button"
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => handleDeleteShapeConnection(connection.id, event)}
+                    className="absolute h-5 w-5 -ml-2.5 -mt-2.5 rounded-full border border-slate-300 bg-white text-slate-500 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 shadow-sm"
+                    style={{
+                      left: `${connection.midX}px`,
+                      top: `${connection.midY}px`,
+                      zIndex: 12,
+                    }}
+                    title="ลบเส้นเชื่อม Shape"
+                  >
+                    <X className="w-3 h-3 mx-auto" />
+                  </button>
+                ))}
+              {shapeQuickConnectDraftRender?.previewRect && (
+                <div
+                  className="absolute pointer-events-none rounded-lg border-2 border-blue-300/80 bg-slate-200/40"
+                  style={{
+                    left: `${shapeQuickConnectDraftRender.previewRect.x}px`,
+                    top: `${shapeQuickConnectDraftRender.previewRect.y}px`,
+                    width: `${shapeQuickConnectDraftRender.previewRect.width}px`,
+                    height: `${shapeQuickConnectDraftRender.previewRect.height}px`,
+                    zIndex: 19,
+                  }}
+                />
+              )}
+            </>
+          )}
+
+          {stickySubnoteConnectorEntries.length > 0 && (
+            <>
+              <svg
+                className="absolute left-0 top-0 overflow-visible"
+                width="1"
+                height="1"
+                aria-hidden="true"
+              >
+                {stickySubnoteConnectorEntries.map((connector) => {
+                  const isActiveConnector = connector.id === activeConnectorId;
+                  return (
+                    <g key={connector.id}>
+                      <line
+                        x1={connector.x1}
+                        y1={connector.y1}
+                        x2={connector.x2}
+                        y2={connector.y2}
+                        stroke={isActiveConnector ? 'rgba(37, 99, 235, 0.65)' : 'rgba(51, 65, 85, 0.45)'}
+                        strokeWidth={isActiveConnector ? '2.5' : '2'}
+                        strokeDasharray="4 4"
+                        pointerEvents="none"
+                      />
+                      <line
+                        x1={connector.x1}
+                        y1={connector.y1}
+                        x2={connector.x2}
+                        y2={connector.y2}
+                        stroke="rgba(0, 0, 0, 0)"
+                        strokeWidth="14"
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setActiveShapeConnectionId('');
+                          setActiveConnectorId((previous) =>
+                            previous === connector.id ? '' : connector.id
+                          );
+                        }}
+                      />
+                    </g>
+                  );
+                })}
+              </svg>
+              {stickySubnoteConnectorEntries
+                .filter((connector) => connector.id === activeConnectorId)
+                .map((connector) => (
+                  <button
+                    key={`${connector.id}-detach`}
+                    type="button"
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => handleDetachSubnoteConnection(connector.childId, event)}
+                    className="absolute h-5 w-5 -ml-2.5 -mt-2.5 rounded-full border border-slate-300 bg-white text-slate-500 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 shadow-sm"
+                    style={{
+                      left: `${connector.midX}px`,
+                      top: `${connector.midY}px`,
+                      zIndex: 12,
+                    }}
+                    title="ลบเส้นเชื่อม Subnote"
+                  >
+                    <X className="w-3 h-3 mx-auto" />
+                  </button>
+                ))}
+            </>
+          )}
+
+          {visibleNotes.map((note, noteIndex) => {
+            const isSelected = selectedNoteIdSet.has(String(note?.id || '').trim());
+            const isEditing = String(note?.id || '').trim() === normalizedEditingNoteId;
+            const noteTextSizePx = normalizeIdeasNoteTextSize(note.textSize);
+            const noteTextLineHeightPx =
+              noteTextSizePx <= 0 ? 16 : Math.max(12, Math.round(noteTextSizePx * 1.35));
+            const noteTextStyle = {
+              fontSize: `${noteTextSizePx}px`,
+              lineHeight: `${noteTextLineHeightPx}px`,
+            };
+            const noteKind = normalizeIdeasNoteKind(note.kind);
+            const isTextNote = noteKind === IDEAS_NOTE_KINDS.TEXT;
+            const isShapeNote = noteKind === IDEAS_NOTE_KINDS.SHAPE;
+            const isStickyNote = noteKind === IDEAS_NOTE_KINDS.STICKY;
+            const parentNoteId = normalizeIdeasParentNoteId(note?.parentNoteId, note?.id);
+            const isSubnote = isStickyNote && Boolean(parentNoteId);
+            const shapeWidth = clampIdeasNumber(note.width, {
+              min: IDEAS_SHAPE_DEFAULTS.minWidth,
+              max: IDEAS_SHAPE_DEFAULTS.maxWidth,
+              fallback: IDEAS_SHAPE_DEFAULTS.width,
+            });
+            const shapeHeight = clampIdeasNumber(note.height, {
+              min: IDEAS_SHAPE_DEFAULTS.minHeight,
+              max: IDEAS_SHAPE_DEFAULTS.maxHeight,
+              fallback: IDEAS_SHAPE_DEFAULTS.height,
+            });
+            const stickyWidth = clampIdeasNumber(note.width, {
+              min: IDEAS_STICKY_RESIZE_DEFAULTS.minWidth,
+              max: IDEAS_STICKY_RESIZE_DEFAULTS.maxWidth,
+              fallback: IDEAS_STICKY_RESIZE_DEFAULTS.width,
+            });
+            const stickyHeight = clampIdeasNumber(note.height, {
+              min: IDEAS_STICKY_RESIZE_DEFAULTS.minHeight,
+              max: IDEAS_STICKY_RESIZE_DEFAULTS.maxHeight,
+              fallback: IDEAS_STICKY_RESIZE_DEFAULTS.height,
+            });
+            const shapeOption = resolveIdeasShapeOption(note.shapeType);
+            const shapeFillColor = normalizeIdeasShapeFillColor(note.shapeFillColor);
+            const shapeBorderColor = normalizeIdeasShapeBorderColor(note.shapeBorderColor);
+            const shapeClipPath = shapeOption.clipPath || undefined;
+            const shapeTextPaddingX = clampIdeasNumber(shapeOption?.textPaddingX, {
+              min: 8,
+              max: 48,
+              fallback: 16,
+            });
+            const shapeTextPaddingY = clampIdeasNumber(shapeOption?.textPaddingY, {
+              min: 8,
+              max: 48,
+              fallback: 12,
+            });
+            const shapeInnerHeight = Math.max(0, shapeHeight - 4);
+            const shapeTextStartPaddingTop = clampIdeasNumber(
+              Math.round((shapeInnerHeight - noteTextLineHeightPx) / 2),
+              {
+                min: shapeTextPaddingY,
+                max: Math.max(shapeTextPaddingY, shapeInnerHeight - noteTextLineHeightPx),
+                fallback: shapeTextPaddingY,
+              }
+            );
+            const noteVoteCount = normalizeIdeasVoteUserIds(note.voteUserIds).length;
+            const hasCurrentUserVote = Boolean(
+              currentVoteUserKey && normalizeIdeasVoteUserIds(note.voteUserIds).includes(currentVoteUserKey)
+            );
+            const hasSubnotes = Number(stickyChildCountByParentId.get(String(note?.id || '').trim()) || 0) > 0;
+            const shouldShowVoteBadge = isStickyNote && !isSubnote && (isSelected || noteVoteCount > 0);
+            const noteZIndex = isSelected ? 600 : Math.max(20, visibleNotes.length - noteIndex + 20);
+            return (
+              <article
+                key={note.id}
+                data-idea-note="true"
+                data-idea-note-id={note.id}
+                ref={(element) => setIdeaNoteElementRef(note.id, element)}
+                className="absolute"
+                style={{
+                  left: `${Number(note.x || 0)}px`,
+                  top: `${Number(note.y || 0)}px`,
+                  width: isTextNote ? undefined : `${isShapeNote ? shapeWidth : stickyWidth}px`,
+                  zIndex: noteZIndex,
+                }}
+                onPointerDown={(event) => handleNotePointerDown(event, note)}
+                onPointerMove={(event) => handleShapeHoverForQuickConnect(event, note)}
+              >
+                {isTextNote ? (
+                  <div className="relative min-w-[120px] max-w-[520px]">
+                    <textarea
+                      value={note.text}
+                      onChange={(event) => handleNoteTextChange(note.id, event.target.value)}
+                      readOnly={!isEditing}
+                      tabIndex={isEditing ? 0 : -1}
+                      onBlur={(event) => handleNoteTextBlur(event, note.id)}
+                      placeholder="Add text"
+                      data-idea-note-textarea-id={note.id}
+                      className={`w-full min-h-[36px] resize-none rounded-md border bg-transparent px-1.5 py-1 text-slate-700 placeholder:text-slate-500/80 focus:ring-0 outline-none ${
+                        isSelected
+                          ? 'border-blue-500 shadow-[0_0_0_1px_rgba(37,99,235,0.25)]'
+                          : 'border-transparent hover:border-slate-300'
+                      } ${isEditing ? 'cursor-text' : 'cursor-move select-none'}`}
+                      style={noteTextStyle}
+                    />
+                  </div>
+                ) : isShapeNote ? (
+                  <div
+                    className="relative"
+                    style={{
+                      height: `${shapeHeight}px`,
+                    }}
+                  >
+                    <div
+                      className="absolute inset-0 pointer-events-none"
+                      style={{
+                        borderRadius: shapeOption.borderRadius,
+                        clipPath: shapeClipPath,
+                        backgroundColor: shapeBorderColor,
+                      }}
+                    />
+                    <div
+                      className="absolute inset-[2px] overflow-hidden"
+                      style={{
+                        borderRadius: shapeOption.borderRadius,
+                        clipPath: shapeClipPath,
+                        backgroundColor: shapeFillColor,
+                      }}
+                    >
+                      <div
+                        className="h-full"
+                        style={{
+                          paddingLeft: `${shapeTextPaddingX}px`,
+                          paddingRight: `${shapeTextPaddingX}px`,
+                        }}
+                      >
+	                      <textarea
+	                        value={note.text}
+	                        onChange={(event) => handleNoteTextChange(note.id, event.target.value)}
+	                        readOnly={!isEditing}
+	                        tabIndex={isEditing ? 0 : -1}
+                        onBlur={(event) => handleNoteTextBlur(event, note.id)}
+                        placeholder="Type inside shape"
+                        data-idea-note-textarea-id={note.id}
+	                        className={`w-full h-full min-h-0 resize-none border-0 bg-transparent text-center text-slate-700 placeholder:text-slate-500/80 focus:ring-0 outline-none ${
+	                          isEditing ? 'cursor-text' : 'cursor-move select-none'
+	                        }`}
+	                        style={{
+                            ...noteTextStyle,
+                            paddingTop: `${shapeTextStartPaddingTop}px`,
+                            paddingBottom: `${shapeTextPaddingY}px`,
+                          }}
+	                      />
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <>
+                        <div
+                          className="pointer-events-none absolute inset-0"
+                          style={{
+                            border: '2px solid rgb(59, 130, 246)',
+                            borderRadius: shapeOption.borderRadius,
+                            clipPath: shapeClipPath,
+                          }}
+                        />
+                        {IDEAS_SHAPE_RESIZE_HANDLES.map((handle) => (
+                          <button
+                            key={`idea-shape-resize-${note.id}-${handle.id}`}
+                            type="button"
+                            onPointerDown={(event) => {
+                              startShapeResizeInteraction(event, note, handle.id);
+                            }}
+                            className={`absolute ${handle.className} w-3 h-3 rounded-full border-2 border-white bg-blue-500 shadow-sm`}
+                            title="Resize shape"
+                          />
+                        ))}
+                        {shouldShowShapeQuickConnectHandle &&
+                          singleSelectedShapeNoteId === String(note?.id || '').trim() && (
+                            <button
+                              type="button"
+                              onPointerDown={(event) =>
+                                handleStartShapeQuickConnectInteraction(
+                                  event,
+                                  note,
+                                  selectedShapeQuickConnectSide
+                                )
+                              }
+                              style={shapeQuickConnectButtonStyleBySide[selectedShapeQuickConnectSide]}
+                              className="absolute z-[6] h-8 w-8 inline-flex items-center justify-center rounded-full border-2 border-blue-500 bg-white text-blue-600 shadow-[0_8px_18px_rgba(37,99,235,0.32)] hover:bg-blue-50"
+                              title="สร้างหรือเชื่อม Shape"
+                            >
+                              {selectedShapeQuickConnectSide === IDEAS_SHAPE_SIDES.LEFT ? (
+                                <ArrowLeft className="w-4 h-4" />
+                              ) : selectedShapeQuickConnectSide === IDEAS_SHAPE_SIDES.TOP ? (
+                                <ArrowUp className="w-4 h-4" />
+                              ) : selectedShapeQuickConnectSide === IDEAS_SHAPE_SIDES.BOTTOM ? (
+                                <ArrowDown className="w-4 h-4" />
+                              ) : (
+                                <ArrowRight className="w-4 h-4" />
+                              )}
+                            </button>
+                          )}
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    className={`relative rounded-xl border shadow-md transition-all ${
+                      isSelected
+                        ? 'border-blue-500 shadow-[0_10px_25px_rgba(37,99,235,0.24)]'
+                        : 'border-black/5 shadow-[0_8px_20px_rgba(15,23,42,0.16)]'
+                    }`}
+                    style={{
+                      backgroundColor: note.color,
+                      height: `${stickyHeight}px`,
+                    }}
+                  >
+                    <div className="absolute left-0 right-0 top-0 h-6 rounded-t-xl bg-black/5 pointer-events-none" />
+                    {hasSubnotes && !isSubnote && (
+                      <div
+                        className={`absolute left-2 top-1.5 z-[3] inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                          note.isSubnotesCollapsed
+                            ? 'border-blue-300 bg-blue-50 text-blue-700'
+                            : 'border-slate-300 bg-white/90 text-slate-600'
+                        }`}
+                        title={
+                          note.isSubnotesCollapsed
+                            ? 'Subnote ถูกพับอยู่'
+                            : 'Post-it นี้มี Subnote'
+                        }
+                      >
+                        <FolderTree className="w-3.5 h-3.5" />
+                        <span>{Number(stickyChildCountByParentId.get(String(note?.id || '').trim()) || 0)}</span>
+                      </div>
+                    )}
+                    {shouldShowVoteBadge && (
+                      <button
+                        type="button"
+                        onPointerDown={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onClick={(event) => handleToggleStickyVote(note.id, event)}
+                        title={hasCurrentUserVote ? 'ยกเลิกโหวต' : 'โหวตโพสต์นี้'}
+                        className={`absolute right-2 top-1.5 z-[3] inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors ${
+                          hasCurrentUserVote
+                            ? 'border-rose-300 bg-rose-50 text-rose-600'
+                            : noteVoteCount > 0
+                              ? 'border-slate-300 bg-white/90 text-slate-600'
+                              : 'border-slate-300 bg-white/90 text-slate-600 hover:border-rose-200 hover:text-rose-500'
+                        }`}
+                      >
+                        <Heart
+                          className={`w-3.5 h-3.5 ${hasCurrentUserVote ? 'fill-current' : ''}`}
+                        />
+                        <span>{noteVoteCount}</span>
+                      </button>
+                    )}
+                    <div className="h-full px-4 pt-7 pb-3 flex flex-col">
+                      <textarea
+                        value={note.text}
+                        onChange={(event) => handleNoteTextChange(note.id, event.target.value)}
+                        readOnly={!isEditing}
+                        tabIndex={isEditing ? 0 : -1}
+                        onBlur={(event) => handleNoteTextBlur(event, note.id)}
+                        placeholder="Type anything, @mention anyone"
+                        data-idea-note-textarea-id={note.id}
+                        className={`w-full flex-1 min-h-[54px] resize-none border-0 bg-transparent text-slate-700 placeholder:text-slate-500/80 focus:ring-0 outline-none ${
+                          isEditing ? 'cursor-text' : 'cursor-move select-none'
+                        }`}
+                        style={noteTextStyle}
+                      />
+                      <div className="pt-1 text-[10px] font-semibold tracking-wide text-slate-600/85 uppercase">
+                        {note.createdBy || 'Team'}
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <>
+                        <div className="pointer-events-none absolute inset-0 rounded-xl ring-2 ring-blue-500" />
+                        {isSubnote
+                          ? IDEAS_SHAPE_RESIZE_HANDLES.map((handle) => (
+                              <button
+                                key={`idea-subnote-resize-${note.id}-${handle.id}`}
+                                type="button"
+                                onPointerDown={(event) => {
+                                  startStickySubnoteResizeInteraction(event, note, handle.id);
+                                }}
+                                className={`absolute ${handle.className} w-3 h-3 rounded-full border-2 border-white bg-blue-500 shadow-sm`}
+                                title="Resize subnote"
+                              />
+                            ))
+                          : (
+                              <>
+                                <div className="pointer-events-none absolute -left-1.5 -top-1.5 w-3 h-3 rounded-full bg-blue-500 border-2 border-white" />
+                                <div className="pointer-events-none absolute -right-1.5 -top-1.5 w-3 h-3 rounded-full bg-blue-500 border-2 border-white" />
+                                <div className="pointer-events-none absolute -left-1.5 -bottom-1.5 w-3 h-3 rounded-full bg-blue-500 border-2 border-white" />
+                                <div className="pointer-events-none absolute -right-1.5 -bottom-1.5 w-3 h-3 rounded-full bg-blue-500 border-2 border-white" />
+                              </>
+                            )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="absolute left-1/2 -translate-x-1/2 bottom-3 sm:bottom-4 z-20 w-[min(98%,1120px)] px-1">
+        <div className="flex flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-slate-200 bg-white/95 backdrop-blur px-2 py-2 shadow-2xl">
+          <IdeasToolbarButton
+            title="Select tool"
+            isActive={activeTool === IDEAS_WORKSPACE_TOOLS.SELECT}
+            onClick={() => setActiveTool(IDEAS_WORKSPACE_TOOLS.SELECT)}
+          >
+            <MousePointer2 className={toolIconClass} />
+          </IdeasToolbarButton>
+          <IdeasToolbarButton
+            title="Pan board"
+            isActive={activeTool === IDEAS_WORKSPACE_TOOLS.PAN}
+            onClick={() => setActiveTool(IDEAS_WORKSPACE_TOOLS.PAN)}
+          >
+            <Hand className={toolIconClass} />
+          </IdeasToolbarButton>
+          <IdeasToolbarButton
+            title="Add note at center"
+            onClick={handleAddNoteAtCenter}
+          >
+            <Plus className={toolIconClass} />
+          </IdeasToolbarButton>
+
+          <div className="w-px h-7 bg-slate-200 mx-0.5" />
+
+          <div className="flex items-center gap-1">
+            <IdeasToolbarButton
+              title="Text note (T)"
+              onClick={handleCreateTextNote}
+            >
+              <Type className={toolIconClass} />
+            </IdeasToolbarButton>
+            <div ref={shapePickerRef} className="relative">
+              <IdeasToolbarButton
+                title={`Shape tool (${activeShapeOption.label})`}
+                isActive={activeTool === IDEAS_WORKSPACE_TOOLS.SHAPE}
+                onClick={handleToggleShapePicker}
+              >
+                <LayoutGrid className={toolIconClass} />
+              </IdeasToolbarButton>
+              {isShapePickerOpen && (
+                <div className="absolute bottom-0 left-[calc(100%+0.5rem)] z-30 w-[280px] max-w-[92vw] rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-100">
+                    <p className="text-sm font-semibold text-slate-700">Shapes</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsShapePickerOpen(false);
+                        setActiveTool(IDEAS_WORKSPACE_TOOLS.SELECT);
+                        setShapeDrawDraft(null);
+                      }}
+                      className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100"
+                      title="Close shape picker"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <div className="px-3 py-2 border-b border-slate-100">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={shapeSearchKeyword}
+                        onChange={(event) => setShapeSearchKeyword(event.target.value)}
+                        placeholder="Search shapes"
+                        className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-8 pr-2.5 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto p-2 space-y-1.5">
+                    {filteredShapeOptions.length === 0 ? (
+                      <p className="px-2 py-4 text-center text-xs text-slate-400">ไม่พบ shape ที่ค้นหา</p>
+                    ) : (
+	                      filteredShapeOptions.map((shapeOption) => {
+	                        const isActiveShape = shapeOption.id === activeShapeType;
+	                        return (
+                          <button
+                            key={`idea-shape-option-${shapeOption.id}`}
+                            type="button"
+                            onClick={() => handleSelectShapeOption(shapeOption.id)}
+                            className={`w-full rounded-lg border px-2.5 py-2 flex items-center gap-2 text-left transition-colors ${
+                              isActiveShape
+                                ? 'border-blue-300 bg-blue-50'
+                                : 'border-slate-200 bg-white hover:bg-slate-50'
+                            }`}
+                          >
+	                            <div className="relative h-7 w-11 shrink-0">
+	                              <div
+	                                className="absolute inset-0 shadow-[0_4px_10px_rgba(15,23,42,0.18)]"
+	                                style={{
+	                                  borderRadius: shapeOption.borderRadius,
+	                                  clipPath: shapeOption.clipPath || undefined,
+	                                  backgroundColor: activeShapeBorderColor,
+	                                }}
+	                              />
+	                              <div
+	                                className="absolute inset-[2px]"
+	                                style={{
+	                                  borderRadius: shapeOption.borderRadius,
+	                                  clipPath: shapeOption.clipPath || undefined,
+	                                  backgroundColor: activeShapeFillColor,
+	                                }}
+	                              />
+	                            </div>
+	                            <span
+	                              className={`text-xs font-semibold ${
+	                                isActiveShape ? 'text-blue-700' : 'text-slate-700'
+	                              }`}
+                            >
+                              {shapeOption.label}
+                            </span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="w-px h-7 bg-slate-200 mx-0.5" />
+
+          <IdeasToolbarButton
+            title="Duplicate selected note"
+            disabled={selectedNoteIdSet.size === 0}
+            onClick={handleDuplicateSelectedNote}
+          >
+            <Copy className={toolIconClass} />
+          </IdeasToolbarButton>
+          <IdeasToolbarButton
+            title="Delete selected note"
+            disabled={selectedNoteIdSet.size === 0}
+            onClick={handleDeleteSelectedNote}
+          >
+            <Trash2 className={toolIconClass} />
+          </IdeasToolbarButton>
+
+          <div className="w-px h-7 bg-slate-200 mx-0.5" />
+
+          <IdeasToolbarButton
+            title="Zoom out"
+            onClick={() => handleSetZoom(activeCamera.scale - IDEAS_ZOOM_STEP)}
+          >
+            <ZoomOut className={toolIconClass} />
+          </IdeasToolbarButton>
+          <div className="h-7 min-w-[66px] px-2 rounded-md border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600 inline-flex items-center justify-center">
+            {Math.round(activeCamera.scale * 100)}%
+          </div>
+          <IdeasToolbarButton
+            title="Zoom in"
+            onClick={() => handleSetZoom(activeCamera.scale + IDEAS_ZOOM_STEP)}
+          >
+            <ZoomIn className={toolIconClass} />
+          </IdeasToolbarButton>
+          <IdeasToolbarButton title="Reset view" onClick={handleResetView}>
+            <RefreshCw className={toolIconClass} />
+          </IdeasToolbarButton>
+          <IdeasToolbarButton
+            title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+            onClick={() => {
+              void handleToggleFullscreen();
+            }}
+            disabled={!isFullscreenSupported}
+          >
+            {isFullscreen ? <Minimize2 className={toolIconClass} /> : <Maximize2 className={toolIconClass} />}
+          </IdeasToolbarButton>
+
+          <div ref={pagePickerRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setIsPagePickerOpen((previous) => !previous)}
+              className="h-9 max-w-[190px] px-3 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-semibold inline-flex items-center gap-1.5 hover:bg-slate-50 transition-colors"
+              title="เลือกหน้า Board"
+            >
+              <Layers className={toolIconClass} />
+              <span className="truncate">{activePage?.title || IDEAS_DEFAULT_PAGE_TITLE}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+            </button>
+            {isPagePickerOpen && (
+              <div className="absolute bottom-11 right-0 w-80 max-w-[90vw] rounded-xl border border-slate-200 bg-white shadow-2xl p-1.5">
+                <div className="flex items-center justify-between px-2 py-1.5 border-b border-slate-100">
+                  <p className="text-xs font-semibold text-slate-700">Board Pages</p>
+                  <button
+                    type="button"
+                    onClick={handleOpenCreateIdeasPagePopup}
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    New
+                  </button>
+                </div>
+                <div className="max-h-64 overflow-y-auto pt-1.5 space-y-1">
+                  {orderedPages.map((page) => {
+                    const pageId = String(page?.id || '').trim();
+                    const isActivePage = pageId === activePageId;
+                    const isLastPage = orderedPages.length <= 1;
+                    return (
+                      <div
+                        key={`idea-page-option-${pageId}`}
+                        className={`rounded-lg border ${
+                          isActivePage ? 'border-blue-300 bg-blue-50/70' : 'border-slate-200 bg-white'
+                        } px-2 py-1.5 flex items-center gap-1.5`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleSelectIdeasPage(pageId)}
+                          className={`flex-1 min-w-0 text-left text-xs font-medium ${
+                            isActivePage ? 'text-blue-700' : 'text-slate-700'
+                          }`}
+                        >
+                          <span className="inline-flex items-center gap-1.5">
+                            {page.isPinned ? <Pin className="w-3.5 h-3.5 text-amber-500" /> : null}
+                            <span className="truncate">{page.title}</span>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleIdeasPagePin(pageId)}
+                          className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100"
+                          title={page.isPinned ? 'Unpin page' : 'Pin page'}
+                        >
+                          {page.isPinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRenameIdeasPage(pageId)}
+                          className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-100"
+                          title="Rename page"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteIdeasPage(pageId)}
+                          disabled={isLastPage}
+                          className={`h-7 w-7 inline-flex items-center justify-center rounded-md border ${
+                            isLastPage
+                              ? 'border-slate-100 text-slate-300 cursor-not-allowed'
+                              : 'border-slate-200 text-slate-500 hover:bg-red-50 hover:text-red-600'
+                          }`}
+                          title="Delete page"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {isCreatePagePopupOpen && (
+        <div
+          className="absolute inset-0 z-40 bg-slate-900/35 backdrop-blur-[1px] flex items-center justify-center p-4"
+          onClick={handleCloseCreateIdeasPagePopup}
+        >
+          <form
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={handleCreateIdeasPage}
+          >
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">สร้าง Board ใหม่</p>
+                <p className="text-xs text-slate-500 mt-0.5">กำหนดข้อมูลก่อนสร้างหน้า Board</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseCreateIdeasPagePopup}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100"
+                title="ปิด"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <label className="block space-y-1">
+                <span className="text-xs font-semibold text-slate-700">ชื่อ Board</span>
+                <input
+                  type="text"
+                  value={createPageTitleInput}
+                  onChange={(event) => {
+                    setCreatePageTitleInput(event.target.value);
+                    if (createPageError) {
+                      setCreatePageError('');
+                    }
+                  }}
+                  placeholder="เช่น Sprint Planning"
+                  maxLength={IDEAS_MAX_PAGE_TITLE_LENGTH}
+                  autoFocus
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm text-slate-600 select-none">
+                <input
+                  type="checkbox"
+                  checked={createPagePinInput}
+                  onChange={(event) => setCreatePagePinInput(event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                />
+                ปักหมุด Board นี้ให้ทุกคน
+              </label>
+              {createPageError ? (
+                <p className="text-xs font-medium text-rose-600">{createPageError}</p>
+              ) : null}
+            </div>
+            <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCloseCreateIdeasPagePopup}
+                className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 text-sm font-medium"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 text-sm font-semibold"
+              >
+                สร้าง Board
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {isTopVotesPopupOpen && (
+        <div
+          className="absolute inset-0 z-30 bg-slate-900/35 backdrop-blur-[1px] flex items-center justify-center p-4"
+          onClick={() => setIsTopVotesPopupOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">อันดับ Post-it ที่ได้โหวตสูงสุด</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  ผู้โหวต {votedMemberCount}/{normalizedProjectMemberCount} คน
+                </p>
+              </div>
+              <div className="inline-flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleClearStickyVotes}
+                  disabled={stickyNotesWithVotes.length === 0}
+                  className={`h-8 px-3 inline-flex items-center justify-center rounded-lg border text-xs font-semibold transition-colors ${
+                    stickyNotesWithVotes.length === 0
+                      ? 'border-slate-200 bg-white text-slate-300 cursor-not-allowed'
+                      : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                  }`}
+                >
+                  ล้างโหวต
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTopVotesPopupOpen(false)}
+                  className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto p-3 space-y-2">
+              {stickyNotesWithVotes.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">
+                  ยังไม่มีการโหวตในหน้านี้
+                </div>
+              ) : (
+                stickyNotesWithVotes.map((entry, index) => {
+                  const note = entry.note;
+                  const safeText = String(note?.text || '').replace(/\s+/g, ' ').trim() || '(ไม่มีข้อความ)';
+                  const previewText = safeText.length > 140 ? `${safeText.slice(0, 140)}...` : safeText;
+                  const rank = index + 1;
+                  return (
+                    <button
+                      key={`idea-top-vote-${note.id}`}
+                      type="button"
+                      onClick={() => {
+                        setSelectedNoteId(note.id);
+                        setSelectedNoteIds([String(note?.id || '').trim()]);
+                        setEditingNoteId('');
+                        setIsTopVotesPopupOpen(false);
+                      }}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-left hover:border-blue-300 hover:bg-blue-50/40 transition-colors"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="h-7 min-w-[28px] px-2 rounded-full bg-slate-900 text-white text-xs font-bold inline-flex items-center justify-center">
+                          #{rank}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-700 leading-relaxed">{previewText}</p>
+                          <p className="mt-1 text-[11px] text-slate-500 uppercase tracking-wide">
+                            {note.createdBy || 'Team'}
+                          </p>
+                        </div>
+                        <div className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-600 shrink-0">
+                          <Heart className="w-3.5 h-3.5 fill-current" />
+                          {entry.voteCount}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+};
+
 // --- Editable Section Component (Vision & Mission) ---
 const EditableSection = ({ title, icon: Icon, value, placeholder, onSave }) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -14960,8 +19738,9 @@ function ProjectDashboard({
   const TABS = [
     { id: 'organization', icon: FolderTree, label: 'Project Organization' },
     { id: 'tasks', icon: CheckSquare, label: 'Task Management' },
-    { id: 'team', icon: Users, label: 'Team Management' },
+    { id: 'ideas', icon: StickyNote, label: 'Idea Board' },
     { id: 'notes', icon: FileText, label: 'Team Notes' },
+    { id: 'team', icon: Users, label: 'Team Management' },
     { id: 'announcements', icon: MessageSquare, label: 'Announcements' },
   ];
 
@@ -17814,6 +22593,29 @@ function ProjectDashboard({
                     </div>
                   </div>
 
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'ideas' && (
+              <div className="-mx-3 sm:-mx-4 md:-mx-8">
+                <div className="h-[calc(100dvh-220px)] min-h-[620px]">
+                  <IdeasWorkspace
+                    data={project.ideasWorkspaceData}
+                    onChangeData={(updater) => {
+                      const previousData = normalizeIdeasWorkspaceData(project.ideasWorkspaceData);
+                      const nextRaw =
+                        typeof updater === 'function' ? updater(previousData) : updater;
+                      const normalizedNextData = normalizeIdeasWorkspaceData(nextRaw);
+                      if (isJsonEqual(previousData, normalizedNextData)) return;
+                      onUpdateProject(project.id, {
+                        ideasWorkspaceData: normalizedNextData,
+                      });
+                    }}
+                    currentUser={currentUser}
+                    projectMemberCount={Math.max(1, Number(teamMembers?.length || 0))}
+                    isCompactViewport={shouldUseCompactDashboardNav}
+                  />
                 </div>
               </div>
             )}
