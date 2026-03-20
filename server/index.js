@@ -2073,7 +2073,16 @@ const isLineGroupIdCommand = (value) => {
 const isLineEscrowStartCommand = (value) => {
   const normalized = normalizeLineCommandText(value);
   if (!normalized) return false;
-  return LINE_ESCROW_COMMAND_KEYWORDS.has(normalized);
+  const compact = normalized.replace(/[^\p{L}\p{N}]/gu, '');
+  if (LINE_ESCROW_COMMAND_KEYWORDS.has(normalized) || (compact && LINE_ESCROW_COMMAND_KEYWORDS.has(compact))) {
+    return true;
+  }
+  for (const keyword of LINE_ESCROW_COMMAND_KEYWORDS) {
+    if (!keyword) continue;
+    if (normalized.includes(keyword)) return true;
+    if (compact && compact.includes(keyword)) return true;
+  }
+  return false;
 };
 
 const LINE_SCAM_RICH_MENU_COMMANDS = Object.freeze({
@@ -2204,10 +2213,11 @@ const loadLineScamBotConfigRecord = async () => {
 };
 
 const LINE_ESCROW_COMMAND_KEYWORDS = new Set([
-  'à¹€à¸£à¸´à¹ˆà¸¡',
-  'à¹€à¸£à¸´à¹ˆà¸¡à¸•à¹‰à¸™',
-  'à¹€à¸£à¸´à¹ˆà¸¡à¸à¸¥à¸²à¸‡',
-  'à¸à¸¥à¸²à¸‡',
+  '\u0E40\u0E23\u0E34\u0E48\u0E21',
+  '\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19',
+  '\u0E40\u0E23\u0E34\u0E48\u0E21\u0E01\u0E25\u0E32\u0E07',
+  '\u0E01\u0E25\u0E32\u0E07',
+  '/start',
   'start',
   'escrow',
   'escrowbot',
@@ -2712,7 +2722,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
       type: 'button',
       style: 'primary',
       color: '#1d4ed8',
-      action: { type: 'uri', label: '1) ผู้ซื้อสร้างดีลและชำระ', uri: dealUrl },
+      action: { type: 'uri', label: '1) Buyer creates deal & pays', uri: dealUrl },
     });
   }
   if (!isStartStage && sellerUrl) {
@@ -2720,7 +2730,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
       type: 'button',
       style: 'primary',
       color: '#0f766e',
-      action: { type: 'uri', label: '2) ผู้ขายส่งเลขพัสดุ', uri: sellerUrl },
+      action: { type: 'uri', label: '2) Seller submits tracking', uri: sellerUrl },
     });
   }
   if (!isStartStage && buyerUrl) {
@@ -2728,13 +2738,13 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
       type: 'button',
       style: 'primary',
       color: '#7c3aed',
-      action: { type: 'uri', label: '3) ผู้ซื้อเช็กสถานะ/ยืนยันรับของ', uri: buyerUrl },
+      action: { type: 'uri', label: '3) Buyer checks & confirms', uri: buyerUrl },
     });
   }
   if (footerButtons.length === 0) {
     footerButtons.push({
       type: 'text',
-      text: 'LIFF URL ยังไม่ถูกตั้งค่า กรุณาให้แอดมินตั้งค่าที่หน้า LINE Escrow Bot Admin',
+      text: 'LIFF URLs are not configured. Please ask admin to set LINE Escrow Bot Admin.',
       size: 'xs',
       color: '#991b1b',
       wrap: true,
@@ -2742,7 +2752,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
   }
   return {
     type: 'flex',
-    altText: 'เมนูบอทตัวกลางซื้อขายสินค้า',
+    altText: 'LINE escrow main menu',
     contents: {
       type: 'bubble',
       body: {
@@ -2752,7 +2762,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
         contents: [
           {
             type: 'text',
-            text: 'LINE บอทตัวกลางซื้อขาย',
+            text: 'LINE Escrow Bot',
             weight: 'bold',
             size: 'lg',
             color: '#111827',
@@ -2761,8 +2771,8 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
           {
             type: 'text',
             text: isStartStage
-              ? 'เริ่มต้น: ให้ผู้ซื้อกดปุ่มขั้นตอนที่ 1 เพื่อสร้างดีลและชำระเงินก่อน เมื่อชำระสำเร็จระบบจะส่งปุ่มขั้นตอนถัดไปอัตโนมัติ'
-              : 'Flow: ผู้ซื้อชำระเงินเข้าบอท -> ผู้ขายส่งของและเลขพัสดุ -> ผู้ซื้อยืนยันรับของ (หรือครบเวลาอัตโนมัติ) -> บอทปล่อยเงินให้ผู้ขาย',
+              ? 'Start here: buyer must complete step 1 first. After payment success, next-step card will be sent automatically.'
+              : 'Flow: buyer pays -> seller ships and submits tracking -> buyer confirms delivery (or auto-timeout) -> bot releases payout.',
             size: 'sm',
             color: '#334155',
             wrap: true,
@@ -2776,7 +2786,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
           },
           {
             type: 'text',
-            text: `ยืนยันอัตโนมัติหลังส่งถึง ${LINE_ESCROW_AUTO_RELEASE_HOURS} ชั่วโมง หากผู้ซื้อไม่กดยืนยัน`,
+            text: `Auto-confirm timeout: ${LINE_ESCROW_AUTO_RELEASE_HOURS} hours after delivered.`,
             size: 'xs',
             color: '#6b7280',
             wrap: true,
@@ -8601,10 +8611,9 @@ app.post('/line/scam/webhook', async (req, res) => {
       !Array.isArray(lineScamPublicConfig.liffUrls)
         ? lineScamPublicConfig.liffUrls
         : {};
-    const sharedEscrowInScamWebhook =
-      LINE_ESCROW_SHARED_WITH_SCAM_CHANNEL && Boolean(LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN);
+    const escrowInScamWebhookEnabled = Boolean(LINE_SCAM_CHANNEL_ACCESS_TOKEN);
     let escrowLiffUrls = { deal: '', seller: '', buyer: '' };
-    if (sharedEscrowInScamWebhook) {
+    if (escrowInScamWebhookEnabled) {
       const escrowConfig = await loadLineEscrowBotConfigRecord();
       escrowLiffUrls = resolveLineEscrowLiffUrls(req, escrowConfig);
     }
@@ -8651,7 +8660,7 @@ app.post('/line/scam/webhook', async (req, res) => {
         );
       }
 
-      if (sharedEscrowInScamWebhook && (groupId || roomId || userId)) {
+      if (escrowInScamWebhookEnabled && (groupId || roomId || userId)) {
         const logId = crypto
           .createHash('sha256')
           .update(`${groupId}|${roomId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
@@ -8675,7 +8684,7 @@ app.post('/line/scam/webhook', async (req, res) => {
         );
       }
 
-      if (sharedEscrowInScamWebhook && isGroupContext) {
+      if (escrowInScamWebhookEnabled && isGroupContext) {
         const shouldReplyStartMenu =
           (eventType === 'message' && messageType === 'text' && isLineEscrowStartCommand(messageText)) ||
           eventType === 'join' ||
@@ -8688,7 +8697,7 @@ app.post('/line/scam/webhook', async (req, res) => {
           };
           writes.push(
             sendLineReplyMessages({
-              channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
+              channelAccessToken: LINE_SCAM_CHANNEL_ACCESS_TOKEN,
               replyToken,
               messages: [
                 buildLineEscrowMainMenuFlexMessage({
