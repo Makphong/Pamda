@@ -168,3 +168,108 @@ For auth service account:
    - `lineScamGeminiConfigured: true`
 3. ทดลองกดแต่ละปุ่มใน Rich Menu จริงใน LINE
 4. ปุ่ม `ตรวจสอบมิจฉาชีพ`, `ตรวจสอบข่าวปลอม`, `ประเมินความเสี่ยง` ต้องเปิด LIFF ได้
+
+## 7) Setup LINE Escrow Bot (ไลน์บอทตัวกลางซื้อขาย) แบบใช้งานจริง
+
+### 7.1 สร้าง LINE Channel แยกสำหรับ Escrow
+1. เปิด `LINE Developers Console`
+2. เลือก `Provider` เดิม
+3. กด `Create a new channel` -> เลือก `Messaging API`
+4. ตั้งชื่อเช่น `PM Escrow Bot`
+5. เข้าแท็บ `Messaging API`
+6. คัดลอก:
+   - `Channel secret`
+   - `Channel access token (long-lived)`
+7. Optional one-bot mode: you can skip this separate channel and reuse Scam bot channel by setting `LINE_ESCROW_USE_SCAM_CHANNEL=true` in Cloud Run.
+
+### 7.2 ตั้ง Webhook ของ Escrow Bot
+1. ใน channel Escrow -> `Messaging API`
+2. ที่ `Webhook URL` กด `Edit`
+3. ใส่:
+   - `https://YOUR_AUTH_URL/line/escrow/webhook`
+   - If using one shared bot channel (scam+escrow in same channel), use `https://YOUR_AUTH_URL/line/scam/webhook` instead.
+4. กด `Update` และ `Verify`
+5. เปิด `Use webhook` เป็น `Enabled`
+
+### 7.3 สร้าง LIFF 3 หน้า สำหรับ Escrow
+1. ใช้ `LINE Login channel` (Published) สำหรับสร้าง LIFF
+2. ไปเมนู `LIFF` -> `Add`
+3. สร้าง 3 ตัว:
+   - Deal/Pay: `https://YOUR_AUTH_URL/line/escrow/liff/deal`
+   - Seller Ship: `https://YOUR_AUTH_URL/line/escrow/liff/seller`
+   - Buyer Status: `https://YOUR_AUTH_URL/line/escrow/liff/buyer`
+4. คัดลอก `LIFF URL` (รูปแบบ `https://liff.line.me/...`) เก็บไว้
+
+### 7.4 เปิดใช้งาน Payment Provider (Opn / Omise)
+1. สมัครบัญชีที่ `https://dashboard.omise.co/` (Opn Payments)
+2. ทำ KYC/เปิดใช้งาน PromptPay QR และ Transfer ให้เรียบร้อย
+3. คัดลอกคีย์:
+   - `Secret key` -> ใช้เป็น `OPN_SECRET_KEY`
+   - `Public key` -> ใช้เป็น `OPN_PUBLIC_KEY`
+4. ตั้ง webhook จาก Opn มาที่:
+   - `https://YOUR_AUTH_URL/line/escrow/payment/webhook`
+5. เพิ่ม custom header ใน webhook (ถ้าระบบรองรับ):
+   - `x-line-escrow-webhook-secret: <ค่าจาก LINE_ESCROW_PAYMENT_WEBHOOK_SECRET>`
+
+### 7.5 เปิดใช้งาน Tracking API (multi-carrier)
+1. สมัคร Tracking API provider (ตัวอย่าง TrackingMore)
+2. สร้าง API key
+3. เตรียมค่า:
+   - `TRACKING_API_KEY`
+   - `TRACKING_API_BASE_URL` (default: `https://api.trackingmore.com/v4`)
+
+### 7.6 เพิ่ม Environment Variables ใน Cloud Run (`pm-calendar-auth`)
+1. เปิด `Cloud Run` -> `pm-calendar-auth` -> `Edit and deploy new revision`
+2. ไป `Variables & Secrets`
+3. เพิ่มค่าเหล่านี้:
+   - `LINE_ESCROW_CHANNEL_SECRET=...`
+   - `LINE_ESCROW_CHANNEL_ACCESS_TOKEN=...`
+   - `LINE_ESCROW_USE_SCAM_CHANNEL=true` (set this when you want Escrow to reuse Scam channel in one bot mode)
+   - `FIRESTORE_LINE_ESCROW_BOT_COLLECTION=line_escrow_bot`
+   - `FIRESTORE_LINE_ESCROW_WEBHOOK_LOG_COLLECTION=line_escrow_webhook_logs`
+   - `FIRESTORE_LINE_ESCROW_DEAL_COLLECTION=line_escrow_deals`
+   - `LINE_ESCROW_LIFF_DEAL_URL=https://liff.line.me/...`
+   - `LINE_ESCROW_LIFF_SELLER_URL=https://liff.line.me/...`
+   - `LINE_ESCROW_LIFF_BUYER_URL=https://liff.line.me/...`
+   - `LINE_ESCROW_PAYMENT_PROVIDER=opn`
+   - `OPN_SECRET_KEY=...`
+   - `OPN_PUBLIC_KEY=...`
+   - `OPN_API_BASE_URL=https://api.omise.co`
+   - `TRACKING_API_KEY=...`
+   - `TRACKING_API_BASE_URL=https://api.trackingmore.com/v4`
+   - `LINE_ESCROW_TRACKING_PROVIDER=trackingmore`
+   - `LINE_ESCROW_AUTO_RELEASE_HOURS=72`
+   - `LINE_ESCROW_SLIP_IMAGE_MAX_BYTES=2500000`
+   - `LINE_ESCROW_CRON_SECRET=<random-strong-secret>`
+   - `LINE_ESCROW_PAYMENT_WEBHOOK_SECRET=<random-strong-secret>`
+4. กด `Deploy`
+
+### 7.7 ตั้งค่าในหน้าแอดมินเว็บ
+1. Login ด้วย Root Admin
+2. ไป `Profile > แชทเช็คโกง`
+3. กดปุ่ม `ไลน์บอทตัวกลาง`
+4. ใส่ LIFF URL ทั้ง 3 ช่อง
+5. กด `Save settings`
+
+### 7.8 ตั้ง Cloud Scheduler สำหรับ auto release (ครบ 72 ชั่วโมง)
+1. เปิด `Cloud Scheduler` -> `Create job`
+2. Name: `line-escrow-auto-release`
+3. Frequency: ทุก 15 นาที (เช่น `*/15 * * * *`)
+4. Target type: `HTTP`
+5. URL:
+   - `https://YOUR_AUTH_URL/line/escrow/cron/auto-release`
+6. Method: `POST`
+7. Header:
+   - `x-cron-secret: <ค่าเดียวกับ LINE_ESCROW_CRON_SECRET>`
+8. Body (optional):
+   - `{}`
+9. กด `Create`
+
+### 7.9 Test Flow จริงในกลุ่ม LINE
+1. เชิญ Escrow bot เข้ากลุ่ม
+2. พิมพ์ `เริ่ม`
+3. Bot ต้องส่ง Flex card เมนู 3 ขั้นตอน
+4. ผู้ซื้อสร้างดีลและได้ QR ชำระเงินจริง
+5. ผู้ขายส่งเลขพัสดุ + รูปสลิป
+6. ผู้ซื้อเปิดหน้าสถานะ ดู tracking/map และยืนยันรับของ
+7. ถ้าไม่กดยืนยัน ระบบต้องปล่อยเงินอัตโนมัติเมื่อครบเวลา

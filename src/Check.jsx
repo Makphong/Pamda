@@ -115,6 +115,8 @@ export default function CheckPage({
   onCreateReport,
   onLoadLineScamBotConfig,
   onSaveLineScamBotConfig,
+  onLoadLineEscrowBotConfig,
+  onSaveLineEscrowBotConfig,
   maxImageBytes = DEFAULT_MAX_IMAGE_BYTES,
 }) {
   const [reports, setReports] = useState([]);
@@ -129,6 +131,36 @@ export default function CheckPage({
   const [isLineConfigSaving, setIsLineConfigSaving] = useState(false);
   const [lineConfigResult, setLineConfigResult] = useState(null);
   const [lineConfig, setLineConfig] = useState(() => normalizeLineScamBotConfig({}));
+  const [isLineEscrowModalOpen, setIsLineEscrowModalOpen] = useState(false);
+  const [isEscrowConfigLoading, setIsEscrowConfigLoading] = useState(false);
+  const [isEscrowConfigSaving, setIsEscrowConfigSaving] = useState(false);
+  const [escrowConfigResult, setEscrowConfigResult] = useState(null);
+  const [escrowConfig, setEscrowConfig] = useState(() => ({
+    webhookUrl: '',
+    webhookPath: '/line/escrow/webhook',
+    paymentWebhookUrl: '',
+    paymentWebhookPath: '/line/escrow/payment/webhook',
+    liffDealUrl: '',
+    liffSellerUrl: '',
+    liffBuyerUrl: '',
+    richMenuId: '',
+    trackingCourierDefault: '',
+    commandStart: 'เริ่ม',
+    channelSecretConfigured: false,
+    channelAccessTokenConfigured: false,
+    sharedChannelWithScam: false,
+    sharedChannelMode: 'auto',
+    paymentProvider: '',
+    paymentConfigured: false,
+    paymentPublicKeyConfigured: false,
+    trackingProvider: '',
+    trackingConfigured: false,
+    autoReleaseHours: 72,
+    slipUploadMaxBytes: 0,
+    cronSecretConfigured: false,
+    paymentWebhookSecretConfigured: false,
+    updatedAt: null,
+  }));
   const evidenceInputRef = useRef(null);
 
   const [formData, setFormData] = useState({
@@ -150,6 +182,8 @@ export default function CheckPage({
   const canUseCloudApi = typeof onLoadReports === 'function' && typeof onCreateReport === 'function';
   const canManageLineScamBot =
     typeof onLoadLineScamBotConfig === 'function' && typeof onSaveLineScamBotConfig === 'function';
+  const canManageLineEscrowBot =
+    typeof onLoadLineEscrowBotConfig === 'function' && typeof onSaveLineEscrowBotConfig === 'function';
 
   const filteredReports = useMemo(() => {
     const searchLower = String(searchQuery || '').trim().toLowerCase();
@@ -241,9 +275,109 @@ export default function CheckPage({
     void loadLineScamBotConfig();
   };
 
+  const normalizeLineEscrowBotConfig = (configInput) => {
+    const config = configInput && typeof configInput === 'object' && !Array.isArray(configInput)
+      ? configInput
+      : {};
+    const liffUrlsRaw =
+      config.liffUrls && typeof config.liffUrls === 'object' && !Array.isArray(config.liffUrls)
+        ? config.liffUrls
+        : {};
+    return {
+      webhookUrl: String(config.webhookUrl || '').trim(),
+      webhookPath: String(config.webhookPath || '/line/escrow/webhook').trim(),
+      paymentWebhookUrl: String(config.paymentWebhookUrl || '').trim(),
+      paymentWebhookPath: String(config.paymentWebhookPath || '/line/escrow/payment/webhook').trim(),
+      liffDealUrl: String(liffUrlsRaw.deal || config.liffDealUrl || '').trim(),
+      liffSellerUrl: String(liffUrlsRaw.seller || config.liffSellerUrl || '').trim(),
+      liffBuyerUrl: String(liffUrlsRaw.buyer || config.liffBuyerUrl || '').trim(),
+      richMenuId: String(config.richMenuId || '').trim(),
+      trackingCourierDefault: String(config.trackingCourierDefault || '').trim(),
+      commandStart: String(config.commandStart || 'เริ่ม').trim(),
+      channelSecretConfigured: config.channelSecretConfigured === true,
+      channelAccessTokenConfigured: config.channelAccessTokenConfigured === true,
+      sharedChannelWithScam: config.sharedChannelWithScam === true,
+      sharedChannelMode: String(config.sharedChannelMode || 'auto').trim(),
+      paymentProvider: String(config.paymentProvider || '').trim(),
+      paymentConfigured: config.paymentConfigured === true,
+      paymentPublicKeyConfigured: config.paymentPublicKeyConfigured === true,
+      trackingProvider: String(config.trackingProvider || '').trim(),
+      trackingConfigured: config.trackingConfigured === true,
+      autoReleaseHours: Number(config.autoReleaseHours || 72) || 72,
+      slipUploadMaxBytes: Number(config.slipUploadMaxBytes || 0) || 0,
+      cronSecretConfigured: config.cronSecretConfigured === true,
+      paymentWebhookSecretConfigured: config.paymentWebhookSecretConfigured === true,
+      updatedAt: String(config.updatedAt || '').trim() || null,
+    };
+  };
+
   const handleLineConfigInputChange = (event) => {
     const { name, value } = event.target;
     setLineConfig((prev) => ({ ...prev, [name]: String(value || '') }));
+  };
+
+  const loadLineEscrowBotConfig = async () => {
+    if (typeof onLoadLineEscrowBotConfig !== 'function') return;
+    setIsEscrowConfigLoading(true);
+    setEscrowConfigResult(null);
+    try {
+      const response = await Promise.resolve(onLoadLineEscrowBotConfig());
+      if (!response?.ok) {
+        setEscrowConfigResult({
+          ok: false,
+          message: response?.message || 'Failed to load LINE escrow bot config.',
+        });
+        return;
+      }
+      setEscrowConfig(normalizeLineEscrowBotConfig(response.config));
+    } finally {
+      setIsEscrowConfigLoading(false);
+    }
+  };
+
+  const openLineEscrowBotModal = () => {
+    setIsLineEscrowModalOpen(true);
+    void loadLineEscrowBotConfig();
+  };
+
+  const handleEscrowConfigInputChange = (event) => {
+    const { name, value } = event.target;
+    setEscrowConfig((prev) => ({ ...prev, [name]: String(value || '') }));
+  };
+
+  const handleSaveEscrowConfig = async (event) => {
+    event.preventDefault();
+    if (typeof onSaveLineEscrowBotConfig !== 'function') {
+      setEscrowConfigResult({ ok: false, message: 'Cloud API is not configured for LINE escrow bot.' });
+      return;
+    }
+    setIsEscrowConfigSaving(true);
+    setEscrowConfigResult(null);
+    try {
+      const response = await Promise.resolve(
+        onSaveLineEscrowBotConfig({
+          liffDealUrl: String(escrowConfig.liffDealUrl || '').trim(),
+          liffSellerUrl: String(escrowConfig.liffSellerUrl || '').trim(),
+          liffBuyerUrl: String(escrowConfig.liffBuyerUrl || '').trim(),
+          richMenuId: String(escrowConfig.richMenuId || '').trim(),
+          trackingCourierDefault: String(escrowConfig.trackingCourierDefault || '').trim(),
+        })
+      );
+      if (!response?.ok) {
+        setEscrowConfigResult({
+          ok: false,
+          message: response?.message || 'Failed to save LINE escrow bot config.',
+        });
+        return;
+      }
+      setEscrowConfig(normalizeLineEscrowBotConfig(response.config || escrowConfig));
+      setEscrowConfigResult({
+        ok: true,
+        message: response?.message || 'Saved LINE escrow bot settings.',
+      });
+    } finally {
+      setIsEscrowConfigSaving(false);
+    }
   };
 
   const handleSaveLineConfig = async (event) => {
@@ -431,6 +565,13 @@ export default function CheckPage({
               <Bot size={18} />
               <span className="hidden sm:inline">LINE Bot Admin</span>
             </button>
+            <button
+              onClick={openLineEscrowBotModal}
+              className="inline-flex items-center gap-1 bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm whitespace-nowrap"
+            >
+              <Bot size={18} />
+              <span className="hidden sm:inline">ไลน์บอทตัวกลาง</span>
+            </button>
           </div>
         </div>
       </header>
@@ -444,6 +585,11 @@ export default function CheckPage({
         {!canManageLineScamBot && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
             LINE Scam Bot Admin requires Cloud Auth API and root-admin access.
+          </p>
+        )}
+        {!canManageLineEscrowBot && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+            LINE Escrow Bot Admin requires Cloud Auth API and root-admin access.
           </p>
         )}
 
@@ -808,9 +954,15 @@ export default function CheckPage({
                           : 'Missing'}
                       </p>
                     </div>
-                  </div>
+	                  </div>
+	                  {escrowConfig.sharedChannelWithScam && (
+	                    <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+	                      Single-channel mode: Escrow bot is sharing the same LINE Messaging channel as Scam bot.
+	                      Set webhook on LINE Console to <span className="font-semibold">/line/scam/webhook</span>.
+	                    </p>
+	                  )}
 
-                  <div className="rounded-xl border border-gray-200 p-4">
+	                  <div className="rounded-xl border border-gray-200 p-4">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-semibold text-gray-800">Webhook URL (ตั้งใน LINE Developer Console)</p>
                       <button
@@ -943,6 +1095,225 @@ export default function CheckPage({
                   <button
                     type="button"
                     onClick={() => setIsLineBotModalOpen(false)}
+                    className="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:w-auto"
+                  >
+                    Close
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLineEscrowModalOpen && (
+        <div className="fixed inset-0 z-[56] overflow-y-auto" role="dialog" aria-modal="true">
+          <div className="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0">
+            <div
+              className="fixed inset-0 bg-gray-700 bg-opacity-70 transition-opacity"
+              onClick={() => setIsLineEscrowModalOpen(false)}
+              aria-hidden="true"
+            />
+            <span className="hidden sm:inline-block sm:h-screen sm:align-middle" aria-hidden="true">&#8203;</span>
+            <div className="inline-block w-full transform overflow-hidden rounded-2xl bg-white text-left align-bottom shadow-xl transition-all sm:my-8 sm:max-w-3xl sm:align-middle">
+              <div className="border-b border-gray-200 bg-blue-800 px-4 py-4 text-white sm:px-6">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-lg font-semibold">LINE Escrow Bot Admin</h3>
+                    <p className="mt-1 text-xs text-blue-100">
+                      จัดการบอทตัวกลางซื้อขาย (Escrow): webhook, LIFF 3 หน้า, payment, tracking, auto release
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsLineEscrowModalOpen(false)}
+                    className="rounded-lg border border-blue-500 bg-blue-700 p-2 text-blue-100 hover:bg-blue-600"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <form id="line-escrow-bot-form" onSubmit={(event) => void handleSaveEscrowConfig(event)}>
+                <div className="max-h-[72vh] space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
+                  {escrowConfigResult?.message && (
+                    <p
+                      className={`rounded-lg border px-3 py-2 text-sm ${
+                        escrowConfigResult.ok
+                          ? 'border-green-200 bg-green-50 text-green-700'
+                          : 'border-red-200 bg-red-50 text-red-600'
+                      }`}
+                    >
+                      {escrowConfigResult.message}
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">
+                        {escrowConfig.sharedChannelWithScam ? 'Shared Scam Channel Secret' : 'Escrow Channel Secret'}
+                      </p>
+                      <p className={`mt-1 text-sm font-semibold ${escrowConfig.channelSecretConfigured ? 'text-emerald-700' : 'text-red-600'}`}>
+                        {escrowConfig.channelSecretConfigured ? 'Configured' : 'Missing'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">
+                        {escrowConfig.sharedChannelWithScam ? 'Shared Scam Channel Token' : 'Escrow Channel Token'}
+                      </p>
+                      <p className={`mt-1 text-sm font-semibold ${escrowConfig.channelAccessTokenConfigured ? 'text-emerald-700' : 'text-red-600'}`}>
+                        {escrowConfig.channelAccessTokenConfigured ? 'Configured' : 'Missing'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">Command</p>
+                      <p className="mt-1 text-sm font-semibold text-blue-700">"{escrowConfig.commandStart || 'เริ่ม'}"</p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">Payment ({escrowConfig.paymentProvider || '-'})</p>
+                      <p className={`mt-1 text-sm font-semibold ${escrowConfig.paymentConfigured ? 'text-emerald-700' : 'text-red-600'}`}>
+                        {escrowConfig.paymentConfigured ? 'Configured' : 'Missing Key'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">Tracking ({escrowConfig.trackingProvider || '-'})</p>
+                      <p className={`mt-1 text-sm font-semibold ${escrowConfig.trackingConfigured ? 'text-emerald-700' : 'text-red-600'}`}>
+                        {escrowConfig.trackingConfigured ? 'Configured' : 'Missing Key'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                      <p className="text-xs text-gray-500">Auto release</p>
+                      <p className="mt-1 text-sm font-semibold text-blue-700">{Number(escrowConfig.autoReleaseHours || 72)} ชั่วโมง</p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-gray-800">Webhook URLs</p>
+                      <button
+                        type="button"
+                        onClick={() => void loadLineEscrowBotConfig()}
+                        disabled={isEscrowConfigLoading}
+                        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        {isEscrowConfigLoading ? 'Loading...' : 'Refresh'}
+                      </button>
+                    </div>
+                    <label className="block mt-2">
+                      <span className="text-xs text-gray-500">LINE webhook</span>
+                      <input type="text" readOnly value={escrowConfig.webhookUrl || ''} className="mt-1 w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-xs text-gray-700" />
+                    </label>
+                    <label className="block mt-2">
+                      <span className="text-xs text-gray-500">Payment webhook (from payment provider)</span>
+                      <input type="text" readOnly value={escrowConfig.paymentWebhookUrl || ''} className="mt-1 w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-xs text-gray-700" />
+                    </label>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                    <p className="text-sm font-semibold text-gray-800">LIFF URL Settings</p>
+                    <label className="block space-y-1">
+                      <span className="text-xs text-gray-600">LIFF URL: สร้างดีล/ชำระเงิน</span>
+                      <input
+                        type="url"
+                        name="liffDealUrl"
+                        value={escrowConfig.liffDealUrl}
+                        onChange={handleEscrowConfigInputChange}
+                        placeholder="https://..."
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-xs text-gray-600">LIFF URL: ผู้ขายส่งพัสดุ</span>
+                      <input
+                        type="url"
+                        name="liffSellerUrl"
+                        value={escrowConfig.liffSellerUrl}
+                        onChange={handleEscrowConfigInputChange}
+                        placeholder="https://..."
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-xs text-gray-600">LIFF URL: ผู้ซื้อเช็กสถานะ/ยืนยันรับของ</span>
+                      <input
+                        type="url"
+                        name="liffBuyerUrl"
+                        value={escrowConfig.liffBuyerUrl}
+                        onChange={handleEscrowConfigInputChange}
+                        placeholder="https://..."
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                      />
+                    </label>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <label className="block space-y-1">
+                        <span className="text-xs text-gray-600">Default courier code (optional)</span>
+                        <input
+                          type="text"
+                          name="trackingCourierDefault"
+                          value={escrowConfig.trackingCourierDefault}
+                          onChange={handleEscrowConfigInputChange}
+                          placeholder="เช่น thailand-post"
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                        />
+                      </label>
+                      <label className="block space-y-1">
+                        <span className="text-xs text-gray-600">Rich Menu ID (optional)</span>
+                        <input
+                          type="text"
+                          name="richMenuId"
+                          value={escrowConfig.richMenuId}
+                          onChange={handleEscrowConfigInputChange}
+                          placeholder="richmenu-xxxxxxxx"
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-200 p-4">
+                    <p className="text-sm font-semibold text-gray-800">LIFF Preview Links</p>
+                    <div className="mt-2 flex flex-col gap-2 text-sm">
+                      {[
+                        { id: 'deal', label: 'เปิดหน้า สร้างดีล/ชำระเงิน', href: escrowConfig.liffDealUrl },
+                        { id: 'seller', label: 'เปิดหน้า ผู้ขายส่งพัสดุ', href: escrowConfig.liffSellerUrl },
+                        { id: 'buyer', label: 'เปิดหน้า ผู้ซื้อเช็กสถานะ/ยืนยัน', href: escrowConfig.liffBuyerUrl },
+                      ].map((entry) => (
+                        <a
+                          key={entry.id}
+                          href={entry.href || '#'}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={`inline-flex items-center gap-1 ${
+                            entry.href ? 'text-blue-700 hover:underline' : 'text-gray-400 pointer-events-none'
+                          }`}
+                        >
+                          <ExternalLink size={14} />
+                          {entry.label}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+
+                  {escrowConfig.updatedAt && (
+                    <p className="text-[11px] text-gray-500">
+                      Last updated: {new Date(escrowConfig.updatedAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+
+                <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+                  <button
+                    type="submit"
+                    disabled={isEscrowConfigSaving}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-transparent bg-blue-800 px-4 py-2 text-sm font-medium text-white hover:bg-blue-900 sm:ml-3 sm:w-auto disabled:bg-blue-500"
+                  >
+                    {isEscrowConfigSaving && <Loader2 size={14} className="animate-spin" />}
+                    <Save size={14} />
+                    Save settings
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsLineEscrowModalOpen(false)}
                     className="mt-3 inline-flex w-full justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:mt-0 sm:w-auto"
                   >
                     Close

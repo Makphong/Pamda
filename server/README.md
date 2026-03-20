@@ -43,6 +43,27 @@ LINE_SCAM_CHANNEL_ACCESS_TOKEN=your_line_scam_channel_access_token
 LINE_SCAM_LIFF_SCAMMER_CHECK_URL=
 LINE_SCAM_LIFF_FAKE_NEWS_URL=
 LINE_SCAM_LIFF_RISK_ASSESS_URL=
+FIRESTORE_LINE_ESCROW_BOT_COLLECTION=line_escrow_bot
+FIRESTORE_LINE_ESCROW_WEBHOOK_LOG_COLLECTION=line_escrow_webhook_logs
+FIRESTORE_LINE_ESCROW_DEAL_COLLECTION=line_escrow_deals
+LINE_ESCROW_CHANNEL_SECRET=your_line_escrow_channel_secret
+LINE_ESCROW_CHANNEL_ACCESS_TOKEN=your_line_escrow_channel_access_token
+# Optional: set true to reuse Scam channel credentials for Escrow webhook/reply
+LINE_ESCROW_USE_SCAM_CHANNEL=true
+LINE_ESCROW_LIFF_DEAL_URL=
+LINE_ESCROW_LIFF_SELLER_URL=
+LINE_ESCROW_LIFF_BUYER_URL=
+LINE_ESCROW_PAYMENT_PROVIDER=opn
+OPN_SECRET_KEY=your_opn_secret_key
+OPN_PUBLIC_KEY=your_opn_public_key
+OPN_API_BASE_URL=https://api.omise.co
+TRACKING_API_KEY=your_tracking_api_key
+TRACKING_API_BASE_URL=https://api.trackingmore.com/v4
+LINE_ESCROW_TRACKING_PROVIDER=trackingmore
+LINE_ESCROW_AUTO_RELEASE_HOURS=72
+LINE_ESCROW_SLIP_IMAGE_MAX_BYTES=2500000
+LINE_ESCROW_CRON_SECRET=your_strong_random_secret
+LINE_ESCROW_PAYMENT_WEBHOOK_SECRET=your_strong_random_secret
 GEMINI_API_KEY=your_google_ai_studio_api_key
 GEMINI_MODEL=gemini-2.5-flash
 ```
@@ -193,16 +214,30 @@ New routes:
 1. Admin config (root admin only):
    - `GET /admin/line-scam-bot/config`
    - `PUT /admin/line-scam-bot/config`
+   - `GET /admin/line-escrow-bot/config`
+   - `PUT /admin/line-escrow-bot/config`
 2. Webhook (separate from project bot):
    - `POST /line/scam/webhook`
+   - `POST /line/escrow/webhook`
 3. LIFF pages:
    - `/line/scam/liff/scammer-check`
    - `/line/scam/liff/fake-news`
    - `/line/scam/liff/risk-assess`
+   - `/line/escrow/liff/deal`
+   - `/line/escrow/liff/seller`
+   - `/line/escrow/liff/buyer`
 4. LIFF APIs:
    - `POST /line/scam/liff/api/scammer-check`
    - `POST /line/scam/liff/api/fake-news`
    - `POST /line/scam/liff/api/risk-assess`
+   - `POST /line/escrow/liff/api/deals/create`
+   - `POST /line/escrow/liff/api/deals/:dealId/check-payment`
+   - `POST /line/escrow/liff/api/deals/submit-shipment`
+   - `GET /line/escrow/liff/api/deals/:dealId`
+   - `POST /line/escrow/liff/api/deals/:dealId/refresh-tracking`
+   - `POST /line/escrow/liff/api/deals/:dealId/confirm-delivery`
+   - `POST /line/escrow/payment/webhook`
+   - `POST /line/escrow/cron/auto-release`
 
 Rich menu command text mapping:
 1. โดนโกงแล้วทำยังไงดี -> `คำแนะนำเมื่อถูกโกง`

@@ -6090,6 +6090,8 @@ function ProfileSettingsView({
   onCreateScamReport,
   onLoadLineScamBotConfig,
   onSaveLineScamBotConfig,
+  onLoadLineEscrowBotConfig,
+  onSaveLineEscrowBotConfig,
 }) {
   const [username, setUsername] = useState(currentUser.username || '');
   const [email, setEmail] = useState(currentUser.email || '');
@@ -7669,6 +7671,8 @@ function ProfileSettingsView({
                 onCreateReport={onCreateScamReport}
                 onLoadLineScamBotConfig={onLoadLineScamBotConfig}
                 onSaveLineScamBotConfig={onSaveLineScamBotConfig}
+                onLoadLineEscrowBotConfig={onLoadLineEscrowBotConfig}
+                onSaveLineEscrowBotConfig={onSaveLineEscrowBotConfig}
               />
             )}
           </div>
@@ -12983,6 +12987,46 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return { ok: false, message: error.message || 'Failed to save LINE scam bot config.' };
     }
   }, [isRootAdmin]);
+  const handleLoadLineEscrowBotConfig = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'LINE Escrow Bot Admin requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    try {
+      const result = await requestCloudDataApi('/admin/line-escrow-bot/config');
+      return {
+        ok: true,
+        config: result?.config && typeof result.config === 'object' ? result.config : null,
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load LINE escrow bot config.' };
+    }
+  }, [isRootAdmin]);
+  const handleSaveLineEscrowBotConfig = useCallback(async (configInput) => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'LINE Escrow Bot Admin requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    const config =
+      configInput && typeof configInput === 'object' && !Array.isArray(configInput) ? configInput : {};
+    try {
+      const result = await requestCloudDataApi('/admin/line-escrow-bot/config', {
+        method: 'PUT',
+        body: config,
+      });
+      return {
+        ok: true,
+        message: result?.message || 'LINE escrow bot settings saved.',
+        config: result?.config && typeof result.config === 'object' ? result.config : null,
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to save LINE escrow bot config.' };
+    }
+  }, [isRootAdmin]);
   const projectUpdatesOverlay = (
     <>
       {projectUpdateToastNotice && !isProjectUpdatesPopupOpen && (
@@ -13048,6 +13092,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         onCreateScamReport={handleCreateScamReport}
         onLoadLineScamBotConfig={handleLoadLineScamBotConfig}
         onSaveLineScamBotConfig={handleSaveLineScamBotConfig}
+        onLoadLineEscrowBotConfig={handleLoadLineEscrowBotConfig}
+        onSaveLineEscrowBotConfig={handleSaveLineEscrowBotConfig}
       />
     );
   }

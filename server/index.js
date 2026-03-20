@@ -13,6 +13,11 @@ import {
   renderLineScamRiskAssessPage,
   renderLineScamScammerCheckPage,
 } from './lineScamLiffPages.js';
+import {
+  renderLineEscrowBuyerPage,
+  renderLineEscrowDealPage,
+  renderLineEscrowSellerPage,
+} from './lineEscrowLiffPages.js';
 
 dotenv.config();
 
@@ -131,6 +136,15 @@ const FIRESTORE_LINE_SCAM_BOT_COLLECTION = String(
 const FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION = String(
   process.env.FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION || 'line_scam_webhook_logs'
 ).trim();
+const FIRESTORE_LINE_ESCROW_BOT_COLLECTION = String(
+  process.env.FIRESTORE_LINE_ESCROW_BOT_COLLECTION || 'line_escrow_bot'
+).trim();
+const FIRESTORE_LINE_ESCROW_WEBHOOK_LOG_COLLECTION = String(
+  process.env.FIRESTORE_LINE_ESCROW_WEBHOOK_LOG_COLLECTION || 'line_escrow_webhook_logs'
+).trim();
+const FIRESTORE_LINE_ESCROW_DEAL_COLLECTION = String(
+  process.env.FIRESTORE_LINE_ESCROW_DEAL_COLLECTION || 'line_escrow_deals'
+).trim();
 const FIRESTORE_ADMIN_COMPLAINT_COLLECTION = String(
   process.env.FIRESTORE_ADMIN_COMPLAINT_COLLECTION || 'support_complaints'
 ).trim();
@@ -206,6 +220,56 @@ const LINE_SCAM_LIFF_FAKE_NEWS_URL = String(process.env.LINE_SCAM_LIFF_FAKE_NEWS
 const LINE_SCAM_LIFF_RISK_ASSESS_URL = String(
   process.env.LINE_SCAM_LIFF_RISK_ASSESS_URL || ''
 ).trim();
+const LINE_ESCROW_CHANNEL_SECRET = String(process.env.LINE_ESCROW_CHANNEL_SECRET || '').trim();
+const LINE_ESCROW_CHANNEL_ACCESS_TOKEN = String(process.env.LINE_ESCROW_CHANNEL_ACCESS_TOKEN || '').trim();
+const LINE_ESCROW_USE_SCAM_CHANNEL = /^(?:1|true|yes|on)$/i.test(
+  String(process.env.LINE_ESCROW_USE_SCAM_CHANNEL || '').trim()
+);
+const LINE_ESCROW_EFFECTIVE_CHANNEL_SECRET = String(
+  (LINE_ESCROW_USE_SCAM_CHANNEL ? LINE_SCAM_CHANNEL_SECRET : LINE_ESCROW_CHANNEL_SECRET) || ''
+).trim();
+const LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN = String(
+  (LINE_ESCROW_USE_SCAM_CHANNEL ? LINE_SCAM_CHANNEL_ACCESS_TOKEN : LINE_ESCROW_CHANNEL_ACCESS_TOKEN) || ''
+).trim();
+const LINE_ESCROW_SHARED_WITH_SCAM_CHANNEL =
+  LINE_ESCROW_USE_SCAM_CHANNEL ||
+  Boolean(
+    LINE_SCAM_CHANNEL_SECRET &&
+      LINE_SCAM_CHANNEL_ACCESS_TOKEN &&
+      LINE_ESCROW_EFFECTIVE_CHANNEL_SECRET &&
+      LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN &&
+      LINE_SCAM_CHANNEL_SECRET === LINE_ESCROW_EFFECTIVE_CHANNEL_SECRET &&
+      LINE_SCAM_CHANNEL_ACCESS_TOKEN === LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN
+  );
+const LINE_ESCROW_LIFF_DEAL_URL = String(process.env.LINE_ESCROW_LIFF_DEAL_URL || '').trim();
+const LINE_ESCROW_LIFF_SELLER_URL = String(process.env.LINE_ESCROW_LIFF_SELLER_URL || '').trim();
+const LINE_ESCROW_LIFF_BUYER_URL = String(process.env.LINE_ESCROW_LIFF_BUYER_URL || '').trim();
+const LINE_ESCROW_PAYMENT_PROVIDER = String(process.env.LINE_ESCROW_PAYMENT_PROVIDER || 'opn')
+  .trim()
+  .toLowerCase();
+const LINE_ESCROW_TRACKING_PROVIDER = String(process.env.LINE_ESCROW_TRACKING_PROVIDER || 'trackingmore')
+  .trim()
+  .toLowerCase();
+const LINE_ESCROW_AUTO_RELEASE_HOURS = Math.max(
+  1,
+  Math.min(168, Number(process.env.LINE_ESCROW_AUTO_RELEASE_HOURS || 72))
+);
+const LINE_ESCROW_SLIP_IMAGE_MAX_BYTES = Math.max(
+  120_000,
+  Number(process.env.LINE_ESCROW_SLIP_IMAGE_MAX_BYTES || 2_500_000)
+);
+const LINE_ESCROW_CRON_SECRET = String(process.env.LINE_ESCROW_CRON_SECRET || '').trim();
+const LINE_ESCROW_PAYMENT_WEBHOOK_SECRET = String(
+  process.env.LINE_ESCROW_PAYMENT_WEBHOOK_SECRET || ''
+).trim();
+const OPN_SECRET_KEY = String(process.env.OPN_SECRET_KEY || '').trim();
+const OPN_PUBLIC_KEY = String(process.env.OPN_PUBLIC_KEY || '').trim();
+const OPN_API_BASE_URL =
+  String(process.env.OPN_API_BASE_URL || 'https://api.omise.co').trim() || 'https://api.omise.co';
+const TRACKING_API_KEY = String(process.env.TRACKING_API_KEY || process.env.TRACKINGMORE_API_KEY || '').trim();
+const TRACKING_API_BASE_URL =
+  String(process.env.TRACKING_API_BASE_URL || 'https://api.trackingmore.com/v4').trim() ||
+  'https://api.trackingmore.com/v4';
 const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
 const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim() || 'gemini-2.5-flash';
 const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || '').trim();
@@ -326,6 +390,10 @@ const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLEC
 const lineScamBotRef = firestore.collection(FIRESTORE_LINE_SCAM_BOT_COLLECTION);
 const lineScamWebhookLogRef = firestore.collection(FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION);
 const lineScamBotConfigDocRef = lineScamBotRef.doc('global');
+const lineEscrowBotRef = firestore.collection(FIRESTORE_LINE_ESCROW_BOT_COLLECTION);
+const lineEscrowWebhookLogRef = firestore.collection(FIRESTORE_LINE_ESCROW_WEBHOOK_LOG_COLLECTION);
+const lineEscrowDealRef = firestore.collection(FIRESTORE_LINE_ESCROW_DEAL_COLLECTION);
+const lineEscrowBotConfigDocRef = lineEscrowBotRef.doc('global');
 const adminComplaintRef = firestore.collection(FIRESTORE_ADMIN_COMPLAINT_COLLECTION);
 const supportTicketRef = firestore.collection(FIRESTORE_SUPPORT_TICKET_COLLECTION);
 const scamReportRef = firestore.collection(FIRESTORE_SCAM_REPORT_COLLECTION);
@@ -2002,6 +2070,12 @@ const isLineGroupIdCommand = (value) => {
   ]).has(normalized);
 };
 
+const isLineEscrowStartCommand = (value) => {
+  const normalized = normalizeLineCommandText(value);
+  if (!normalized) return false;
+  return LINE_ESCROW_COMMAND_KEYWORDS.has(normalized);
+};
+
 const LINE_SCAM_RICH_MENU_COMMANDS = Object.freeze({
   HELP_WHEN_SCAMMED: 'คำแนะนำเมื่อถูกโกง',
   CHECK_SCAMMER: 'ตรวจสอบมิจฉาชีพ',
@@ -2035,6 +2109,20 @@ const resolveRequestOrigin = (req) => {
   const host = String(req?.get?.('host') || '').trim();
   if (!host) return '';
   return `${protocol}://${host}`;
+};
+
+const addQueryParamToHttpUrl = (urlInput, key, value) => {
+  const url = normalizeOptionalHttpUrl(urlInput || '', 1200);
+  if (!url) return '';
+  const queryValue = String(value || '').trim();
+  if (!queryValue) return url;
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set(String(key || 'value').trim() || 'value', queryValue);
+    return parsed.toString();
+  } catch {
+    return url;
+  }
 };
 
 const normalizeOptionalHttpUrl = (valueInput, maxLength = 1200) => {
@@ -2113,6 +2201,870 @@ const loadLineScamBotConfigRecord = async () => {
   const doc = await lineScamBotConfigDocRef.get();
   if (!doc.exists) return normalizeLineScamBotConfigRecord({});
   return normalizeLineScamBotConfigRecord(doc.data() || {});
+};
+
+const LINE_ESCROW_COMMAND_KEYWORDS = new Set(['เริ่ม', 'เริ่มกลาง', 'กลาง', 'start', 'escrow', 'escrowbot']);
+const LINE_ESCROW_LIFF_DEFAULT_PATHS = Object.freeze({
+  deal: '/line/escrow/liff/deal',
+  seller: '/line/escrow/liff/seller',
+  buyer: '/line/escrow/liff/buyer',
+});
+
+const normalizeLineEscrowBotConfigRecord = (recordInput) => {
+  const record = recordInput && typeof recordInput === 'object' && !Array.isArray(recordInput) ? recordInput : {};
+  return {
+    liffDealUrl: String(record.liffDealUrl || '').trim(),
+    liffSellerUrl: String(record.liffSellerUrl || '').trim(),
+    liffBuyerUrl: String(record.liffBuyerUrl || '').trim(),
+    richMenuId: String(record.richMenuId || '').trim(),
+    trackingCourierDefault: String(record.trackingCourierDefault || '').trim().slice(0, 120),
+    updatedAt: String(record.updatedAt || '').trim() || null,
+    updatedById: sanitizeUserId(record.updatedById),
+    updatedByEmail: sanitizeEmail(record.updatedByEmail),
+  };
+};
+
+const resolveLineEscrowLiffUrls = (req, configInput = {}) => {
+  const config = normalizeLineEscrowBotConfigRecord(configInput);
+  const requestOrigin = resolveRequestOrigin(req);
+  const envDeal = normalizeOptionalHttpUrl(LINE_ESCROW_LIFF_DEAL_URL);
+  const envSeller = normalizeOptionalHttpUrl(LINE_ESCROW_LIFF_SELLER_URL);
+  const envBuyer = normalizeOptionalHttpUrl(LINE_ESCROW_LIFF_BUYER_URL);
+  const configuredDeal = normalizeOptionalHttpUrl(config.liffDealUrl);
+  const configuredSeller = normalizeOptionalHttpUrl(config.liffSellerUrl);
+  const configuredBuyer = normalizeOptionalHttpUrl(config.liffBuyerUrl);
+  const buildDefaultUrl = (path) => {
+    if (!requestOrigin) return '';
+    return `${requestOrigin}${path}`;
+  };
+
+  return {
+    deal: configuredDeal || envDeal || buildDefaultUrl(LINE_ESCROW_LIFF_DEFAULT_PATHS.deal),
+    seller: configuredSeller || envSeller || buildDefaultUrl(LINE_ESCROW_LIFF_DEFAULT_PATHS.seller),
+    buyer: configuredBuyer || envBuyer || buildDefaultUrl(LINE_ESCROW_LIFF_DEFAULT_PATHS.buyer),
+  };
+};
+
+const toLineEscrowBotPublicConfig = (req, configInput = {}) => {
+  const normalized = normalizeLineEscrowBotConfigRecord(configInput);
+  const liffUrls = resolveLineEscrowLiffUrls(req, normalized);
+  const requestOrigin = resolveRequestOrigin(req);
+  const webhookPath = LINE_ESCROW_SHARED_WITH_SCAM_CHANNEL ? '/line/scam/webhook' : '/line/escrow/webhook';
+  return {
+    webhookPath,
+    webhookUrl: `${requestOrigin}${webhookPath}`,
+    paymentWebhookPath: '/line/escrow/payment/webhook',
+    paymentWebhookUrl: `${requestOrigin}/line/escrow/payment/webhook`,
+    liffUrls,
+    richMenuId: normalized.richMenuId,
+    trackingCourierDefault: normalized.trackingCourierDefault,
+    commandStart: 'เริ่ม',
+    channelSecretConfigured: Boolean(LINE_ESCROW_EFFECTIVE_CHANNEL_SECRET),
+    channelAccessTokenConfigured: Boolean(LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN),
+    sharedChannelWithScam: LINE_ESCROW_SHARED_WITH_SCAM_CHANNEL,
+    sharedChannelMode: LINE_ESCROW_USE_SCAM_CHANNEL ? 'forced' : 'auto',
+    paymentProvider: LINE_ESCROW_PAYMENT_PROVIDER,
+    paymentConfigured: Boolean(OPN_SECRET_KEY),
+    paymentPublicKeyConfigured: Boolean(OPN_PUBLIC_KEY),
+    trackingProvider: LINE_ESCROW_TRACKING_PROVIDER,
+    trackingConfigured: Boolean(TRACKING_API_KEY),
+    autoReleaseHours: LINE_ESCROW_AUTO_RELEASE_HOURS,
+    slipUploadMaxBytes: LINE_ESCROW_SLIP_IMAGE_MAX_BYTES,
+    cronSecretConfigured: Boolean(LINE_ESCROW_CRON_SECRET),
+    paymentWebhookSecretConfigured: Boolean(LINE_ESCROW_PAYMENT_WEBHOOK_SECRET),
+    updatedAt: normalized.updatedAt,
+  };
+};
+
+const loadLineEscrowBotConfigRecord = async () => {
+  const doc = await lineEscrowBotConfigDocRef.get();
+  if (!doc.exists) return normalizeLineEscrowBotConfigRecord({});
+  return normalizeLineEscrowBotConfigRecord(doc.data() || {});
+};
+
+const normalizeEscrowMoneySatang = (amountInput) => {
+  const amount = Number(amountInput || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return Math.min(500_000_000, Math.round(amount * 100));
+};
+
+const toEscrowAmountThb = (satangInput) => {
+  const satang = Number(satangInput || 0);
+  if (!Number.isFinite(satang) || satang <= 0) return 0;
+  return Math.round((satang / 100) * 100) / 100;
+};
+
+const normalizeEscrowSlipImage = (imageInput) => {
+  const image = imageInput && typeof imageInput === 'object' && !Array.isArray(imageInput) ? imageInput : {};
+  const id = String(image.id || crypto.randomUUID()).trim();
+  const name = String(image.name || 'shipping-slip').trim().slice(0, 180);
+  const mimeType = String(image.mimeType || image.type || '').trim().toLowerCase();
+  const dataUrl = String(image.dataUrl || image.base64 || '').trim();
+  const size = Number(image.size || 0);
+  if (!id || !name || !mimeType || !dataUrl) return null;
+  if (!mimeType.startsWith('image/')) return null;
+  if (!/^data:image\//i.test(dataUrl)) return null;
+  if (!Number.isFinite(size) || size <= 0 || size > LINE_ESCROW_SLIP_IMAGE_MAX_BYTES) return null;
+  return {
+    id,
+    name,
+    mimeType,
+    size,
+    dataUrl,
+  };
+};
+
+const normalizeEscrowBankBrand = (bankInput) => {
+  const raw = String(bankInput || '').trim().toLowerCase();
+  if (!raw) return '';
+  const key = raw.replace(/\s+/g, '');
+  const mappings = [
+    ['bbl', ['bbl', 'bangkokbank', 'ธนาคารกรุงเทพ', 'กรุงเทพ']],
+    ['kbank', ['kbank', 'kasikornbank', 'กสิกรไทย', 'ธนาคารกสิกรไทย']],
+    ['ktb', ['ktb', 'krungthaibank', 'กรุงไทย', 'ธนาคารกรุงไทย']],
+    ['scb', ['scb', 'siamcommercialbank', 'ไทยพาณิชย์', 'ธนาคารไทยพาณิชย์']],
+    ['bay', ['bay', 'krungsri', 'กรุงศรีอยุธยา', 'ธนาคารกรุงศรีอยุธยา']],
+    ['ttb', ['ttb', 'tmbthanachart', 'ทีทีบี', 'ทหารไทยธนชาต', 'ธนาคารทหารไทยธนชาต']],
+    ['gsb', ['gsb', 'governmentsavingsbank', 'ออมสิน', 'ธนาคารออมสิน']],
+    ['baac', ['baac', 'ธกส', 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร']],
+    ['cimb', ['cimb', 'cimbthai', 'ซีไอเอ็มบี', 'ธนาคารซีไอเอ็มบี']],
+    ['uob', ['uob', 'ยูโอบี', 'ธนาคารยูโอบี']],
+    ['lhb', ['lhb', 'แลนด์แอนด์เฮ้าส์', 'แลนด์แอนด์เฮาส์']],
+  ];
+  for (const [brand, aliases] of mappings) {
+    if (aliases.some((alias) => key.includes(alias))) {
+      return brand;
+    }
+  }
+  return '';
+};
+
+const normalizeEscrowTrackingStatus = (statusInput) =>
+  normalizeOptionalString(statusInput || '', 120)
+    .trim()
+    .toLowerCase();
+
+const isEscrowTrackingDelivered = (statusInput) => {
+  const status = normalizeEscrowTrackingStatus(statusInput);
+  if (!status) return false;
+  return ['delivered', 'signed', 'complete', 'completed', 'successful'].some((keyword) =>
+    status.includes(keyword)
+  );
+};
+
+const toEscrowDealResponse = (docId, dataInput) => {
+  const data = dataInput && typeof dataInput === 'object' && !Array.isArray(dataInput) ? dataInput : {};
+  const deliveredAtRaw = String(data.deliveredAt || '').trim();
+  const deliveredAt = toEpochMs(deliveredAtRaw) > 0 ? deliveredAtRaw : null;
+  const autoReleaseAtRaw = String(data.autoReleaseAt || '').trim();
+  const autoReleaseAt = toEpochMs(autoReleaseAtRaw) > 0 ? autoReleaseAtRaw : null;
+  const createdAtRaw = String(data.createdAt || '').trim();
+  const createdAt = toEpochMs(createdAtRaw) > 0 ? createdAtRaw : null;
+  const updatedAtRaw = String(data.updatedAt || '').trim();
+  const updatedAt = toEpochMs(updatedAtRaw) > 0 ? updatedAtRaw : createdAt;
+  const paymentAmountSatang = Number(data.paymentAmountSatang || 0) || 0;
+  const payoutAmountSatang = Number(data.payoutAmountSatang || 0) || paymentAmountSatang;
+  const trackingMapUrl = normalizeOptionalHttpUrl(data.trackingMapUrl || '', 1200) || '';
+  const trackingPublicUrl = normalizeOptionalHttpUrl(data.trackingPublicUrl || '', 1200) || '';
+  return {
+    id: String(docId || '').trim(),
+    groupId: String(data.groupId || '').trim(),
+    status: String(data.status || 'created').trim().toLowerCase() || 'created',
+    itemName: String(data.itemName || '').trim(),
+    note: String(data.note || '').trim(),
+    buyerName: String(data.buyerName || '').trim(),
+    buyerLineUserId: String(data.buyerLineUserId || '').trim(),
+    sellerName: String(data.sellerName || '').trim(),
+    sellerLineUserId: String(data.sellerLineUserId || '').trim(),
+    paymentProvider: String(data.paymentProvider || LINE_ESCROW_PAYMENT_PROVIDER).trim().toLowerCase(),
+    paymentStatus: String(data.paymentStatus || 'pending').trim().toLowerCase(),
+    paymentChargeId: String(data.paymentChargeId || '').trim(),
+    paymentQrImageUrl: normalizeOptionalHttpUrl(data.paymentQrImageUrl || '', 1200) || '',
+    paymentAmountThb: toEscrowAmountThb(paymentAmountSatang),
+    paymentAmountSatang,
+    paidAt: toEpochMs(data.paidAt) > 0 ? String(data.paidAt).trim() : null,
+    shipmentStatus: String(data.shipmentStatus || 'pending').trim().toLowerCase(),
+    courierCode: String(data.courierCode || '').trim(),
+    trackingNumber: String(data.trackingNumber || '').trim(),
+    shippingSlipImage: normalizeEscrowSlipImage(data.shippingSlipImage),
+    shippingSubmittedAt: toEpochMs(data.shippingSubmittedAt) > 0 ? String(data.shippingSubmittedAt).trim() : null,
+    trackingStatus: String(data.trackingStatus || '').trim(),
+    trackingStatusText: String(data.trackingStatusText || '').trim(),
+    trackingLastEventTime: toEpochMs(data.trackingLastEventTime) > 0 ? String(data.trackingLastEventTime).trim() : null,
+    trackingLastEventLocation: String(data.trackingLastEventLocation || '').trim(),
+    trackingLastEventDescription: String(data.trackingLastEventDescription || '').trim(),
+    trackingMapUrl,
+    trackingPublicUrl,
+    deliveredAt,
+    autoReleaseAt,
+    confirmedAt: toEpochMs(data.confirmedAt) > 0 ? String(data.confirmedAt).trim() : null,
+    payoutStatus: String(data.payoutStatus || 'pending').trim().toLowerCase(),
+    payoutTransferId: String(data.payoutTransferId || '').trim(),
+    payoutRecipientId: String(data.payoutRecipientId || '').trim(),
+    payoutAmountThb: toEscrowAmountThb(payoutAmountSatang),
+    payoutAmountSatang,
+    payoutReleasedAt: toEpochMs(data.payoutReleasedAt) > 0 ? String(data.payoutReleasedAt).trim() : null,
+    payoutFailedReason: String(data.payoutFailedReason || '').trim(),
+    sellerBankName: String(data.sellerBankName || '').trim(),
+    sellerBankBrand: String(data.sellerBankBrand || '').trim(),
+    sellerBankAccount: String(data.sellerBankAccount || '').trim(),
+    sellerBankAccountName: String(data.sellerBankAccountName || '').trim(),
+    createdAt,
+    updatedAt,
+  };
+};
+
+const callOpnApi = async ({
+  path,
+  method = 'GET',
+  formData = null,
+}) => {
+  if (!OPN_SECRET_KEY) {
+    const error = new Error('OPN_SECRET_KEY is not configured on server.');
+    error.status = 503;
+    throw error;
+  }
+  const requestUrl = `${OPN_API_BASE_URL.replace(/\/+$/, '')}${String(path || '')}`;
+  const headers = {
+    Authorization: `Basic ${Buffer.from(`${OPN_SECRET_KEY}:`).toString('base64')}`,
+  };
+  let body = undefined;
+  if (formData && typeof formData === 'object') {
+    const params = new URLSearchParams();
+    Object.entries(formData).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      params.set(String(key), String(value));
+    });
+    body = params.toString();
+    headers['Content-Type'] = 'application/x-www-form-urlencoded';
+  }
+  const response = await fetch(requestUrl, {
+    method,
+    headers,
+    body,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(
+      normalizeOptionalString(payload?.message || payload?.failure_message || `OPN API failed (${response.status})`, 500)
+    );
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+};
+
+const createEscrowPromptpayCharge = async ({
+  dealId,
+  amountSatang,
+  itemName,
+  groupId,
+}) => {
+  if (LINE_ESCROW_PAYMENT_PROVIDER !== 'opn') {
+    const error = new Error('Unsupported LINE_ESCROW_PAYMENT_PROVIDER. Supported: opn');
+    error.status = 400;
+    throw error;
+  }
+  const payload = await callOpnApi({
+    path: '/charges',
+    method: 'POST',
+    formData: {
+      amount: amountSatang,
+      currency: 'thb',
+      description: normalizeOptionalString(itemName || `Escrow ${dealId}`, 180),
+      'source[type]': 'promptpay',
+      'metadata[deal_id]': dealId,
+      'metadata[group_id]': groupId,
+    },
+  });
+  const source = payload?.source && typeof payload.source === 'object' ? payload.source : {};
+  const scannableCode = source?.scannable_code && typeof source.scannable_code === 'object' ? source.scannable_code : {};
+  const image = scannableCode?.image && typeof scannableCode.image === 'object' ? scannableCode.image : {};
+  return {
+    chargeId: String(payload?.id || '').trim(),
+    chargeStatus: String(payload?.status || '').trim().toLowerCase(),
+    qrImageUrl:
+      normalizeOptionalHttpUrl(image?.download_uri || image?.url || payload?.qr_code_url || '', 1200) || '',
+    expiresAt: String(payload?.expires_at || '').trim() || null,
+  };
+};
+
+const readEscrowChargeStatus = async (chargeIdInput) => {
+  const chargeId = String(chargeIdInput || '').trim();
+  if (!chargeId) {
+    const error = new Error('chargeId is required.');
+    error.status = 400;
+    throw error;
+  }
+  const payload = await callOpnApi({
+    path: `/charges/${encodeURIComponent(chargeId)}`,
+    method: 'GET',
+  });
+  const source = payload?.source && typeof payload.source === 'object' ? payload.source : {};
+  const scannableCode = source?.scannable_code && typeof source.scannable_code === 'object' ? source.scannable_code : {};
+  const image = scannableCode?.image && typeof scannableCode.image === 'object' ? scannableCode.image : {};
+  const status = String(payload?.status || '').trim().toLowerCase();
+  return {
+    chargeId,
+    status,
+    paid: status === 'successful',
+    paidAt: toEpochMs(payload?.paid_at) > 0 ? String(payload.paid_at).trim() : null,
+    qrImageUrl:
+      normalizeOptionalHttpUrl(image?.download_uri || image?.url || payload?.qr_code_url || '', 1200) || '',
+    failureMessage: String(payload?.failure_message || '').trim(),
+  };
+};
+
+const createEscrowRecipient = async ({
+  sellerName,
+  sellerBankBrand,
+  sellerBankAccount,
+  sellerBankAccountName,
+}) => {
+  const payload = await callOpnApi({
+    path: '/recipients',
+    method: 'POST',
+    formData: {
+      name: normalizeOptionalString(sellerName || sellerBankAccountName || 'Escrow Seller', 120),
+      type: 'individual',
+      'bank_account[brand]': sellerBankBrand,
+      'bank_account[number]': sellerBankAccount,
+      'bank_account[name]': normalizeOptionalString(sellerBankAccountName || sellerName || 'Seller', 120),
+      description: 'LINE escrow payout recipient',
+    },
+  });
+  return {
+    recipientId: String(payload?.id || '').trim(),
+    active: payload?.active === true,
+  };
+};
+
+const createEscrowTransfer = async ({
+  amountSatang,
+  recipientId,
+}) => {
+  const payload = await callOpnApi({
+    path: '/transfers',
+    method: 'POST',
+    formData: {
+      amount: amountSatang,
+      currency: 'thb',
+      recipient: recipientId,
+    },
+  });
+  return {
+    transferId: String(payload?.id || '').trim(),
+    sent: payload?.sent === true,
+  };
+};
+
+const findLatestTrackingEvent = (eventsInput) => {
+  const events = Array.isArray(eventsInput) ? eventsInput : [];
+  const normalized = events
+    .map((eventInput) => {
+      const event = eventInput && typeof eventInput === 'object' && !Array.isArray(eventInput) ? eventInput : {};
+      const timeText = String(
+        event.date ||
+          event.time ||
+          event.occurred_at ||
+          event.latest_event_time ||
+          event.EventDate ||
+          event.created_at ||
+          ''
+      ).trim();
+      const location = String(event.location || event.city || event.Location || event.checkpoint_location || '').trim();
+      const description = String(
+        event.description || event.status || event.EventDescription || event.checkpoint_status || ''
+      ).trim();
+      const timestamp = toEpochMs(timeText);
+      return {
+        timeText: timestamp > 0 ? new Date(timestamp).toISOString() : '',
+        location,
+        description,
+        timestamp,
+      };
+    })
+    .filter((event) => event.timestamp > 0 || event.location || event.description)
+    .sort((left, right) => right.timestamp - left.timestamp);
+  return normalized[0] || null;
+};
+
+const queryEscrowTrackingStatus = async ({
+  trackingNumber,
+  courierCode = '',
+}) => {
+  const normalizedTrackingNumber = String(trackingNumber || '').trim();
+  const normalizedCourierCode = String(courierCode || '').trim();
+  if (!normalizedTrackingNumber) {
+    const error = new Error('trackingNumber is required.');
+    error.status = 400;
+    throw error;
+  }
+  if (!TRACKING_API_KEY) {
+    const error = new Error('TRACKING_API_KEY is not configured on server.');
+    error.status = 503;
+    throw error;
+  }
+  const response = await fetch(`${TRACKING_API_BASE_URL.replace(/\/+$/, '')}/trackings/realtime`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Tracking-Api-Key': TRACKING_API_KEY,
+      'tracking-api-key': TRACKING_API_KEY,
+      'x-api-key': TRACKING_API_KEY,
+    },
+    body: JSON.stringify({
+      tracking_number: normalizedTrackingNumber,
+      courier_code: normalizedCourierCode || undefined,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(
+      normalizeOptionalString(
+        payload?.message || payload?.meta?.message || `Tracking API failed (${response.status})`,
+        400
+      )
+    );
+    error.status = response.status;
+    throw error;
+  }
+  const container = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
+  const item =
+    (Array.isArray(container?.items) ? container.items[0] : null) ||
+    (Array.isArray(container?.trackings) ? container.trackings[0] : null) ||
+    (Array.isArray(container) ? container[0] : null) ||
+    container;
+  const trackingItem = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
+  const statusText =
+    normalizeOptionalString(
+      trackingItem.delivery_status ||
+        trackingItem.status ||
+        trackingItem.tag ||
+        trackingItem.state ||
+        trackingItem.latest_status ||
+        '',
+      140
+    ) || 'unknown';
+  const eventList =
+    trackingItem.origin_info?.trackinfo ||
+    trackingItem.events ||
+    trackingItem.checkpoints ||
+    trackingItem.track_info ||
+    [];
+  const latestEvent = findLatestTrackingEvent(eventList);
+  const location = String(
+    latestEvent?.location ||
+      trackingItem.latest_event_location ||
+      trackingItem.latest_location ||
+      trackingItem.location ||
+      ''
+  ).trim();
+  const description = String(
+    latestEvent?.description ||
+      trackingItem.latest_event_description ||
+      trackingItem.latest_status_description ||
+      ''
+  ).trim();
+  const mapUrl = location
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`
+    : '';
+  const delivered =
+    trackingItem.delivered === true ||
+    isEscrowTrackingDelivered(statusText) ||
+    isEscrowTrackingDelivered(description);
+
+  return {
+    provider: LINE_ESCROW_TRACKING_PROVIDER,
+    trackingNumber: normalizedTrackingNumber,
+    courierCode: normalizedCourierCode,
+    statusText,
+    delivered,
+    lastEventTime: latestEvent?.timeText || '',
+    lastEventLocation: location,
+    lastEventDescription: description,
+    mapUrl,
+    publicUrl: `https://www.17track.net/en/track?nums=${encodeURIComponent(normalizedTrackingNumber)}`,
+    raw: payload,
+  };
+};
+
+const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {} } = {}) => {
+  const liffUrls =
+    liffUrlsInput && typeof liffUrlsInput === 'object' && !Array.isArray(liffUrlsInput) ? liffUrlsInput : {};
+  const dealUrl = normalizeOptionalHttpUrl(liffUrls.deal || '', 1000);
+  const sellerUrl = normalizeOptionalHttpUrl(liffUrls.seller || '', 1000);
+  const buyerUrl = normalizeOptionalHttpUrl(liffUrls.buyer || '', 1000);
+  const footerButtons = [];
+  if (dealUrl) {
+    footerButtons.push({
+      type: 'button',
+      style: 'primary',
+      color: '#1d4ed8',
+      action: { type: 'uri', label: '1) ผู้ซื้อสร้างดีลและชำระ', uri: dealUrl },
+    });
+  }
+  if (sellerUrl) {
+    footerButtons.push({
+      type: 'button',
+      style: 'primary',
+      color: '#0f766e',
+      action: { type: 'uri', label: '2) ผู้ขายส่งเลขพัสดุ', uri: sellerUrl },
+    });
+  }
+  if (buyerUrl) {
+    footerButtons.push({
+      type: 'button',
+      style: 'primary',
+      color: '#7c3aed',
+      action: { type: 'uri', label: '3) ผู้ซื้อเช็กสถานะ/ยืนยันรับของ', uri: buyerUrl },
+    });
+  }
+  if (footerButtons.length === 0) {
+    footerButtons.push({
+      type: 'text',
+      text: 'LIFF URL ยังไม่ถูกตั้งค่า กรุณาให้แอดมินตั้งค่าที่หน้า LINE Escrow Bot Admin',
+      size: 'xs',
+      color: '#991b1b',
+      wrap: true,
+    });
+  }
+  return {
+    type: 'flex',
+    altText: 'เมนูบอทตัวกลางซื้อขายสินค้า',
+    contents: {
+      type: 'bubble',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '10px',
+        contents: [
+          {
+            type: 'text',
+            text: 'LINE บอทตัวกลางซื้อขาย',
+            weight: 'bold',
+            size: 'lg',
+            color: '#111827',
+            wrap: true,
+          },
+          {
+            type: 'text',
+            text:
+              'Flow: ผู้ซื้อชำระเงินเข้าบอท -> ผู้ขายส่งของและเลขพัสดุ -> ผู้ซื้อยืนยันรับของ (หรือครบเวลาอัตโนมัติ) -> บอทปล่อยเงินให้ผู้ขาย',
+            size: 'sm',
+            color: '#334155',
+            wrap: true,
+          },
+          {
+            type: 'text',
+            text: `ยืนยันอัตโนมัติหลังส่งถึง ${LINE_ESCROW_AUTO_RELEASE_HOURS} ชั่วโมง หากผู้ซื้อไม่กดยืนยัน`,
+            size: 'xs',
+            color: '#6b7280',
+            wrap: true,
+          },
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '8px',
+        contents: footerButtons,
+      },
+    },
+  };
+};
+
+const buildLineEscrowTrackingArrivedFlexMessage = (dealInput) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  const amountThb = toEscrowAmountThb(deal.paymentAmountSatang || 0);
+  const buyerUrl = normalizeOptionalHttpUrl(deal.buyerLiffUrl || '', 1200);
+  return {
+    type: 'flex',
+    altText: `พัสดุดีล ${String(deal.id || '').trim()} ถึงปลายทางแล้ว`,
+    contents: {
+      type: 'bubble',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '10px',
+        contents: [
+          {
+            type: 'text',
+            text: 'พัสดุถึงปลายทางแล้ว',
+            weight: 'bold',
+            size: 'lg',
+            color: '#166534',
+          },
+          {
+            type: 'text',
+            text: `ดีล: ${String(deal.id || '-').trim()}`,
+            size: 'sm',
+            color: '#334155',
+            wrap: true,
+          },
+          {
+            type: 'text',
+            text: `สินค้า: ${normalizeOptionalString(deal.itemName || '-', 80)}`,
+            size: 'sm',
+            color: '#334155',
+            wrap: true,
+          },
+          {
+            type: 'text',
+            text: `ยอดคุ้มครอง: ${Number(amountThb || 0).toLocaleString()} THB`,
+            size: 'sm',
+            color: '#334155',
+            wrap: true,
+          },
+          {
+            type: 'text',
+            text: `กดยืนยันรับของภายใน ${LINE_ESCROW_AUTO_RELEASE_HOURS} ชั่วโมง มิฉะนั้นระบบจะยืนยันอัตโนมัติ`,
+            size: 'xs',
+            color: '#6b7280',
+            wrap: true,
+          },
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '8px',
+        contents: buyerUrl
+          ? [
+              {
+                type: 'button',
+                style: 'primary',
+                color: '#7c3aed',
+                action: {
+                  type: 'uri',
+                  label: 'เปิดหน้ายืนยันรับของ',
+                  uri: buyerUrl,
+                },
+              },
+            ]
+          : [
+              {
+                type: 'text',
+                text: 'ไม่พบ LIFF URL สำหรับผู้ซื้อ',
+                size: 'xs',
+                color: '#991b1b',
+                wrap: true,
+              },
+            ],
+      },
+    },
+  };
+};
+
+const loadEscrowDealWithRef = async (dealIdInput) => {
+  const dealId = String(dealIdInput || '').trim();
+  if (!dealId) return null;
+  const ref = lineEscrowDealRef.doc(dealId);
+  const doc = await ref.get();
+  if (!doc.exists) return null;
+  return {
+    ref,
+    deal: toEscrowDealResponse(doc.id, doc.data() || {}),
+  };
+};
+
+const buildEscrowDealQueryWithLiffUrls = (req, dealInput, configInput = {}) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  const liffUrls = resolveLineEscrowLiffUrls(req, configInput);
+  const id = String(deal.id || '').trim();
+  const appendDealId = (urlInput) => {
+    const url = normalizeOptionalHttpUrl(urlInput || '', 1200);
+    if (!url || !id) return url || '';
+    try {
+      const parsed = new URL(url);
+      parsed.searchParams.set('dealId', id);
+      return parsed.toString();
+    } catch {
+      return url;
+    }
+  };
+  return {
+    ...deal,
+    sellerLiffUrl: appendDealId(liffUrls.seller),
+    buyerLiffUrl: appendDealId(liffUrls.buyer),
+    dealLiffUrl: appendDealId(liffUrls.deal),
+  };
+};
+
+const refreshEscrowDealPaymentStatus = async (dealInput) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  const chargeId = String(deal.paymentChargeId || '').trim();
+  if (!chargeId || LINE_ESCROW_PAYMENT_PROVIDER !== 'opn' || !OPN_SECRET_KEY) {
+    return deal;
+  }
+  const charge = await readEscrowChargeStatus(chargeId);
+  const nowIso = new Date().toISOString();
+  const paymentStatus = charge.paid ? 'paid' : charge.status || 'pending';
+  const patch = {
+    paymentStatus,
+    paymentUpdatedAt: nowIso,
+    paymentQrImageUrl: charge.qrImageUrl || String(deal.paymentQrImageUrl || '').trim(),
+    paidAt: charge.paidAt || deal.paidAt || null,
+    updatedAt: nowIso,
+  };
+  await lineEscrowDealRef.doc(String(deal.id || '').trim()).set(patch, { merge: true });
+  return {
+    ...deal,
+    ...patch,
+  };
+};
+
+const releaseEscrowDealPayout = async ({
+  dealInput,
+  reason = 'buyer_confirmed',
+}) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  const dealId = String(deal.id || '').trim();
+  if (!dealId) {
+    const error = new Error('dealId is required.');
+    error.status = 400;
+    throw error;
+  }
+  if (String(deal.paymentStatus || '').trim().toLowerCase() !== 'paid') {
+    const error = new Error('Payment is not completed yet.');
+    error.status = 400;
+    throw error;
+  }
+  if (String(deal.payoutStatus || '').trim().toLowerCase() === 'released') {
+    return {
+      ok: true,
+      deal: deal,
+      transferId: String(deal.payoutTransferId || '').trim(),
+    };
+  }
+  if (LINE_ESCROW_PAYMENT_PROVIDER !== 'opn') {
+    const error = new Error('Unsupported payment provider for payout release.');
+    error.status = 400;
+    throw error;
+  }
+  const amountSatang = Number(deal.payoutAmountSatang || deal.paymentAmountSatang || 0);
+  if (!Number.isFinite(amountSatang) || amountSatang <= 0) {
+    const error = new Error('Invalid payout amount.');
+    error.status = 400;
+    throw error;
+  }
+  const sellerBankBrand =
+    String(deal.sellerBankBrand || '').trim().toLowerCase() || normalizeEscrowBankBrand(deal.sellerBankName);
+  const sellerBankAccount = String(deal.sellerBankAccount || '').replace(/\s+/g, '').trim();
+  const sellerBankAccountName = String(deal.sellerBankAccountName || deal.sellerName || '').trim();
+  if (!sellerBankBrand || !sellerBankAccount || !sellerBankAccountName) {
+    const error = new Error('Seller payout bank information is incomplete.');
+    error.status = 400;
+    throw error;
+  }
+
+  let recipientId = String(deal.payoutRecipientId || '').trim();
+  if (!recipientId) {
+    const recipient = await createEscrowRecipient({
+      sellerName: deal.sellerName,
+      sellerBankBrand,
+      sellerBankAccount,
+      sellerBankAccountName,
+    });
+    recipientId = recipient.recipientId;
+    if (!recipientId) {
+      const error = new Error('Failed to create payout recipient.');
+      error.status = 502;
+      throw error;
+    }
+  }
+
+  const transfer = await createEscrowTransfer({
+    amountSatang,
+    recipientId,
+  });
+  const nowIso = new Date().toISOString();
+  const patch = {
+    status: 'released',
+    payoutStatus: 'released',
+    payoutTransferId: transfer.transferId,
+    payoutRecipientId: recipientId,
+    payoutReleasedAt: nowIso,
+    payoutFailedReason: '',
+    releasedReason: normalizeOptionalString(reason || '', 80),
+    updatedAt: nowIso,
+  };
+  await lineEscrowDealRef.doc(dealId).set(patch, { merge: true });
+  return {
+    ok: true,
+    deal: {
+      ...deal,
+      ...patch,
+    },
+    transferId: transfer.transferId,
+  };
+};
+
+const refreshEscrowDealTrackingStatus = async ({
+  dealInput,
+  req,
+  configInput = {},
+  notifyDelivered = false,
+}) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  const dealId = String(deal.id || '').trim();
+  if (!dealId) {
+    const error = new Error('dealId is required.');
+    error.status = 400;
+    throw error;
+  }
+  const trackingNumber = String(deal.trackingNumber || '').trim();
+  if (!trackingNumber) {
+    const error = new Error('trackingNumber is missing.');
+    error.status = 400;
+    throw error;
+  }
+  const tracking = await queryEscrowTrackingStatus({
+    trackingNumber,
+    courierCode: String(deal.courierCode || '').trim(),
+  });
+  const nowIso = new Date().toISOString();
+  const deliveredBefore = toEpochMs(deal.deliveredAt) > 0;
+  const deliveredNow = tracking.delivered === true;
+  const nextStatus = deliveredNow ? 'delivered_waiting_confirmation' : 'shipped';
+  const autoReleaseAtIso = deliveredNow
+    ? new Date(Date.now() + LINE_ESCROW_AUTO_RELEASE_HOURS * 60 * 60 * 1000).toISOString()
+    : null;
+  const patch = {
+    shipmentStatus: nextStatus,
+    status: nextStatus,
+    trackingStatus: String(tracking.statusText || '').trim(),
+    trackingStatusText: String(tracking.statusText || '').trim(),
+    trackingLastEventTime: String(tracking.lastEventTime || '').trim(),
+    trackingLastEventLocation: String(tracking.lastEventLocation || '').trim(),
+    trackingLastEventDescription: String(tracking.lastEventDescription || '').trim(),
+    trackingMapUrl: String(tracking.mapUrl || '').trim(),
+    trackingPublicUrl: String(tracking.publicUrl || '').trim(),
+    trackingUpdatedAt: nowIso,
+    deliveredAt: deliveredNow ? nowIso : deal.deliveredAt || null,
+    autoReleaseAt: deliveredNow ? autoReleaseAtIso : deal.autoReleaseAt || null,
+    updatedAt: nowIso,
+  };
+  await lineEscrowDealRef.doc(dealId).set(patch, { merge: true });
+  const updatedDeal = {
+    ...deal,
+    ...patch,
+  };
+
+  if (notifyDelivered && !deliveredBefore && deliveredNow && String(updatedDeal.groupId || '').trim()) {
+    try {
+      const dealForFlex = buildEscrowDealQueryWithLiffUrls(req, updatedDeal, configInput);
+      await sendLinePushMessage({
+        channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
+        to: String(updatedDeal.groupId || '').trim(),
+        messages: [buildLineEscrowTrackingArrivedFlexMessage(dealForFlex)],
+      });
+    } catch (error) {
+      console.warn(`Failed to push delivered notification for escrow deal ${dealId}:`, error.message);
+    }
+  }
+
+  return updatedDeal;
 };
 
 const normalizeGoogleEventColorId = (value) => {
@@ -4369,6 +5321,9 @@ app.get('/health', (_req, res) => {
     firestoreLineWebhookLogCollection: FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION,
     firestoreLineScamBotCollection: FIRESTORE_LINE_SCAM_BOT_COLLECTION,
     firestoreLineScamWebhookLogCollection: FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION,
+    firestoreLineEscrowBotCollection: FIRESTORE_LINE_ESCROW_BOT_COLLECTION,
+    firestoreLineEscrowWebhookLogCollection: FIRESTORE_LINE_ESCROW_WEBHOOK_LOG_COLLECTION,
+    firestoreLineEscrowDealCollection: FIRESTORE_LINE_ESCROW_DEAL_COLLECTION,
     firestoreAdminComplaintCollection: FIRESTORE_ADMIN_COMPLAINT_COLLECTION,
     firestoreSupportTicketCollection: FIRESTORE_SUPPORT_TICKET_COLLECTION,
     firestoreScamReportCollection: FIRESTORE_SCAM_REPORT_COLLECTION,
@@ -4386,6 +5341,18 @@ app.get('/health', (_req, res) => {
     lineScamReplyConfigured: Boolean(LINE_SCAM_CHANNEL_ACCESS_TOKEN),
     lineScamGeminiConfigured: Boolean(GEMINI_API_KEY),
     lineScamGeminiModel: GEMINI_MODEL,
+    lineEscrowWebhookConfigured: Boolean(LINE_ESCROW_EFFECTIVE_CHANNEL_SECRET),
+    lineEscrowReplyConfigured: Boolean(LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN),
+    lineEscrowSharedWithScamChannel: LINE_ESCROW_SHARED_WITH_SCAM_CHANNEL,
+    lineEscrowPaymentProvider: LINE_ESCROW_PAYMENT_PROVIDER,
+    lineEscrowPaymentConfigured: Boolean(OPN_SECRET_KEY),
+    lineEscrowPaymentPublicKeyConfigured: Boolean(OPN_PUBLIC_KEY),
+    lineEscrowTrackingProvider: LINE_ESCROW_TRACKING_PROVIDER,
+    lineEscrowTrackingConfigured: Boolean(TRACKING_API_KEY),
+    lineEscrowAutoReleaseHours: LINE_ESCROW_AUTO_RELEASE_HOURS,
+    lineEscrowSlipImageMaxBytes: LINE_ESCROW_SLIP_IMAGE_MAX_BYTES,
+    lineEscrowCronConfigured: Boolean(LINE_ESCROW_CRON_SECRET),
+    lineEscrowPaymentWebhookSecretConfigured: Boolean(LINE_ESCROW_PAYMENT_WEBHOOK_SECRET),
     openAiConfigured: Boolean(OPENAI_API_KEY),
     openAiModel: OPENAI_MODEL,
     openAiReasoningEffort: OPENAI_REASONING_EFFORT,
@@ -6130,6 +7097,713 @@ app.post('/line/scam/liff/api/risk-assess', async (req, res) => {
   }
 });
 
+app.get('/admin/line-escrow-bot/config', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const config = await loadLineEscrowBotConfigRecord();
+    return res.json({
+      config: toLineEscrowBotPublicConfig(req, config),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load LINE escrow bot config.' });
+  }
+});
+
+app.put('/admin/line-escrow-bot/config', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const liffDealUrl = normalizeOptionalHttpUrl(req.body?.liffDealUrl || '', 1000);
+    const liffSellerUrl = normalizeOptionalHttpUrl(req.body?.liffSellerUrl || '', 1000);
+    const liffBuyerUrl = normalizeOptionalHttpUrl(req.body?.liffBuyerUrl || '', 1000);
+    if (liffDealUrl === null || liffSellerUrl === null || liffBuyerUrl === null) {
+      return res.status(400).json({
+        message: 'LIFF URL must be empty or start with http:// or https://',
+      });
+    }
+    const richMenuId = normalizeOptionalString(req.body?.richMenuId || '', 180);
+    const trackingCourierDefault = normalizeOptionalString(req.body?.trackingCourierDefault || '', 120);
+    const nowIso = new Date().toISOString();
+    await lineEscrowBotConfigDocRef.set(
+      {
+        liffDealUrl: liffDealUrl || '',
+        liffSellerUrl: liffSellerUrl || '',
+        liffBuyerUrl: liffBuyerUrl || '',
+        richMenuId: richMenuId || '',
+        trackingCourierDefault: trackingCourierDefault || '',
+        updatedAt: nowIso,
+        updatedById: sanitizeUserId(req.rootAdmin?.id),
+        updatedByEmail: sanitizeEmail(req.rootAdmin?.email),
+      },
+      { merge: true }
+    );
+    const updatedConfig = await loadLineEscrowBotConfigRecord();
+    return res.json({
+      message: 'LINE escrow bot settings saved.',
+      config: toLineEscrowBotPublicConfig(req, updatedConfig),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to save LINE escrow bot config.' });
+  }
+});
+
+app.get('/line/escrow/liff/deal', (_req, res) => {
+  setLineScamLiffHtmlHeaders(res);
+  return res.status(200).type('html').send(renderLineEscrowDealPage());
+});
+
+app.get('/line/escrow/liff/seller', (_req, res) => {
+  setLineScamLiffHtmlHeaders(res);
+  return res
+    .status(200)
+    .type('html')
+    .send(renderLineEscrowSellerPage({ maxSlipImageBytes: LINE_ESCROW_SLIP_IMAGE_MAX_BYTES }));
+});
+
+app.get('/line/escrow/liff/buyer', (_req, res) => {
+  setLineScamLiffHtmlHeaders(res);
+  return res.status(200).type('html').send(renderLineEscrowBuyerPage());
+});
+
+app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
+  try {
+    const groupId = normalizeOptionalString(req.body?.groupId || '', 120);
+    const buyerName = normalizeOptionalString(req.body?.buyerName || '', 120);
+    const buyerLineUserId = normalizeOptionalString(req.body?.buyerLineUserId || '', 120);
+    const sellerName = normalizeOptionalString(req.body?.sellerName || '', 120);
+    const sellerLineUserId = normalizeOptionalString(req.body?.sellerLineUserId || '', 120);
+    const itemName = normalizeOptionalString(req.body?.itemName || '', 220);
+    const note = normalizeOptionalString(req.body?.note || '', 1200);
+    const sellerBankName = normalizeOptionalString(req.body?.sellerBankName || '', 140);
+    const sellerBankBrand = normalizeEscrowBankBrand(req.body?.sellerBankBrand || sellerBankName || '');
+    const sellerBankAccount = String(req.body?.sellerBankAccount || '')
+      .replace(/\s+/g, '')
+      .trim()
+      .slice(0, 80);
+    const sellerBankAccountName = normalizeOptionalString(req.body?.sellerBankAccountName || '', 120);
+    const amountThb = Number(req.body?.amountThb || req.body?.amount || 0);
+    const amountSatang = normalizeEscrowMoneySatang(amountThb);
+
+    if (!groupId || !sellerName || !itemName || amountSatang <= 0) {
+      return res.status(400).json({
+        message: 'groupId, sellerName, itemName and amountThb are required.',
+      });
+    }
+    if (!sellerBankBrand || !sellerBankAccount || !sellerBankAccountName) {
+      return res.status(400).json({
+        message:
+          'sellerBankBrand/sellerBankName, sellerBankAccount, sellerBankAccountName are required for auto payout.',
+      });
+    }
+
+    const dealId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
+    let paymentStatus = 'pending';
+    let paymentChargeId = '';
+    let paymentQrImageUrl = '';
+    let paymentExpiresAt = null;
+    let paidAt = null;
+    let paymentFailureReason = '';
+
+    if (LINE_ESCROW_PAYMENT_PROVIDER === 'opn' && OPN_SECRET_KEY) {
+      try {
+        const payment = await createEscrowPromptpayCharge({
+          dealId,
+          amountSatang,
+          itemName,
+          groupId,
+        });
+        paymentChargeId = payment.chargeId;
+        paymentQrImageUrl = payment.qrImageUrl;
+        paymentExpiresAt = payment.expiresAt;
+        paymentStatus = payment.chargeStatus || 'pending';
+        if (paymentStatus === 'successful') {
+          paymentStatus = 'paid';
+          paidAt = nowIso;
+        }
+      } catch (error) {
+        paymentFailureReason = normalizeOptionalString(error.message || 'Payment initialization failed.', 320);
+      }
+    }
+
+    const dealRecord = {
+      groupId,
+      status: paymentStatus === 'paid' ? 'paid_waiting_shipment' : 'awaiting_payment',
+      itemName,
+      note,
+      buyerName,
+      buyerLineUserId,
+      sellerName,
+      sellerLineUserId,
+      paymentProvider: LINE_ESCROW_PAYMENT_PROVIDER,
+      paymentStatus: paymentStatus === 'successful' ? 'paid' : paymentStatus,
+      paymentChargeId,
+      paymentQrImageUrl,
+      paymentExpiresAt,
+      paymentFailureReason,
+      paymentAmountSatang: amountSatang,
+      paidAt,
+      shipmentStatus: 'pending',
+      trackingNumber: '',
+      courierCode: '',
+      shippingSlipImage: null,
+      trackingStatus: '',
+      trackingStatusText: '',
+      trackingMapUrl: '',
+      trackingPublicUrl: '',
+      deliveredAt: null,
+      autoReleaseAt: null,
+      confirmedAt: null,
+      payoutStatus: 'pending',
+      payoutTransferId: '',
+      payoutRecipientId: '',
+      payoutReleasedAt: null,
+      payoutFailedReason: '',
+      payoutAmountSatang: amountSatang,
+      sellerBankName,
+      sellerBankBrand,
+      sellerBankAccount,
+      sellerBankAccountName,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await lineEscrowDealRef.doc(dealId).set(dealRecord, { merge: true });
+
+    const config = await loadLineEscrowBotConfigRecord();
+    const dealForResponse = buildEscrowDealQueryWithLiffUrls(
+      req,
+      toEscrowDealResponse(dealId, dealRecord),
+      config
+    );
+    return res.status(201).json({
+      message:
+        paymentFailureReason && !paymentChargeId
+          ? `Deal created but payment QR was not generated: ${paymentFailureReason}`
+          : 'Escrow deal created.',
+      deal: dealForResponse,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to create escrow deal.' });
+  }
+});
+
+app.post('/line/escrow/liff/api/deals/:dealId/check-payment', async (req, res) => {
+  try {
+    const found = await loadEscrowDealWithRef(req.params?.dealId);
+    if (!found) {
+      return res.status(404).json({ message: 'Deal not found.' });
+    }
+    let deal = found.deal;
+    if (String(deal.paymentStatus || '').trim().toLowerCase() !== 'paid') {
+      deal = await refreshEscrowDealPaymentStatus(deal);
+      if (String(deal.paymentStatus || '').trim().toLowerCase() === 'paid') {
+        const nowIso = new Date().toISOString();
+        await found.ref.set(
+          {
+            status: 'paid_waiting_shipment',
+            shipmentStatus: 'pending',
+            paidAt: deal.paidAt || nowIso,
+            updatedAt: nowIso,
+          },
+          { merge: true }
+        );
+        deal = {
+          ...deal,
+          status: 'paid_waiting_shipment',
+          shipmentStatus: 'pending',
+          paidAt: deal.paidAt || nowIso,
+          updatedAt: nowIso,
+        };
+      }
+    }
+    const config = await loadLineEscrowBotConfigRecord();
+    return res.json({
+      deal: buildEscrowDealQueryWithLiffUrls(req, deal, config),
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to check payment status.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to check payment status.' });
+  }
+});
+
+app.post('/line/escrow/payment/webhook', async (req, res) => {
+  try {
+    if (LINE_ESCROW_PAYMENT_WEBHOOK_SECRET) {
+      const provided = String(
+        req.headers?.['x-line-escrow-webhook-secret'] ||
+          req.headers?.['x-escrow-webhook-secret'] ||
+          req.query?.secret ||
+          req.body?.secret ||
+          ''
+      ).trim();
+      if (!provided || provided !== LINE_ESCROW_PAYMENT_WEBHOOK_SECRET) {
+        return res.status(401).json({ message: 'Invalid escrow payment webhook secret.' });
+      }
+    }
+    const eventType = normalizeOptionalString(req.body?.key || req.body?.type || '', 120).toLowerCase();
+    const eventData =
+      req.body?.data && typeof req.body.data === 'object' && !Array.isArray(req.body.data)
+        ? req.body.data
+        : {};
+    const chargeObject =
+      eventData?.id && typeof eventData === 'object' && !Array.isArray(eventData)
+        ? eventData
+        : req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+          ? req.body
+          : {};
+    const chargeId = String(chargeObject.id || '').trim();
+    if (!chargeId) {
+      return res.status(400).json({ message: 'charge id is required in webhook payload.' });
+    }
+    const metadata =
+      chargeObject.metadata && typeof chargeObject.metadata === 'object' && !Array.isArray(chargeObject.metadata)
+        ? chargeObject.metadata
+        : {};
+    const metadataDealId = String(metadata.deal_id || metadata.dealId || '').trim();
+    let foundDeal = metadataDealId ? await loadEscrowDealWithRef(metadataDealId) : null;
+    if (!foundDeal) {
+      const querySnapshot = await lineEscrowDealRef.where('paymentChargeId', '==', chargeId).limit(1).get();
+      if (!querySnapshot.empty) {
+        const doc = querySnapshot.docs[0];
+        foundDeal = {
+          ref: lineEscrowDealRef.doc(doc.id),
+          deal: toEscrowDealResponse(doc.id, doc.data() || {}),
+        };
+      }
+    }
+    if (!foundDeal) {
+      return res.json({ ok: true, message: 'No escrow deal matched this payment event.' });
+    }
+    const chargeStatus = String(chargeObject.status || '').trim().toLowerCase();
+    const paid = chargeStatus === 'successful' || eventType === 'charge.complete';
+    const nowIso = new Date().toISOString();
+    const patch = {
+      paymentStatus: paid ? 'paid' : chargeStatus || 'pending',
+      paidAt: paid ? nowIso : foundDeal.deal.paidAt || null,
+      paymentFailureReason: normalizeOptionalString(chargeObject.failure_message || '', 320),
+      updatedAt: nowIso,
+    };
+    if (paid && String(foundDeal.deal.status || '').trim().toLowerCase() === 'awaiting_payment') {
+      patch.status = 'paid_waiting_shipment';
+    }
+    await foundDeal.ref.set(patch, { merge: true });
+    const updatedDeal = {
+      ...foundDeal.deal,
+      ...patch,
+    };
+
+    if (paid && String(updatedDeal.groupId || '').trim()) {
+      const config = await loadLineEscrowBotConfigRecord();
+      const dealWithLiff = buildEscrowDealQueryWithLiffUrls(req, updatedDeal, config);
+      const paidCard = {
+        type: 'flex',
+        altText: `ดีล ${updatedDeal.id} ชำระเงินแล้ว`,
+        contents: {
+          type: 'bubble',
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            spacing: '8px',
+            contents: [
+              { type: 'text', text: 'ชำระเงินสำเร็จแล้ว', size: 'lg', weight: 'bold', color: '#166534' },
+              { type: 'text', text: `ดีล: ${updatedDeal.id}`, size: 'sm', color: '#334155' },
+              {
+                type: 'text',
+                text: `ยอดคุ้มครอง ${Number(toEscrowAmountThb(updatedDeal.paymentAmountSatang || 0)).toLocaleString()} THB`,
+                size: 'sm',
+                color: '#334155',
+                wrap: true,
+              },
+              {
+                type: 'text',
+                text: 'ขั้นตอนถัดไป: ผู้ขายกดส่งเลขพัสดุพร้อมสลิปที่หน้า LIFF ผู้ขาย',
+                size: 'xs',
+                color: '#6b7280',
+                wrap: true,
+              },
+            ],
+          },
+          footer: {
+            type: 'box',
+            layout: 'vertical',
+            spacing: '8px',
+            contents: dealWithLiff.sellerLiffUrl
+              ? [
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#0f766e',
+                    action: {
+                      type: 'uri',
+                      label: 'เปิดหน้า LIFF ผู้ขาย',
+                      uri: dealWithLiff.sellerLiffUrl,
+                    },
+                  },
+                ]
+              : [
+                  {
+                    type: 'text',
+                    text: 'ยังไม่ตั้งค่า LIFF ผู้ขาย',
+                    size: 'xs',
+                    color: '#991b1b',
+                    wrap: true,
+                  },
+                ],
+          },
+        },
+      };
+      await sendLinePushMessage({
+        channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
+        to: String(updatedDeal.groupId || '').trim(),
+        messages: [paidCard],
+      });
+    }
+
+    return res.json({
+      ok: true,
+      dealId: updatedDeal.id,
+      paymentStatus: patch.paymentStatus,
+      paid,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to process escrow payment webhook.' });
+  }
+});
+
+app.get('/line/escrow/liff/api/deals/:dealId', async (req, res) => {
+  try {
+    const found = await loadEscrowDealWithRef(req.params?.dealId);
+    if (!found) {
+      return res.status(404).json({ message: 'Deal not found.' });
+    }
+    let deal = found.deal;
+    const shouldRefreshPayment = String(req.query?.refreshPayment || '').trim() === '1';
+    if (shouldRefreshPayment && String(deal.paymentStatus || '').trim().toLowerCase() !== 'paid') {
+      deal = await refreshEscrowDealPaymentStatus(deal);
+    }
+    const config = await loadLineEscrowBotConfigRecord();
+    return res.json({
+      deal: buildEscrowDealQueryWithLiffUrls(req, deal, config),
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to load escrow deal.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to load escrow deal.' });
+  }
+});
+
+app.post('/line/escrow/liff/api/deals/submit-shipment', async (req, res) => {
+  try {
+    const dealId = normalizeOptionalString(req.body?.dealId || '', 120);
+    if (!dealId) {
+      return res.status(400).json({ message: 'dealId is required.' });
+    }
+    const found = await loadEscrowDealWithRef(dealId);
+    if (!found) {
+      return res.status(404).json({ message: 'Deal not found.' });
+    }
+    let deal = found.deal;
+    if (String(deal.paymentStatus || '').trim().toLowerCase() !== 'paid') {
+      deal = await refreshEscrowDealPaymentStatus(deal);
+    }
+    if (String(deal.paymentStatus || '').trim().toLowerCase() !== 'paid') {
+      return res.status(400).json({ message: 'Payment is not completed yet. Buyer must pay first.' });
+    }
+    const trackingNumber = normalizeOptionalString(req.body?.trackingNumber || '', 120);
+    const courierCode = normalizeOptionalString(req.body?.courierCode || '', 120);
+    if (!trackingNumber) {
+      return res.status(400).json({ message: 'trackingNumber is required.' });
+    }
+    const shippingSlipImage = normalizeEscrowSlipImage(req.body?.shippingSlipImage);
+    if (!shippingSlipImage) {
+      return res.status(400).json({
+        message: `shippingSlipImage is required and must be image data URL <= ${LINE_ESCROW_SLIP_IMAGE_MAX_BYTES} bytes.`,
+      });
+    }
+    const nowIso = new Date().toISOString();
+    const patch = {
+      status: 'shipped',
+      shipmentStatus: 'shipped',
+      trackingNumber,
+      courierCode,
+      shippingSlipImage,
+      shippingSubmittedAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await found.ref.set(patch, { merge: true });
+    deal = {
+      ...deal,
+      ...patch,
+    };
+    const config = await loadLineEscrowBotConfigRecord();
+    let refreshedDeal = deal;
+    try {
+      refreshedDeal = await refreshEscrowDealTrackingStatus({
+        dealInput: deal,
+        req,
+        configInput: config,
+        notifyDelivered: true,
+      });
+    } catch (trackingError) {
+      console.warn(`Failed to refresh tracking on shipment submit for deal ${dealId}:`, trackingError.message);
+    }
+
+    const buyerDeal = buildEscrowDealQueryWithLiffUrls(req, refreshedDeal, config);
+    if (String(refreshedDeal.groupId || '').trim()) {
+      const statusCard = {
+        type: 'flex',
+        altText: `ผู้ขายส่งพัสดุแล้ว ดีล ${dealId}`,
+        contents: {
+          type: 'bubble',
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            spacing: '8px',
+            contents: [
+              { type: 'text', text: 'ผู้ขายส่งพัสดุแล้ว', size: 'lg', weight: 'bold', color: '#0f766e' },
+              { type: 'text', text: `ดีล: ${dealId}`, size: 'sm', color: '#334155', wrap: true },
+              { type: 'text', text: `เลขพัสดุ: ${trackingNumber}`, size: 'sm', color: '#334155', wrap: true },
+              {
+                type: 'text',
+                text: `สินค้า: ${normalizeOptionalString(refreshedDeal.itemName || '-', 120)}`,
+                size: 'sm',
+                color: '#334155',
+                wrap: true,
+              },
+            ],
+          },
+          footer: {
+            type: 'box',
+            layout: 'vertical',
+            spacing: '8px',
+            contents: buyerDeal.buyerLiffUrl
+              ? [
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#7c3aed',
+                    action: {
+                      type: 'uri',
+                      label: 'เปิดหน้าเช็กสถานะและยืนยันรับของ',
+                      uri: buyerDeal.buyerLiffUrl,
+                    },
+                  },
+                ]
+              : [
+                  {
+                    type: 'text',
+                    text: 'ไม่พบ LIFF URL สำหรับผู้ซื้อ',
+                    size: 'xs',
+                    color: '#991b1b',
+                    wrap: true,
+                  },
+                ],
+          },
+        },
+      };
+      await sendLinePushMessage({
+        channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
+        to: String(refreshedDeal.groupId || '').trim(),
+        messages: [statusCard],
+      });
+    }
+
+    return res.json({
+      message: 'Shipment details submitted.',
+      deal: buyerDeal,
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to submit shipment.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to submit shipment.' });
+  }
+});
+
+app.post('/line/escrow/liff/api/deals/:dealId/refresh-tracking', async (req, res) => {
+  try {
+    const found = await loadEscrowDealWithRef(req.params?.dealId);
+    if (!found) {
+      return res.status(404).json({ message: 'Deal not found.' });
+    }
+    if (!String(found.deal.trackingNumber || '').trim()) {
+      return res.status(400).json({ message: 'This deal does not have tracking number yet.' });
+    }
+    const config = await loadLineEscrowBotConfigRecord();
+    const updatedDeal = await refreshEscrowDealTrackingStatus({
+      dealInput: found.deal,
+      req,
+      configInput: config,
+      notifyDelivered: true,
+    });
+    return res.json({
+      deal: buildEscrowDealQueryWithLiffUrls(req, updatedDeal, config),
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to refresh tracking status.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to refresh tracking status.' });
+  }
+});
+
+app.post('/line/escrow/liff/api/deals/:dealId/confirm-delivery', async (req, res) => {
+  try {
+    const found = await loadEscrowDealWithRef(req.params?.dealId);
+    if (!found) {
+      return res.status(404).json({ message: 'Deal not found.' });
+    }
+    const nowIso = new Date().toISOString();
+    await found.ref.set(
+      {
+        status: 'confirmed_release_pending',
+        confirmedAt: nowIso,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+    let deal = {
+      ...found.deal,
+      status: 'confirmed_release_pending',
+      confirmedAt: nowIso,
+      updatedAt: nowIso,
+    };
+    const releaseResult = await releaseEscrowDealPayout({
+      dealInput: deal,
+      reason: 'buyer_confirmed',
+    });
+    deal = releaseResult.deal || deal;
+    const config = await loadLineEscrowBotConfigRecord();
+    const finalDeal = buildEscrowDealQueryWithLiffUrls(req, deal, config);
+
+    if (String(deal.groupId || '').trim()) {
+      const payoutCard = {
+        type: 'flex',
+        altText: `ดีล ${deal.id} ปล่อยเงินสำเร็จ`,
+        contents: {
+          type: 'bubble',
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            spacing: '8px',
+            contents: [
+              { type: 'text', text: 'ยืนยันรับของเรียบร้อย', size: 'lg', weight: 'bold', color: '#166534' },
+              { type: 'text', text: `ดีล: ${deal.id}`, size: 'sm', color: '#334155' },
+              {
+                type: 'text',
+                text: `โอนเงินให้ผู้ขายแล้ว ${Number(finalDeal.payoutAmountThb || 0).toLocaleString()} THB`,
+                size: 'sm',
+                color: '#334155',
+                wrap: true,
+              },
+              {
+                type: 'text',
+                text: `Transfer ID: ${String(finalDeal.payoutTransferId || '-').slice(0, 64)}`,
+                size: 'xs',
+                color: '#64748b',
+                wrap: true,
+              },
+            ],
+          },
+        },
+      };
+      await sendLinePushMessage({
+        channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
+        to: String(deal.groupId || '').trim(),
+        messages: [payoutCard],
+      });
+    }
+
+    return res.json({
+      message: 'Delivery confirmed and payout released.',
+      deal: finalDeal,
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to confirm delivery.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to confirm delivery.' });
+  }
+});
+
+app.post('/line/escrow/cron/auto-release', async (req, res) => {
+  try {
+    if (!LINE_ESCROW_CRON_SECRET) {
+      return res.status(503).json({ message: 'LINE_ESCROW_CRON_SECRET is not configured on server.' });
+    }
+    const providedSecret = String(
+      req.headers?.['x-cron-secret'] || req.query?.secret || req.body?.secret || ''
+    ).trim();
+    if (!providedSecret || providedSecret !== LINE_ESCROW_CRON_SECRET) {
+      return res.status(401).json({ message: 'Invalid cron secret.' });
+    }
+    const config = await loadLineEscrowBotConfigRecord();
+    const snapshot = await lineEscrowDealRef.orderBy('updatedAt', 'desc').limit(500).get();
+    const docs = snapshot.docs.map((doc) => ({ id: doc.id, data: doc.data() || {} }));
+    let trackingRefreshed = 0;
+    let autoReleased = 0;
+    const errors = [];
+    const nowMs = Date.now();
+    for (const entry of docs) {
+      const deal = toEscrowDealResponse(entry.id, entry.data);
+      try {
+        const status = String(deal.status || '').trim().toLowerCase();
+        if (status === 'shipped' && String(deal.trackingNumber || '').trim()) {
+          await refreshEscrowDealTrackingStatus({
+            dealInput: deal,
+            req,
+            configInput: config,
+            notifyDelivered: true,
+          });
+          trackingRefreshed += 1;
+          continue;
+        }
+        if (status === 'delivered_waiting_confirmation') {
+          const autoReleaseAtMs = toEpochMs(deal.autoReleaseAt);
+          if (autoReleaseAtMs > 0 && nowMs >= autoReleaseAtMs) {
+            await lineEscrowDealRef.doc(deal.id).set(
+              {
+                status: 'confirmed_release_pending',
+                confirmedAt: new Date(nowMs).toISOString(),
+                updatedAt: new Date(nowMs).toISOString(),
+              },
+              { merge: true }
+            );
+            const released = await releaseEscrowDealPayout({
+              dealInput: {
+                ...deal,
+                status: 'confirmed_release_pending',
+                confirmedAt: new Date(nowMs).toISOString(),
+              },
+              reason: 'auto_timeout',
+            });
+            autoReleased += released.ok ? 1 : 0;
+          }
+        }
+      } catch (error) {
+        errors.push({
+          dealId: deal.id,
+          message: String(error.message || 'Unknown error'),
+        });
+      }
+    }
+    return res.json({
+      ok: true,
+      scanned: docs.length,
+      trackingRefreshed,
+      autoReleased,
+      errors,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to run escrow auto-release cron.' });
+  }
+});
+
 app.post('/support/complaints', requireAuth, async (req, res) => {
   try {
     const reporterId = sanitizeUserId(req.authUser?.sub);
@@ -6909,19 +8583,28 @@ app.post('/line/scam/webhook', async (req, res) => {
       !Array.isArray(lineScamPublicConfig.liffUrls)
         ? lineScamPublicConfig.liffUrls
         : {};
+    const sharedEscrowInScamWebhook =
+      LINE_ESCROW_SHARED_WITH_SCAM_CHANNEL && Boolean(LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN);
+    let escrowLiffUrls = { deal: '', seller: '', buyer: '' };
+    if (sharedEscrowInScamWebhook) {
+      const escrowConfig = await loadLineEscrowBotConfigRecord();
+      escrowLiffUrls = resolveLineEscrowLiffUrls(req, escrowConfig);
+    }
 
     const writes = [];
     for (const event of events) {
       const source = event?.source && typeof event.source === 'object' ? event.source : {};
       const sourceType = normalizeOptionalString(source.type, 40);
+      const isGroupContext = sourceType === 'group' || sourceType === 'room';
       const groupId = normalizeOptionalString(source.groupId, 80);
       const userId = normalizeOptionalString(source.userId, 80);
       const eventType = normalizeOptionalString(event?.type, 40);
       const messageType = normalizeOptionalString(event?.message?.type, 40);
       const messageText =
-        messageType === 'text' ? normalizeOptionalString(event?.message?.text, 400) : '';
+        messageType === 'text' ? normalizeOptionalString(event?.message?.text, 500) : '';
       const commandKey = resolveLineScamCommandKey(messageText);
       const eventTimestamp = Number(event?.timestamp || Date.now());
+      const replyToken = String(event?.replyToken || '').trim();
 
       if (groupId || userId) {
         const logId = crypto
@@ -6947,11 +8630,60 @@ app.post('/line/scam/webhook', async (req, res) => {
         );
       }
 
+      if (sharedEscrowInScamWebhook && (groupId || userId)) {
+        const logId = crypto
+          .createHash('sha256')
+          .update(`${groupId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
+          .digest('hex');
+        writes.push(
+          lineEscrowWebhookLogRef.doc(logId).set(
+            {
+              destination,
+              sourceType,
+              groupId,
+              userId,
+              eventType,
+              messageType,
+              messageText,
+              eventTimestamp,
+              receivedAt: nowIso,
+            },
+            { merge: true }
+          )
+        );
+      }
+
+      if (sharedEscrowInScamWebhook && isGroupContext) {
+        const shouldReplyStartMenu =
+          (eventType === 'message' && messageType === 'text' && isLineEscrowStartCommand(messageText)) ||
+          eventType === 'join' ||
+          eventType === 'memberJoined';
+        if (shouldReplyStartMenu && replyToken) {
+          const contextId = groupId || userId;
+          const scopedLiffUrls = {
+            deal: addQueryParamToHttpUrl(escrowLiffUrls.deal, 'groupId', contextId),
+            seller: addQueryParamToHttpUrl(escrowLiffUrls.seller, 'groupId', contextId),
+            buyer: addQueryParamToHttpUrl(escrowLiffUrls.buyer, 'groupId', contextId),
+          };
+          writes.push(
+            sendLineReplyMessages({
+              channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
+              replyToken,
+              messages: [buildLineEscrowMainMenuFlexMessage({ liffUrlsInput: scopedLiffUrls })],
+            }).catch((error) => {
+              console.warn('Failed to reply LINE escrow bot message from shared webhook:', error.message);
+            })
+          );
+        }
+        continue;
+      }
+
       if (
         commandKey &&
+        sourceType === 'user' &&
         eventType === 'message' &&
         messageType === 'text' &&
-        String(event?.replyToken || '').trim()
+        replyToken
       ) {
         const replyMessages = buildLineScamCommandReplyMessages({
           commandKey,
@@ -6960,7 +8692,7 @@ app.post('/line/scam/webhook', async (req, res) => {
         writes.push(
           sendLineReplyMessages({
             channelAccessToken: LINE_SCAM_CHANNEL_ACCESS_TOKEN,
-            replyToken: String(event.replyToken || '').trim(),
+            replyToken,
             messages: replyMessages,
           }).catch((error) => {
             console.warn('Failed to reply LINE scam bot message:', error.message);
@@ -6979,6 +8711,99 @@ app.post('/line/scam/webhook', async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to process LINE scam webhook.' });
+  }
+});
+
+app.post('/line/escrow/webhook', async (req, res) => {
+  try {
+    if (!LINE_ESCROW_EFFECTIVE_CHANNEL_SECRET) {
+      return res.status(503).json({
+        message:
+          'LINE_ESCROW_CHANNEL_SECRET is not configured on server (or LINE_SCAM_CHANNEL_SECRET when LINE_ESCROW_USE_SCAM_CHANNEL=true).',
+      });
+    }
+    if (!LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN) {
+      return res.status(503).json({
+        message:
+          'LINE_ESCROW_CHANNEL_ACCESS_TOKEN is not configured on server (or LINE_SCAM_CHANNEL_ACCESS_TOKEN when LINE_ESCROW_USE_SCAM_CHANNEL=true).',
+      });
+    }
+    if (!isValidLineWebhookSignatureWithSecret(req, LINE_ESCROW_EFFECTIVE_CHANNEL_SECRET)) {
+      return res.status(401).json({ message: 'Invalid LINE escrow webhook signature.' });
+    }
+
+    const events = Array.isArray(req.body?.events) ? req.body.events : [];
+    const destination = String(req.body?.destination || '').trim();
+    const nowIso = new Date().toISOString();
+    const escrowConfig = await loadLineEscrowBotConfigRecord();
+    const liffUrls = resolveLineEscrowLiffUrls(req, escrowConfig);
+
+    const writes = [];
+    for (const event of events) {
+      const source = event?.source && typeof event.source === 'object' ? event.source : {};
+      const sourceType = normalizeOptionalString(source.type, 40);
+      const groupId = normalizeOptionalString(source.groupId, 80);
+      const userId = normalizeOptionalString(source.userId, 80);
+      const eventType = normalizeOptionalString(event?.type, 40);
+      const messageType = normalizeOptionalString(event?.message?.type, 40);
+      const messageText =
+        messageType === 'text' ? normalizeOptionalString(event?.message?.text, 500) : '';
+      const eventTimestamp = Number(event?.timestamp || Date.now());
+
+      if (groupId || userId) {
+        const logId = crypto
+          .createHash('sha256')
+          .update(`${groupId}|${userId}|${eventTimestamp}|${eventType}|${messageText}`)
+          .digest('hex');
+        writes.push(
+          lineEscrowWebhookLogRef.doc(logId).set(
+            {
+              destination,
+              sourceType,
+              groupId,
+              userId,
+              eventType,
+              messageType,
+              messageText,
+              eventTimestamp,
+              receivedAt: nowIso,
+            },
+            { merge: true }
+          )
+        );
+      }
+
+      const shouldReplyStartMenu =
+        (eventType === 'message' && messageType === 'text' && isLineEscrowStartCommand(messageText)) ||
+        eventType === 'join' ||
+        eventType === 'memberJoined';
+      if (shouldReplyStartMenu && String(event?.replyToken || '').trim()) {
+        const scopedLiffUrls = {
+          deal: addQueryParamToHttpUrl(liffUrls.deal, 'groupId', groupId),
+          seller: addQueryParamToHttpUrl(liffUrls.seller, 'groupId', groupId),
+          buyer: addQueryParamToHttpUrl(liffUrls.buyer, 'groupId', groupId),
+        };
+        writes.push(
+          sendLineReplyMessages({
+            channelAccessToken: LINE_ESCROW_EFFECTIVE_CHANNEL_ACCESS_TOKEN,
+            replyToken: String(event.replyToken || '').trim(),
+            messages: [buildLineEscrowMainMenuFlexMessage({ liffUrlsInput: scopedLiffUrls })],
+          }).catch((error) => {
+            console.warn('Failed to reply LINE escrow bot message:', error.message);
+          })
+        );
+      }
+    }
+
+    if (writes.length > 0) {
+      await Promise.all(writes);
+    }
+    return res.json({
+      ok: true,
+      received: events.length,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to process LINE escrow webhook.' });
   }
 });
 
