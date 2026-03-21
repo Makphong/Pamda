@@ -987,15 +987,524 @@ const buildLineScamActionFlexMessage = ({
   };
 };
 
-const buildLineScamHelpFlexMessage = () =>
-  buildLineScamActionFlexMessage({
-    title: 'คำแนะนำเมื่อถูกโกง',
-    bodyText:
-      '1) แคปแชท/สลิป/โปรไฟล์ผู้ขาย\\n2) โทรอายัดบัญชีปลายทางผ่านธนาคาร\\n3) แจ้งความออนไลน์ผ่าน Thaipoliceonline\\n4) แจ้งความคืบหน้าในช่องทางทางการเท่านั้น',
-    actionLabel: 'เปิดเว็บแจ้งความ',
-    actionUrl: 'https://www.thaipoliceonline.go.th',
-    accentColor: '#dc2626',
-    altText: 'คำแนะนำเมื่อถูกโกง',
+const normalizeLineScamActionUri = (valueInput) => {
+  const value = String(valueInput || '').trim();
+  if (!value) return '';
+  if (/^tel:[0-9+#*]+$/i.test(value)) return value;
+  return normalizeOptionalHttpUrl(value, 1200) || '';
+};
+
+const buildLineScamTimelineActionButton = (actionInput) => {
+  const action = actionInput && typeof actionInput === 'object' && !Array.isArray(actionInput) ? actionInput : {};
+  const actionType = String(action.type || 'uri').trim().toLowerCase();
+  const label = normalizeOptionalString(action.label || '', 20) || 'เปิดลิงก์';
+  if (actionType === 'message') {
+    const text = normalizeOptionalString(action.text || action.value || '', 300);
+    if (!text) return null;
+    return {
+      type: 'button',
+      style: 'secondary',
+      color: '#e2e8f0',
+      height: 'sm',
+      action: {
+        type: 'message',
+        label,
+        text,
+      },
+    };
+  }
+  const uri = normalizeLineScamActionUri(action.uri || action.url || action.value || '');
+  if (!uri) return null;
+  return {
+    type: 'button',
+    style: 'secondary',
+    color: '#e2e8f0',
+    height: 'sm',
+    action: {
+      type: 'uri',
+      label,
+      uri,
+    },
+  };
+};
+
+const buildLineScamTimelineStepFlexBox = ({
+  step = 1,
+  title = '',
+  detail = '',
+  accentColor = '#dc2626',
+  actions = [],
+} = {}) => {
+  const stepText = String(Number(step || 1) || 1).slice(0, 3);
+  const safeTitle = normalizeOptionalString(title, 120) || 'ขั้นตอน';
+  const safeDetail = normalizeOptionalString(detail, 650);
+  const buttons = (Array.isArray(actions) ? actions : [])
+    .map((item) => buildLineScamTimelineActionButton(item))
+    .filter(Boolean)
+    .slice(0, 2);
+  return {
+    type: 'box',
+    layout: 'vertical',
+    spacing: '8px',
+    paddingAll: '12px',
+    cornerRadius: '12px',
+    borderWidth: '1px',
+    borderColor: '#dbeafe',
+    backgroundColor: '#f8fafc',
+    contents: [
+      {
+        type: 'box',
+        layout: 'horizontal',
+        spacing: '8px',
+        alignItems: 'center',
+        contents: [
+          {
+            type: 'box',
+            layout: 'vertical',
+            flex: 0,
+            width: '22px',
+            height: '22px',
+            cornerRadius: '11px',
+            backgroundColor: accentColor,
+            justifyContent: 'center',
+            alignItems: 'center',
+            contents: [
+              {
+                type: 'text',
+                text: stepText,
+                size: 'xs',
+                color: '#ffffff',
+                weight: 'bold',
+                align: 'center',
+              },
+            ],
+          },
+          {
+            type: 'text',
+            text: safeTitle,
+            size: 'sm',
+            weight: 'bold',
+            color: '#0f172a',
+            wrap: true,
+            flex: 1,
+          },
+        ],
+      },
+      ...(safeDetail
+        ? [
+            {
+              type: 'text',
+              text: safeDetail,
+              size: 'xs',
+              color: '#334155',
+              wrap: true,
+            },
+          ]
+        : []),
+      ...(buttons.length
+        ? [
+            {
+              type: 'box',
+              layout: 'vertical',
+              spacing: '6px',
+              contents: buttons,
+            },
+          ]
+        : []),
+    ],
+  };
+};
+
+const buildLineScamTimelineCarouselFlexMessage = ({
+  altText = '',
+  title = '',
+  subtitle = '',
+  accentColor = '#dc2626',
+  phases = [],
+} = {}) => {
+  const safePhases = Array.isArray(phases) ? phases : [];
+  const bubbles = safePhases
+    .map((phaseInput, phaseIndex) => {
+      const phase =
+        phaseInput && typeof phaseInput === 'object' && !Array.isArray(phaseInput) ? phaseInput : {};
+      const phaseTitle = normalizeOptionalString(phase.title || '', 90);
+      const phaseSummary = normalizeOptionalString(phase.summary || '', 400);
+      const phaseSteps = (Array.isArray(phase.steps) ? phase.steps : [])
+        .map((stepInput, stepIndex) => {
+          const step = stepInput && typeof stepInput === 'object' && !Array.isArray(stepInput) ? stepInput : {};
+          return buildLineScamTimelineStepFlexBox({
+            step: Number(step.step || stepIndex + 1) || stepIndex + 1,
+            title: step.title || '',
+            detail: step.detail || '',
+            accentColor: step.accentColor || accentColor,
+            actions: Array.isArray(step.actions) ? step.actions : [],
+          });
+        })
+        .filter(Boolean)
+        .slice(0, 6);
+      const footerButtons = (Array.isArray(phase.footerActions) ? phase.footerActions : [])
+        .map((item) => buildLineScamTimelineActionButton(item))
+        .filter(Boolean)
+        .slice(0, 3);
+      return {
+        type: 'bubble',
+        size: 'mega',
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          spacing: '12px',
+          contents: [
+            {
+              type: 'box',
+              layout: 'vertical',
+              spacing: '6px',
+              paddingAll: '12px',
+              cornerRadius: '12px',
+              backgroundColor: '#eff6ff',
+              contents: [
+                {
+                  type: 'text',
+                  text: normalizeOptionalString(title, 70) || 'คำแนะนำเมื่อถูกโกง',
+                  size: 'md',
+                  weight: 'bold',
+                  color: '#0f172a',
+                  wrap: true,
+                },
+                ...(subtitle
+                  ? [
+                      {
+                        type: 'text',
+                        text: normalizeOptionalString(subtitle, 220),
+                        size: 'xs',
+                        color: '#334155',
+                        wrap: true,
+                      },
+                    ]
+                  : []),
+                ...(phaseTitle
+                  ? [
+                      {
+                        type: 'text',
+                        text: `ช่วง ${phaseIndex + 1}: ${phaseTitle}`,
+                        size: 'xs',
+                        color: '#1d4ed8',
+                        weight: 'bold',
+                        wrap: true,
+                      },
+                    ]
+                  : []),
+              ],
+            },
+            ...(phaseSummary
+              ? [
+                  {
+                    type: 'text',
+                    text: phaseSummary,
+                    size: 'xs',
+                    color: '#475569',
+                    wrap: true,
+                  },
+                ]
+              : []),
+            ...phaseSteps,
+          ],
+        },
+        ...(footerButtons.length
+          ? {
+              footer: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: '8px',
+                contents: footerButtons,
+              },
+            }
+          : {}),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 10);
+  if (!bubbles.length) {
+    return buildLineScamActionFlexMessage({
+      title: 'คำแนะนำเมื่อถูกโกง',
+      bodyText: 'ยังไม่พบข้อมูลคำแนะนำ กรุณาลองใหม่อีกครั้ง',
+      accentColor: '#dc2626',
+      altText: 'คำแนะนำเมื่อถูกโกง',
+    });
+  }
+  return {
+    type: 'flex',
+    altText: normalizeOptionalString(altText || title || 'คำแนะนำเมื่อถูกโกง', 320) || 'คำแนะนำเมื่อถูกโกง',
+    contents: {
+      type: 'carousel',
+      contents: bubbles,
+    },
+  };
+};
+
+const buildLineScamHelpTypeSelectorFlexMessage = () => ({
+  type: 'flex',
+  altText: 'คำแนะนำเมื่อถูกโกง',
+  contents: {
+    type: 'bubble',
+    size: 'mega',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: '12px',
+      contents: [
+        {
+          type: 'box',
+          layout: 'vertical',
+          spacing: '6px',
+          paddingAll: '12px',
+          cornerRadius: '12px',
+          backgroundColor: '#fee2e2',
+          contents: [
+            {
+              type: 'text',
+              text: 'คำแนะนำเมื่อถูกโกง',
+              size: 'lg',
+              weight: 'bold',
+              color: '#7f1d1d',
+              wrap: true,
+            },
+            {
+              type: 'text',
+              text: 'เลือกประเภทเหตุการณ์ เพื่อรับขั้นตอนแบบไทม์ไลน์ที่ทำตามได้ทันที',
+              size: 'xs',
+              color: '#991b1b',
+              wrap: true,
+            },
+          ],
+        },
+        {
+          type: 'box',
+          layout: 'vertical',
+          spacing: '8px',
+          paddingAll: '12px',
+          cornerRadius: '12px',
+          borderWidth: '1px',
+          borderColor: '#fecaca',
+          backgroundColor: '#fff7ed',
+          contents: [
+            {
+              type: 'text',
+              text: 'โกงออนไลน์',
+              size: 'md',
+              weight: 'bold',
+              color: '#9a3412',
+            },
+            {
+              type: 'text',
+              text: 'เช่น ซื้อขายออนไลน์ โอนเงินแล้วไม่ได้ของ หรือโดนหลอกให้โอนผ่านแชท/เพจ',
+              size: 'xs',
+              color: '#7c2d12',
+              wrap: true,
+            },
+            {
+              type: 'button',
+              style: 'primary',
+              color: '#ea580c',
+              action: {
+                type: 'message',
+                label: 'ดูขั้นตอนโกงออนไลน์',
+                text: 'ขอคำแนะนำโกงออนไลน์',
+              },
+            },
+          ],
+        },
+        {
+          type: 'box',
+          layout: 'vertical',
+          spacing: '8px',
+          paddingAll: '12px',
+          cornerRadius: '12px',
+          borderWidth: '1px',
+          borderColor: '#bfdbfe',
+          backgroundColor: '#f0f9ff',
+          contents: [
+            {
+              type: 'text',
+              text: 'โกงคอลเซ็นเตอร์/คอลเวนเตอร์',
+              size: 'md',
+              weight: 'bold',
+              color: '#1d4ed8',
+            },
+            {
+              type: 'text',
+              text: 'เช่น อ้างเป็นเจ้าหน้าที่รัฐ/ธนาคาร หลอกให้ติดตั้งแอป กดลิงก์ หรือโอนเงิน',
+              size: 'xs',
+              color: '#1e3a8a',
+              wrap: true,
+            },
+            {
+              type: 'button',
+              style: 'primary',
+              color: '#2563eb',
+              action: {
+                type: 'message',
+                label: 'ดูขั้นตอนคอลเซ็นเตอร์',
+                text: 'ขอคำแนะนำโกงคอลเซ็นเตอร์',
+              },
+            },
+          ],
+        },
+      ],
+    },
+  },
+});
+
+const buildLineScamOnlineFraudTimelineFlexMessage = () =>
+  buildLineScamTimelineCarouselFlexMessage({
+    altText: 'แนวทางรับมือโกงออนไลน์',
+    title: 'โกงออนไลน์: แนวทางตั้งแต่เริ่มจนปิดคดี',
+    subtitle: 'ทำตามลำดับนี้ทันทีเพื่อลดความเสียหายและเพิ่มโอกาสติดตามเงิน',
+    accentColor: '#ea580c',
+    phases: [
+      {
+        title: '24 ชั่วโมงแรก (เร่งด่วน)',
+        summary: 'โฟกัส 3 อย่าง: เก็บหลักฐาน, อายัดเส้นทางเงิน, แจ้งความให้เร็วที่สุด',
+        steps: [
+          {
+            step: 1,
+            title: 'หยุดโอนเพิ่มและเก็บหลักฐานทั้งหมด',
+            detail:
+              'แคปแชท, โปรไฟล์คนขาย, URL เพจ/เว็บ, สลิปโอน, เวลาโอน และเลขบัญชีปลายทาง เก็บเป็นไฟล์เดียวกันเพื่อส่งให้ตำรวจได้ทันที',
+          },
+          {
+            step: 2,
+            title: 'โทรแจ้งอายัดด่วน',
+            detail: 'แจ้งเหตุหลอกโอนเงินเพื่อประสานอายัดบัญชีปลายทาง และบันทึกเลขรับเรื่อง',
+            actions: [
+              { type: 'uri', label: 'โทร 1441', uri: 'tel:1441' },
+              { type: 'uri', label: 'โทร 191', uri: 'tel:191' },
+            ],
+          },
+          {
+            step: 3,
+            title: 'แจ้งความออนไลน์ทันที',
+            detail:
+              'กรอกข้อมูลเหตุการณ์ให้ครบ และอัปโหลดหลักฐานที่ชัดเจน หากมีหลายรายการให้เรียงตามเวลาเพื่อให้สำนวนเดินเร็วขึ้น',
+            actions: [{ type: 'uri', label: 'แจ้งความออนไลน์', uri: 'https://www.thaipoliceonline.go.th' }],
+          },
+          {
+            step: 4,
+            title: 'ติดต่อธนาคารที่โอนออกทันที',
+            detail: 'แจ้งว่าเป็นคดีหลอกโอนเงิน ขอหมายเลขอ้างอิงธุรกรรมและเอกสารประกอบสำหรับส่งพนักงานสอบสวน',
+          },
+        ],
+        footerActions: [
+          { type: 'uri', label: 'เปิดเว็บแจ้งความ', uri: 'https://www.thaipoliceonline.go.th' },
+          { type: 'uri', label: 'โทร 1441', uri: 'tel:1441' },
+        ],
+      },
+      {
+        title: 'ติดตามคดีจนปิดคดี',
+        summary: 'หลังแจ้งความแล้ว ให้เดินเอกสารและติดตามผลเป็นรอบๆ เพื่อลดโอกาสคดีค้าง',
+        steps: [
+          {
+            step: 5,
+            title: 'ส่งหลักฐานเพิ่มตามที่พนักงานสอบสวนร้องขอ',
+            detail:
+              'เช่น รายการเดินบัญชี, เอกสารยืนยันตัวตน, ภาพหน้าจอเพิ่มเติม และข้อมูลบัญชีที่เกี่ยวข้องทั้งหมด',
+          },
+          {
+            step: 6,
+            title: 'พิจารณาดำเนินคดีเพิ่มเติม',
+            detail:
+              'นอกจากคดีอาญา อาจปรึกษาแนวทางเรียกค่าเสียหายทางแพ่ง โดยเตรียมลำดับเหตุการณ์และมูลค่าความเสียหายให้ชัดเจน',
+            actions: [{ type: 'uri', label: 'ข้อมูลยุติธรรม', uri: 'https://www.moj.go.th' }],
+          },
+          {
+            step: 7,
+            title: 'ติดตามผลคดีและปิดคดี',
+            detail:
+              'เก็บเลขคดี/เลขรับแจ้งไว้เสมอ นัดติดตามความคืบหน้าตามรอบ และเก็บเอกสารปิดคดีเพื่อใช้ป้องกันเหตุซ้ำ',
+            actions: [{ type: 'message', label: 'เลือกประเภทอื่น', text: 'คำแนะนำเมื่อถูกโกง' }],
+          },
+        ],
+        footerActions: [
+          { type: 'message', label: 'กลับไปเลือกประเภท', text: 'คำแนะนำเมื่อถูกโกง' },
+          { type: 'uri', label: 'โทร 191', uri: 'tel:191' },
+        ],
+      },
+    ],
+  });
+
+const buildLineScamCallCenterTimelineFlexMessage = () =>
+  buildLineScamTimelineCarouselFlexMessage({
+    altText: 'แนวทางรับมือโกงคอลเซ็นเตอร์',
+    title: 'โกงคอลเซ็นเตอร์: แนวทางตั้งแต่เหตุฉุกเฉินจนปิดคดี',
+    subtitle: 'หากโดนหลอกให้กดลิงก์/ติดตั้งแอป/ยืนยัน OTP ให้ทำตามขั้นตอนนี้ทันที',
+    accentColor: '#2563eb',
+    phases: [
+      {
+        title: 'หยุดความเสียหายทันที',
+        summary: 'โฟกัสการตัดการเข้าถึงอุปกรณ์และบัญชี ก่อนที่เงินหรือข้อมูลจะเสียหายเพิ่ม',
+        steps: [
+          {
+            step: 1,
+            title: 'ตัดการเชื่อมต่อทันที',
+            detail: 'เปิดโหมดเครื่องบินหรือปิดอินเทอร์เน็ตทันที โดยเฉพาะเมื่อเพิ่งกดลิงก์หรือให้สิทธิ์รีโมตหน้าจอ',
+          },
+          {
+            step: 2,
+            title: 'ถอนแอปรีโมต/แอปไม่รู้จัก',
+            detail:
+              'ลบแอปที่คนร้ายให้ติดตั้ง เปลี่ยนรหัสผ่านสำคัญทั้งหมด และปิดการอนุญาตที่ไม่จำเป็นในเครื่อง',
+          },
+          {
+            step: 3,
+            title: 'อายัดบัญชีและแจ้งเหตุด่วน',
+            detail: 'หากมีการโอนหรือสงสัยว่าบัญชีถูกควบคุม ให้แจ้งอายัดทันทีและเก็บเลขรับเรื่อง',
+            actions: [
+              { type: 'uri', label: 'โทร 1441', uri: 'tel:1441' },
+              { type: 'uri', label: 'โทร 191', uri: 'tel:191' },
+            ],
+          },
+          {
+            step: 4,
+            title: 'อายัดซิม/เปลี่ยนรหัสทุกระบบ',
+            detail:
+              'ติดต่อเครือข่ายมือถือเพื่อป้องกันการยึดเบอร์ และรีเซ็ตรหัสผ่านอีเมล/ธนาคาร/โซเชียล พร้อมเปิด 2FA',
+          },
+        ],
+        footerActions: [
+          { type: 'uri', label: 'โทร 1441', uri: 'tel:1441' },
+          { type: 'uri', label: 'แจ้งความออนไลน์', uri: 'https://www.thaipoliceonline.go.th' },
+        ],
+      },
+      {
+        title: 'ทำสำนวนและติดตามคดี',
+        summary: 'รวมพยานหลักฐานให้ครบ แล้วส่งต่อเข้าสำนวนเพื่อดำเนินคดีต่อเนื่องจนปิดเรื่อง',
+        steps: [
+          {
+            step: 5,
+            title: 'รวมหลักฐานดิจิทัลทั้งหมด',
+            detail:
+              'เบอร์โทรต้นทาง, ไฟล์เสียง, ลิงก์ที่ส่งมา, SMS/OTP, ประวัติธุรกรรม และภาพหน้าจอเหตุการณ์เรียงตามเวลา',
+          },
+          {
+            step: 6,
+            title: 'แจ้งความพร้อมหลักฐานชุดเดียวกัน',
+            detail:
+              'ส่งข้อมูลให้ครบในครั้งเดียวเพื่อลดเวลาแก้สำนวน และอ้างอิงเลขรับแจ้งทุกครั้งที่ติดตามผล',
+            actions: [{ type: 'uri', label: 'เปิดเว็บแจ้งความ', uri: 'https://www.thaipoliceonline.go.th' }],
+          },
+          {
+            step: 7,
+            title: 'ติดตามคดีจนปิด',
+            detail:
+              'นัดติดตามสถานะกับหน่วยงานเจ้าของสำนวนเป็นรอบๆ และเก็บเอกสารสรุปผลคดีไว้ใช้อ้างอิงในอนาคต',
+            actions: [{ type: 'message', label: 'เลือกประเภทอื่น', text: 'คำแนะนำเมื่อถูกโกง' }],
+          },
+        ],
+        footerActions: [
+          { type: 'message', label: 'กลับไปเลือกประเภท', text: 'คำแนะนำเมื่อถูกโกง' },
+          { type: 'uri', label: 'โทร 191', uri: 'tel:191' },
+        ],
+      },
+    ],
   });
 
 const buildLineScamUsageFlexMessage = () =>
@@ -1022,7 +1531,13 @@ const buildLineScamUnknownCommandText = () =>
 const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
   const urls = liffUrls && typeof liffUrls === 'object' ? liffUrls : {};
   if (commandKey === 'help_when_scammed') {
-    return [buildLineScamHelpFlexMessage()];
+    return [buildLineScamHelpTypeSelectorFlexMessage()];
+  }
+  if (commandKey === 'help_online_scam') {
+    return [buildLineScamOnlineFraudTimelineFlexMessage()];
+  }
+  if (commandKey === 'help_call_center_scam') {
+    return [buildLineScamCallCenterTimelineFlexMessage()];
   }
   if (commandKey === 'check_scammer') {
     return [
@@ -2121,6 +2636,18 @@ const LINE_SCAM_COMMAND_KEY_BY_TEXT = new Map([
   [LINE_SCAM_RICH_MENU_COMMANDS.CHECK_FAKE_NEWS, 'check_fake_news'],
   [LINE_SCAM_RICH_MENU_COMMANDS.ASSESS_RISK, 'assess_risk'],
   [LINE_SCAM_RICH_MENU_COMMANDS.HOW_TO_USE, 'how_to_use'],
+  ['คำแนะนำเมื่อถือถูกโกง', 'help_when_scammed'],
+  ['คำแนะนำเมื่อโดนโกง', 'help_when_scammed'],
+  ['ขอคำแนะนำโกงออนไลน์', 'help_online_scam'],
+  ['ดูขั้นตอนโกงออนไลน์', 'help_online_scam'],
+  ['เลือกโกงออนไลน์', 'help_online_scam'],
+  ['โกงออนไลน์', 'help_online_scam'],
+  ['ขอคำแนะนำโกงคอลเซ็นเตอร์', 'help_call_center_scam'],
+  ['ดูขั้นตอนคอลเซ็นเตอร์', 'help_call_center_scam'],
+  ['เลือกโกงคอลเซ็นเตอร์', 'help_call_center_scam'],
+  ['โกงคอลเซ็นเตอร์', 'help_call_center_scam'],
+  ['โกงคอลเซนเตอร์', 'help_call_center_scam'],
+  ['โกงคอลเวนเตอร์', 'help_call_center_scam'],
   ['แนะนำวิธีการใช้งาน', 'how_to_use'],
 ]);
 const LINE_SCAM_LIFF_DEFAULT_PATHS = Object.freeze({
