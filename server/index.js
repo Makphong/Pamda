@@ -1393,10 +1393,6 @@ const buildLineScamOnlineFraudTimelineFlexMessage = () =>
             detail: 'แจ้งว่าเป็นคดีหลอกโอนเงิน ขอหมายเลขอ้างอิงธุรกรรมและเอกสารประกอบสำหรับส่งพนักงานสอบสวน',
           },
         ],
-        footerActions: [
-          { type: 'uri', label: 'เปิดเว็บแจ้งความ', uri: 'https://www.thaipoliceonline.go.th' },
-          { type: 'uri', label: 'โทร 1441', uri: 'tel:1441' },
-        ],
       },
       {
         title: 'ติดตามคดีจนปิดคดี',
@@ -1422,10 +1418,6 @@ const buildLineScamOnlineFraudTimelineFlexMessage = () =>
               'เก็บเลขคดี/เลขรับแจ้งไว้เสมอ นัดติดตามความคืบหน้าตามรอบ และเก็บเอกสารปิดคดีเพื่อใช้ป้องกันเหตุซ้ำ',
             actions: [{ type: 'message', label: 'เลือกประเภทอื่น', text: 'คำแนะนำเมื่อถูกโกง' }],
           },
-        ],
-        footerActions: [
-          { type: 'message', label: 'กลับไปเลือกประเภท', text: 'คำแนะนำเมื่อถูกโกง' },
-          { type: 'uri', label: 'โทร 191', uri: 'tel:191' },
         ],
       },
     ],
@@ -1469,10 +1461,6 @@ const buildLineScamCallCenterTimelineFlexMessage = () =>
               'ติดต่อเครือข่ายมือถือเพื่อป้องกันการยึดเบอร์ และรีเซ็ตรหัสผ่านอีเมล/ธนาคาร/โซเชียล พร้อมเปิด 2FA',
           },
         ],
-        footerActions: [
-          { type: 'uri', label: 'โทร 1441', uri: 'tel:1441' },
-          { type: 'uri', label: 'แจ้งความออนไลน์', uri: 'https://www.thaipoliceonline.go.th' },
-        ],
       },
       {
         title: 'ทำสำนวนและติดตามคดี',
@@ -1498,10 +1486,6 @@ const buildLineScamCallCenterTimelineFlexMessage = () =>
               'นัดติดตามสถานะกับหน่วยงานเจ้าของสำนวนเป็นรอบๆ และเก็บเอกสารสรุปผลคดีไว้ใช้อ้างอิงในอนาคต',
             actions: [{ type: 'message', label: 'เลือกประเภทอื่น', text: 'คำแนะนำเมื่อถูกโกง' }],
           },
-        ],
-        footerActions: [
-          { type: 'message', label: 'กลับไปเลือกประเภท', text: 'คำแนะนำเมื่อถูกโกง' },
-          { type: 'uri', label: 'โทร 191', uri: 'tel:191' },
         ],
       },
     ],
