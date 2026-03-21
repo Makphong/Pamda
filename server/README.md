@@ -223,6 +223,7 @@ New routes:
    - `/line/scam/liff/scammer-check`
    - `/line/scam/liff/fake-news`
    - `/line/scam/liff/risk-assess`
+   - `/line/scam/liff/police-stations`
    - `/line/escrow/liff/deal`
    - `/line/escrow/liff/seller`
    - `/line/escrow/liff/buyer`
@@ -230,6 +231,7 @@ New routes:
    - `POST /line/scam/liff/api/scammer-check`
    - `POST /line/scam/liff/api/fake-news`
    - `POST /line/scam/liff/api/risk-assess`
+   - `GET /line/scam/liff/api/police-stations`
    - `POST /line/escrow/liff/api/deals/create`
    - `POST /line/escrow/liff/api/deals/:dealId/check-payment`
    - `POST /line/escrow/liff/api/deals/submit-shipment`

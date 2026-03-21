@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   renderLineScamFakeNewsPage,
+  renderLineScamPoliceStationsPage,
   renderLineScamRiskAssessPage,
   renderLineScamScammerCheckPage,
 } from './lineScamLiffPages.js';
@@ -228,6 +229,20 @@ const LINE_SCAM_LIFF_FAKE_NEWS_URL = String(process.env.LINE_SCAM_LIFF_FAKE_NEWS
 const LINE_SCAM_LIFF_RISK_ASSESS_URL = String(
   process.env.LINE_SCAM_LIFF_RISK_ASSESS_URL || ''
 ).trim();
+const LINE_SCAM_LIFF_POLICE_STATIONS_URL = String(
+  process.env.LINE_SCAM_LIFF_POLICE_STATIONS_URL || ''
+).trim();
+const LINE_SCAM_POLICE_STATIONS_OVERPASS_URL = String(
+  process.env.LINE_SCAM_POLICE_STATIONS_OVERPASS_URL || 'https://overpass-api.de/api/interpreter'
+).trim();
+const LINE_SCAM_POLICE_STATIONS_CACHE_TTL_MS = Math.max(
+  5 * 60 * 1000,
+  Number(process.env.LINE_SCAM_POLICE_STATIONS_CACHE_TTL_MS || 24 * 60 * 60 * 1000)
+);
+const LINE_SCAM_POLICE_STATIONS_FETCH_TIMEOUT_MS = Math.max(
+  10 * 1000,
+  Number(process.env.LINE_SCAM_POLICE_STATIONS_FETCH_TIMEOUT_MS || 120 * 1000)
+);
 const LINE_ESCROW_CHANNEL_SECRET = String(process.env.LINE_ESCROW_CHANNEL_SECRET || '').trim();
 const LINE_ESCROW_CHANNEL_ACCESS_TOKEN = String(process.env.LINE_ESCROW_CHANNEL_ACCESS_TOKEN || '').trim();
 const LINE_ESCROW_USE_SCAM_CHANNEL = /^(?:1|true|yes|on)$/i.test(
@@ -414,6 +429,10 @@ const supportTicketRef = firestore.collection(FIRESTORE_SUPPORT_TICKET_COLLECTIO
 const scamReportRef = firestore.collection(FIRESTORE_SCAM_REPORT_COLLECTION);
 const aiThreadRef = firestore.collection(FIRESTORE_AI_THREAD_COLLECTION);
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+let lineScamPoliceStationsCache = {
+  fetchedAtMs: 0,
+  stations: [],
+};
 
 const resolveGoogleCalendarRedirectUri = (req) => {
   if (GOOGLE_CALENDAR_REDIRECT_URI) return GOOGLE_CALENDAR_REDIRECT_URI;
@@ -1354,8 +1373,10 @@ const buildLineScamHelpTypeSelectorFlexMessage = () => ({
   },
 });
 
-const buildLineScamOnlineFraudTimelineFlexMessage = () =>
-  buildLineScamTimelineCarouselFlexMessage({
+const buildLineScamOnlineFraudTimelineFlexMessage = ({ urlsInput = {} } = {}) => {
+  const urls = urlsInput && typeof urlsInput === 'object' && !Array.isArray(urlsInput) ? urlsInput : {};
+  const policeStationsUrl = normalizeOptionalHttpUrl(urls.policeStations || '', 1200) || '';
+  return buildLineScamTimelineCarouselFlexMessage({
     altText: 'แนวทางรับมือโกงออนไลน์',
     title: 'โกงออนไลน์: แนวทางตั้งแต่เริ่มจนปิดคดี',
     subtitle: 'ทำตามลำดับนี้ทันทีเพื่อลดความเสียหายและเพิ่มโอกาสติดตามเงิน',
@@ -1385,7 +1406,10 @@ const buildLineScamOnlineFraudTimelineFlexMessage = () =>
             title: 'แจ้งความออนไลน์ทันที',
             detail:
               'กรอกข้อมูลเหตุการณ์ให้ครบ และอัปโหลดหลักฐานที่ชัดเจน หากมีหลายรายการให้เรียงตามเวลาเพื่อให้สำนวนเดินเร็วขึ้น',
-            actions: [{ type: 'uri', label: 'แจ้งความออนไลน์', uri: 'https://www.thaipoliceonline.go.th' }],
+            actions: [
+              { type: 'uri', label: 'แจ้งความออนไลน์', uri: 'https://www.thaipoliceonline.go.th' },
+              { type: 'uri', label: 'แจ้งความที่สถานี', uri: policeStationsUrl },
+            ],
           },
           {
             step: 4,
@@ -1422,9 +1446,12 @@ const buildLineScamOnlineFraudTimelineFlexMessage = () =>
       },
     ],
   });
+};
 
-const buildLineScamCallCenterTimelineFlexMessage = () =>
-  buildLineScamTimelineCarouselFlexMessage({
+const buildLineScamCallCenterTimelineFlexMessage = ({ urlsInput = {} } = {}) => {
+  const urls = urlsInput && typeof urlsInput === 'object' && !Array.isArray(urlsInput) ? urlsInput : {};
+  const policeStationsUrl = normalizeOptionalHttpUrl(urls.policeStations || '', 1200) || '';
+  return buildLineScamTimelineCarouselFlexMessage({
     altText: 'แนวทางรับมือโกงคอลเซ็นเตอร์',
     title: 'โกงคอลเซ็นเตอร์: แนวทางตั้งแต่เหตุฉุกเฉินจนปิดคดี',
     subtitle: 'หากโดนหลอกให้กดลิงก์/ติดตั้งแอป/ยืนยัน OTP ให้ทำตามขั้นตอนนี้ทันที',
@@ -1477,7 +1504,10 @@ const buildLineScamCallCenterTimelineFlexMessage = () =>
             title: 'แจ้งความพร้อมหลักฐานชุดเดียวกัน',
             detail:
               'ส่งข้อมูลให้ครบในครั้งเดียวเพื่อลดเวลาแก้สำนวน และอ้างอิงเลขรับแจ้งทุกครั้งที่ติดตามผล',
-            actions: [{ type: 'uri', label: 'เปิดเว็บแจ้งความ', uri: 'https://www.thaipoliceonline.go.th' }],
+            actions: [
+              { type: 'uri', label: 'แจ้งความออนไลน์', uri: 'https://www.thaipoliceonline.go.th' },
+              { type: 'uri', label: 'แจ้งความที่สถานี', uri: policeStationsUrl },
+            ],
           },
           {
             step: 7,
@@ -1490,6 +1520,7 @@ const buildLineScamCallCenterTimelineFlexMessage = () =>
       },
     ],
   });
+};
 
 const buildLineScamUsageFlexMessage = () =>
   buildLineScamActionFlexMessage({
@@ -1518,10 +1549,10 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
     return [buildLineScamHelpTypeSelectorFlexMessage()];
   }
   if (commandKey === 'help_online_scam') {
-    return [buildLineScamOnlineFraudTimelineFlexMessage()];
+    return [buildLineScamOnlineFraudTimelineFlexMessage({ urlsInput: urls })];
   }
   if (commandKey === 'help_call_center_scam') {
-    return [buildLineScamCallCenterTimelineFlexMessage()];
+    return [buildLineScamCallCenterTimelineFlexMessage({ urlsInput: urls })];
   }
   if (commandKey === 'check_scammer') {
     return [
@@ -1614,6 +1645,302 @@ const toScamReportSearchableText = (reportInput) => {
       .map((item) => String(item || '').trim())
       .join(' ')
   );
+};
+
+const normalizeGeoCoordinate = (valueInput, min, max) => {
+  const value = Number(valueInput);
+  if (!Number.isFinite(value)) return null;
+  if (value < min || value > max) return null;
+  return value;
+};
+
+const toLineScamPoliceStationAddress = (tagsInput) => {
+  const tags = tagsInput && typeof tagsInput === 'object' && !Array.isArray(tagsInput) ? tagsInput : {};
+  const addressParts = [
+    tags['addr:housenumber'],
+    tags['addr:street'],
+    tags['addr:subdistrict'],
+    tags['addr:quarter'],
+    tags['addr:district'],
+    tags['addr:city'],
+    tags['addr:province'],
+    tags['addr:postcode'],
+  ]
+    .map((value) => normalizeOptionalString(value, 80))
+    .filter(Boolean);
+  if (addressParts.length > 0) {
+    return normalizeOptionalString(addressParts.join(' '), 260) || '-';
+  }
+  return (
+    normalizeOptionalString(
+      tags['addr:full'] ||
+        tags.description ||
+        tags['contact:street'] ||
+        tags['is_in'] ||
+        tags['is_in:district'] ||
+        tags['is_in:province'] ||
+        '',
+      260
+    ) || '-'
+  );
+};
+
+const mapOverpassElementToLineScamPoliceStation = (elementInput) => {
+  const element =
+    elementInput && typeof elementInput === 'object' && !Array.isArray(elementInput) ? elementInput : {};
+  const tags = element.tags && typeof element.tags === 'object' && !Array.isArray(element.tags) ? element.tags : {};
+  const latitude = normalizeGeoCoordinate(
+    element.lat ?? element.center?.lat ?? element.geometry?.lat ?? null,
+    -90,
+    90
+  );
+  const longitude = normalizeGeoCoordinate(
+    element.lon ?? element.center?.lon ?? element.geometry?.lon ?? null,
+    -180,
+    180
+  );
+  if (latitude === null || longitude === null) return null;
+
+  const name =
+    normalizeOptionalString(
+      tags['name:th'] || tags.name || tags.official_name || tags.operator || tags.branch || '',
+      160
+    ) || 'สถานีตำรวจ';
+  const phone =
+    normalizeOptionalString(
+      tags.phone || tags['contact:phone'] || tags['contact:mobile'] || tags.mobile || '',
+      80
+    ) || '';
+  const province = normalizeOptionalString(tags['addr:province'] || tags['is_in:province'] || tags['addr:state'] || '', 120);
+  const district = normalizeOptionalString(tags['addr:district'] || tags['is_in:district'] || tags['addr:city'] || '', 120);
+  const address = toLineScamPoliceStationAddress(tags);
+  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${latitude},${longitude}`)}`;
+  const searchable = normalizeSearchToken([name, address, province, district, phone].filter(Boolean).join(' '));
+  const idSeed = `${name}|${latitude.toFixed(5)}|${longitude.toFixed(5)}`;
+  const id = crypto.createHash('sha1').update(idSeed).digest('hex').slice(0, 16);
+
+  return {
+    id,
+    name,
+    address,
+    phone,
+    province: province || '',
+    district: district || '',
+    latitude: Number(latitude.toFixed(7)),
+    longitude: Number(longitude.toFixed(7)),
+    mapUrl,
+    searchable,
+    source: 'openstreetmap',
+  };
+};
+
+const calculateDistanceKm = (lat1, lng1, lat2, lng2) => {
+  const aLat = normalizeGeoCoordinate(lat1, -90, 90);
+  const aLng = normalizeGeoCoordinate(lng1, -180, 180);
+  const bLat = normalizeGeoCoordinate(lat2, -90, 90);
+  const bLng = normalizeGeoCoordinate(lng2, -180, 180);
+  if (aLat === null || aLng === null || bLat === null || bLng === null) return null;
+  const toRad = (value) => (value * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const startLat = toRad(aLat);
+  const endLat = toRad(bLat);
+  const inner =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(startLat) * Math.cos(endLat);
+  const angle = 2 * Math.atan2(Math.sqrt(inner), Math.sqrt(1 - inner));
+  return Number((6371 * angle).toFixed(3));
+};
+
+const fetchLineScamPoliceStationsFromOverpass = async () => {
+  const overpassUrl = normalizeOptionalHttpUrl(LINE_SCAM_POLICE_STATIONS_OVERPASS_URL, 1200);
+  if (!overpassUrl) {
+    const error = new Error('LINE_SCAM_POLICE_STATIONS_OVERPASS_URL is invalid.');
+    error.status = 500;
+    throw error;
+  }
+  const overpassQuery = [
+    '[out:json][timeout:120];',
+    'area["ISO3166-1"="TH"][admin_level=2]->.th;',
+    '(',
+    '  node["amenity"="police"](area.th);',
+    '  way["amenity"="police"](area.th);',
+    '  relation["amenity"="police"](area.th);',
+    ');',
+    'out center tags;',
+  ].join('\n');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, LINE_SCAM_POLICE_STATIONS_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(overpassUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      },
+      body: `data=${encodeURIComponent(overpassQuery)}`,
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(
+        normalizeOptionalString(payload?.remark || payload?.message || `Overpass API failed (${response.status})`, 280)
+      );
+      error.status = response.status;
+      throw error;
+    }
+    const elements = Array.isArray(payload?.elements) ? payload.elements : [];
+    const dedupe = new Map();
+    for (const element of elements) {
+      const station = mapOverpassElementToLineScamPoliceStation(element);
+      if (!station) continue;
+      const key = `${station.name}|${station.latitude.toFixed(4)}|${station.longitude.toFixed(4)}`;
+      if (!dedupe.has(key)) {
+        dedupe.set(key, station);
+      }
+    }
+    return Array.from(dedupe.values()).sort((a, b) => {
+      const provinceCmp = String(a.province || '').localeCompare(String(b.province || ''), 'th');
+      if (provinceCmp !== 0) return provinceCmp;
+      return String(a.name || '').localeCompare(String(b.name || ''), 'th');
+    });
+  } catch (error) {
+    if (String(error?.name || '').toLowerCase() === 'aborterror') {
+      const timeoutError = new Error('โหลดข้อมูลสถานีตำรวจจากแหล่งข้อมูลกลางไม่ทันเวลา');
+      timeoutError.status = 504;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const loadLineScamPoliceStations = async ({ forceRefresh = false } = {}) => {
+  const nowMs = Date.now();
+  const cacheStations = Array.isArray(lineScamPoliceStationsCache?.stations)
+    ? lineScamPoliceStationsCache.stations
+    : [];
+  const cacheAgeMs = nowMs - Number(lineScamPoliceStationsCache?.fetchedAtMs || 0);
+  const canUseFreshCache = cacheStations.length > 0 && cacheAgeMs >= 0 && cacheAgeMs <= LINE_SCAM_POLICE_STATIONS_CACHE_TTL_MS;
+  if (!forceRefresh && canUseFreshCache) {
+    return {
+      stations: cacheStations,
+      source: 'cache',
+      fetchedAtMs: Number(lineScamPoliceStationsCache.fetchedAtMs || 0),
+    };
+  }
+
+  try {
+    const stations = await fetchLineScamPoliceStationsFromOverpass();
+    if (!stations.length) {
+      if (cacheStations.length > 0) {
+        return {
+          stations: cacheStations,
+          source: 'cache_stale',
+          fetchedAtMs: Number(lineScamPoliceStationsCache.fetchedAtMs || 0),
+        };
+      }
+      const error = new Error('ไม่พบข้อมูลสถานีตำรวจจากแหล่งข้อมูลกลาง');
+      error.status = 502;
+      throw error;
+    }
+    lineScamPoliceStationsCache = {
+      fetchedAtMs: nowMs,
+      stations,
+    };
+    return {
+      stations,
+      source: 'overpass',
+      fetchedAtMs: nowMs,
+    };
+  } catch (error) {
+    if (cacheStations.length > 0) {
+      return {
+        stations: cacheStations,
+        source: 'cache_stale',
+        fetchedAtMs: Number(lineScamPoliceStationsCache.fetchedAtMs || 0),
+      };
+    }
+    throw error;
+  }
+};
+
+const searchLineScamPoliceStations = ({
+  stationsInput,
+  query = '',
+  latitude = null,
+  longitude = null,
+  limit = 80,
+}) => {
+  const stations = Array.isArray(stationsInput) ? stationsInput : [];
+  const lat = normalizeGeoCoordinate(latitude, -90, 90);
+  const lng = normalizeGeoCoordinate(longitude, -180, 180);
+  const queryToken = normalizeSearchToken(query);
+  const queryParts = queryToken.split(' ').filter(Boolean);
+  const safeLimit = Math.min(120, Math.max(1, Number(limit || 80)));
+  const rows = [];
+
+  for (const stationInput of stations) {
+    const station =
+      stationInput && typeof stationInput === 'object' && !Array.isArray(stationInput) ? stationInput : {};
+    const searchText = normalizeSearchToken(
+      station.searchable ||
+        [station.name, station.address, station.province, station.district, station.phone]
+          .filter(Boolean)
+          .join(' ')
+    );
+    let score = 0;
+    let matched = true;
+    if (queryParts.length > 0) {
+      for (const token of queryParts) {
+        const index = searchText.indexOf(token);
+        if (index < 0) {
+          matched = false;
+          break;
+        }
+        score += Math.max(40, 500 - index);
+      }
+    }
+    if (!matched) continue;
+    const distanceKm =
+      lat !== null && lng !== null
+        ? calculateDistanceKm(lat, lng, station.latitude, station.longitude)
+        : null;
+    if (distanceKm !== null) {
+      score += Math.max(0, 300 - distanceKm * 10);
+    }
+    rows.push({
+      ...station,
+      distanceKm: distanceKm !== null ? Number(distanceKm.toFixed(2)) : null,
+      _score: score,
+    });
+  }
+
+  rows.sort((a, b) => {
+    if (lat !== null && lng !== null) {
+      const aDist = Number.isFinite(Number(a.distanceKm)) ? Number(a.distanceKm) : Number.POSITIVE_INFINITY;
+      const bDist = Number.isFinite(Number(b.distanceKm)) ? Number(b.distanceKm) : Number.POSITIVE_INFINITY;
+      if (aDist !== bDist) return aDist - bDist;
+    }
+    if (b._score !== a._score) return b._score - a._score;
+    return String(a.name || '').localeCompare(String(b.name || ''), 'th');
+  });
+
+  return rows.slice(0, safeLimit).map((row) => ({
+    id: row.id,
+    name: row.name,
+    address: row.address,
+    phone: row.phone,
+    province: row.province,
+    district: row.district,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    mapUrl: row.mapUrl,
+    distanceKm: row.distanceKm,
+    source: row.source,
+  }));
 };
 
 const setLineScamLiffHtmlHeaders = (res) => {
@@ -2638,6 +2965,7 @@ const LINE_SCAM_LIFF_DEFAULT_PATHS = Object.freeze({
   scammerCheck: '/line/scam/liff/scammer-check',
   fakeNews: '/line/scam/liff/fake-news',
   riskAssess: '/line/scam/liff/risk-assess',
+  policeStations: '/line/scam/liff/police-stations',
 });
 
 const resolveLineScamCommandKey = (textInput) => {
@@ -2695,6 +3023,7 @@ const resolveLineScamLiffUrls = (req, configInput = {}) => {
   const envScammerCheck = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_SCAMMER_CHECK_URL);
   const envFakeNews = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_FAKE_NEWS_URL);
   const envRiskAssess = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_RISK_ASSESS_URL);
+  const envPoliceStations = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_POLICE_STATIONS_URL);
   const configuredScammerCheck = normalizeOptionalHttpUrl(config.liffScammerCheckUrl);
   const configuredFakeNews = normalizeOptionalHttpUrl(config.liffFakeNewsUrl);
   const configuredRiskAssess = normalizeOptionalHttpUrl(config.liffRiskAssessUrl);
@@ -2713,6 +3042,7 @@ const resolveLineScamLiffUrls = (req, configInput = {}) => {
       configuredRiskAssess ||
       envRiskAssess ||
       buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.riskAssess),
+    policeStations: envPoliceStations || buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.policeStations),
   };
 };
 
@@ -7742,6 +8072,59 @@ app.get('/line/scam/liff/risk-assess', (_req, res) => {
         maxImageCount: SCAM_LIFF_IMAGE_MAX_COUNT,
       })
     );
+});
+
+app.get('/line/scam/liff/police-stations', (_req, res) => {
+  setLineScamLiffHtmlHeaders(res);
+  return res.status(200).type('html').send(renderLineScamPoliceStationsPage());
+});
+
+app.get('/line/scam/liff/api/police-stations', async (req, res) => {
+  try {
+    const query = normalizeOptionalString(req.query?.query || req.query?.q || '', 140);
+    const latitude = normalizeGeoCoordinate(req.query?.lat, -90, 90);
+    const longitude = normalizeGeoCoordinate(req.query?.lng, -180, 180);
+    const limitRaw = Number.parseInt(String(req.query?.limit || '80'), 10);
+    const limit = Number.isInteger(limitRaw) ? Math.min(120, Math.max(1, limitRaw)) : 80;
+    const forceRefresh = /^(?:1|true|yes)$/i.test(String(req.query?.refresh || '').trim());
+
+    const sourceResult = await loadLineScamPoliceStations({ forceRefresh });
+    const filteredStations = searchLineScamPoliceStations({
+      stationsInput: sourceResult.stations,
+      query,
+      latitude,
+      longitude,
+      limit,
+    });
+    const nearestDistanceKm =
+      latitude !== null &&
+      longitude !== null &&
+      filteredStations.length > 0 &&
+      Number.isFinite(Number(filteredStations[0]?.distanceKm))
+        ? Number(filteredStations[0].distanceKm)
+        : null;
+    const fetchedAtMs = Number(sourceResult.fetchedAtMs || 0);
+    const fetchedAt =
+      Number.isFinite(fetchedAtMs) && fetchedAtMs > 0 ? new Date(fetchedAtMs).toISOString() : null;
+
+    return res.json({
+      query,
+      usedGps: latitude !== null && longitude !== null,
+      latitude,
+      longitude,
+      total: filteredStations.length,
+      source: sourceResult.source,
+      fetchedAt,
+      nearestDistanceKm,
+      stations: filteredStations,
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to load police stations.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to load police stations.' });
+  }
 });
 
 app.post('/line/scam/liff/api/scammer-check', async (req, res) => {

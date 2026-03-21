@@ -870,3 +870,249 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0, maxImageCount 
       });
     `,
   });
+
+export const renderLineScamPoliceStationsPage = () =>
+  buildShell({
+    title: 'แจ้งความที่สถานีตำรวจ',
+    description:
+      'ค้นหาสถานีตำรวจทั่วไทยจากชื่อ/จังหวัด/ที่อยู่ และกดใช้ GPS เพื่อเรียงสถานีที่อยู่ใกล้คุณที่สุด พร้อมปุ่มโทรและเปิดแผนที่',
+    bodyHtml: `
+      <section class="card">
+        <form id="police-search-form" class="row">
+          <div>
+            <label for="police-query">ค้นหาสถานีตำรวจ</label>
+            <input
+              id="police-query"
+              type="text"
+              maxlength="120"
+              placeholder="เช่น เมืองเชียงใหม่, บางรัก, พัทยา"
+            />
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button id="police-search-submit" class="btn primary" type="submit">ค้นหา</button>
+            <button id="police-search-nearest" class="btn upload" type="button">ใช้ GPS หาใกล้สุด</button>
+          </div>
+        </form>
+        <div id="police-status" class="status hidden"></div>
+        <div id="police-summary" class="tiny" style="margin-top:10px;"></div>
+        <div id="police-results" class="row" style="margin-top:10px;"></div>
+      </section>
+    `,
+    script: `
+      const form = document.getElementById('police-search-form');
+      const queryInput = document.getElementById('police-query');
+      const submitBtn = document.getElementById('police-search-submit');
+      const nearestBtn = document.getElementById('police-search-nearest');
+      const statusBox = document.getElementById('police-status');
+      const summaryBox = document.getElementById('police-summary');
+      const resultsBox = document.getElementById('police-results');
+
+      let selectedLat = null;
+      let selectedLng = null;
+
+      function escapeHtml(value) {
+        return String(value || '').replace(/[&<>"']/g, function (char) {
+          if (char === '&') return '&amp;';
+          if (char === '<') return '&lt;';
+          if (char === '>') return '&gt;';
+          if (char === '"') return '&quot;';
+          return '&#39;';
+        });
+      }
+
+      function showStatus(message, type) {
+        statusBox.classList.remove('hidden', 'error', 'success');
+        statusBox.textContent = message || '';
+        if (type === 'error') statusBox.classList.add('error');
+        if (type === 'success') statusBox.classList.add('success');
+      }
+
+      function hideStatus() {
+        statusBox.classList.add('hidden');
+        statusBox.textContent = '';
+      }
+
+      function setBusy(isBusy, source) {
+        submitBtn.disabled = Boolean(isBusy);
+        nearestBtn.disabled = Boolean(isBusy);
+        if (!isBusy) {
+          submitBtn.textContent = 'ค้นหา';
+          nearestBtn.textContent = 'ใช้ GPS หาใกล้สุด';
+          return;
+        }
+        if (source === 'gps') {
+          nearestBtn.textContent = 'กำลังใช้ GPS...';
+          submitBtn.textContent = 'ค้นหา';
+          return;
+        }
+        submitBtn.textContent = 'กำลังค้นหา...';
+        nearestBtn.textContent = 'ใช้ GPS หาใกล้สุด';
+      }
+
+      function toTelUri(phoneInput) {
+        const raw = String(phoneInput || '').trim();
+        if (!raw) return '';
+        const compact = raw.replace(/[^0-9+#*]/g, '');
+        if (!compact) return '';
+        return 'tel:' + compact;
+      }
+
+      function renderResults(payload) {
+        const stations = Array.isArray(payload && payload.stations) ? payload.stations : [];
+        const usedGps = Boolean(payload && payload.usedGps);
+        const total = Number(payload && payload.total || 0);
+        const source = String(payload && payload.source || '');
+        const nearestDistanceKm = Number(payload && payload.nearestDistanceKm || 0);
+
+        let summaryText = 'พบทั้งหมด ' + Number(total || stations.length).toLocaleString() + ' สถานี';
+        if (usedGps && Number.isFinite(nearestDistanceKm) && nearestDistanceKm > 0) {
+          summaryText += ' | ใกล้สุดประมาณ ' + nearestDistanceKm.toFixed(2) + ' กม.';
+        }
+        if (source) {
+          summaryText += ' | แหล่งข้อมูล: ' + source;
+        }
+        summaryBox.textContent = summaryText;
+
+        if (!stations.length) {
+          resultsBox.innerHTML = '<div class="card" style="margin-top:0;"><p class="tiny">ไม่พบสถานีที่ตรงคำค้นหา ลองค้นหาด้วยชื่อจังหวัดหรืออำเภอ</p></div>';
+          return;
+        }
+
+        resultsBox.innerHTML = stations
+          .map(function (station, index) {
+            const name = escapeHtml(station && station.name ? station.name : 'สถานีตำรวจ');
+            const address = escapeHtml(station && station.address ? station.address : '-');
+            const phone = escapeHtml(station && station.phone ? station.phone : '-');
+            const distanceKm = Number(station && station.distanceKm);
+            const distanceText = Number.isFinite(distanceKm) && distanceKm >= 0
+              ? distanceKm.toFixed(2) + ' กม.'
+              : '-';
+            const mapUrl = escapeHtml(station && station.mapUrl ? station.mapUrl : '#');
+            const telUrl = toTelUri(station && station.phone ? station.phone : '');
+            const directionUrl =
+              selectedLat !== null &&
+              selectedLng !== null &&
+              Number.isFinite(Number(station && station.latitude)) &&
+              Number.isFinite(Number(station && station.longitude))
+                ? 'https://www.google.com/maps/dir/?api=1&origin=' +
+                  encodeURIComponent(String(selectedLat) + ',' + String(selectedLng)) +
+                  '&destination=' +
+                  encodeURIComponent(String(station.latitude) + ',' + String(station.longitude)) +
+                  '&travelmode=driving'
+                : '';
+            return (
+              '<article class="card" style="margin-top:0;">' +
+                '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">' +
+                  '<h3 style="margin:0;">' + escapeHtml(String(index + 1)) + '. ' + name + '</h3>' +
+                  '<span class="badge ok">ระยะทาง: ' + escapeHtml(distanceText) + '</span>' +
+                '</div>' +
+                '<p class="tiny" style="margin-top:8px;">ที่อยู่: ' + address + '</p>' +
+                '<p class="tiny">เบอร์ติดต่อ: ' + phone + '</p>' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">' +
+                  (telUrl
+                    ? '<a class="btn upload" href="' + escapeHtml(telUrl) + '" style="text-decoration:none;">โทรสถานี</a>'
+                    : '') +
+                  '<a class="btn upload" href="' + mapUrl + '" target="_blank" rel="noreferrer" style="text-decoration:none;">เปิดแผนที่</a>' +
+                  (directionUrl
+                    ? '<a class="btn upload" href="' + escapeHtml(directionUrl) + '" target="_blank" rel="noreferrer" style="text-decoration:none;">นำทางจากตำแหน่งฉัน</a>'
+                    : '') +
+                '</div>' +
+              '</article>'
+            );
+          })
+          .join('');
+      }
+
+      async function loadStations(options) {
+        const opts = options && typeof options === 'object' ? options : {};
+        const query = String(opts.query || '').trim();
+        const lat = Number.isFinite(Number(opts.lat)) ? Number(opts.lat) : null;
+        const lng = Number.isFinite(Number(opts.lng)) ? Number(opts.lng) : null;
+        const source = String(opts.source || '');
+        const params = new URLSearchParams();
+        if (query) params.set('query', query);
+        if (lat !== null && lng !== null) {
+          params.set('lat', String(lat));
+          params.set('lng', String(lng));
+        }
+        params.set('limit', '80');
+
+        hideStatus();
+        setBusy(true, source === 'gps' ? 'gps' : 'search');
+        try {
+          const response = await fetch('/line/scam/liff/api/police-stations?' + params.toString(), {
+            method: 'GET'
+          });
+          const payload = await response.json().catch(function () { return null; });
+          if (!response.ok) {
+            throw new Error((payload && payload.message) || 'ไม่สามารถโหลดข้อมูลสถานีตำรวจได้');
+          }
+          renderResults(payload || {});
+          showStatus('โหลดข้อมูลสถานีตำรวจสำเร็จ', 'success');
+        } catch (error) {
+          resultsBox.innerHTML = '';
+          summaryBox.textContent = '';
+          showStatus(error && error.message ? error.message : 'เกิดข้อผิดพลาดในการโหลดข้อมูลสถานีตำรวจ', 'error');
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        const query = String(queryInput.value || '').trim();
+        loadStations({
+          query: query,
+          lat: selectedLat,
+          lng: selectedLng,
+          source: 'search'
+        });
+      });
+
+      nearestBtn.addEventListener('click', function () {
+        if (!navigator.geolocation || typeof navigator.geolocation.getCurrentPosition !== 'function') {
+          showStatus('อุปกรณ์ไม่รองรับ GPS location', 'error');
+          return;
+        }
+        hideStatus();
+        setBusy(true, 'gps');
+        navigator.geolocation.getCurrentPosition(
+          function (position) {
+            selectedLat = Number(position && position.coords && position.coords.latitude);
+            selectedLng = Number(position && position.coords && position.coords.longitude);
+            if (!Number.isFinite(selectedLat) || !Number.isFinite(selectedLng)) {
+              setBusy(false);
+              showStatus('ไม่สามารถอ่านพิกัดจาก GPS ได้', 'error');
+              return;
+            }
+            loadStations({
+              query: String(queryInput.value || '').trim(),
+              lat: selectedLat,
+              lng: selectedLng,
+              source: 'gps'
+            });
+          },
+          function (error) {
+            setBusy(false);
+            const code = Number(error && error.code || 0);
+            if (code === 1) {
+              showStatus('ต้องอนุญาตการเข้าถึงตำแหน่งก่อน จึงจะเรียงสถานีใกล้สุดได้', 'error');
+              return;
+            }
+            if (code === 3) {
+              showStatus('ขอพิกัดนานเกินไป กรุณาลองใหม่ในจุดที่สัญญาณดีขึ้น', 'error');
+              return;
+            }
+            showStatus('ไม่สามารถอ่านตำแหน่งปัจจุบันได้', 'error');
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 12000,
+            maximumAge: 30000
+          }
+        );
+      });
+
+      loadStations({ query: '' });
+    `,
+  });
