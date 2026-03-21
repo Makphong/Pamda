@@ -2947,9 +2947,46 @@ const buildLineEscrowTrackingArrivedFlexMessage = (dealInput) => {
 const buildLineEscrowPaymentSuccessFlexMessage = (dealInput) => {
   const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
   const sellerLiffUrl = normalizeOptionalHttpUrl(deal.sellerLiffUrl || '', 1200);
+  const safeDealId = normalizeOptionalString(deal.id || '', 180);
+  const footerButtons = [];
+
+  if (safeDealId) {
+    footerButtons.push({
+      type: 'button',
+      style: 'secondary',
+      color: '#e0e7ff',
+      action: {
+        type: 'clipboard',
+        label: '\u0E04\u0E31\u0E14\u0E25\u0E2D\u0E01\u0E23\u0E2B\u0E31\u0E2A\u0E14\u0E35\u0E25',
+        clipboardText: safeDealId,
+      },
+    });
+  }
+
+  if (sellerLiffUrl) {
+    footerButtons.push({
+      type: 'button',
+      style: 'primary',
+      color: '#0f766e',
+      action: {
+        type: 'uri',
+        label: 'Open Seller LIFF',
+        uri: sellerLiffUrl,
+      },
+    });
+  } else {
+    footerButtons.push({
+      type: 'text',
+      text: 'Seller LIFF URL is not configured yet.',
+      size: 'xs',
+      color: '#991b1b',
+      wrap: true,
+    });
+  }
+
   return {
     type: 'flex',
-    altText: `ดีล ${String(deal.id || '').trim()} ชำระเงินแล้ว`,
+    altText: 'Deal ' + String(deal.id || '').trim() + ' paid',
     contents: {
       type: 'bubble',
       body: {
@@ -2957,18 +2994,21 @@ const buildLineEscrowPaymentSuccessFlexMessage = (dealInput) => {
         layout: 'vertical',
         spacing: '8px',
         contents: [
-          { type: 'text', text: 'ชำระเงินสำเร็จแล้ว', size: 'lg', weight: 'bold', color: '#166534' },
-          { type: 'text', text: `ดีล: ${String(deal.id || '-').trim()}`, size: 'sm', color: '#334155' },
+          { type: 'text', text: 'Payment completed', size: 'lg', weight: 'bold', color: '#166534' },
+          { type: 'text', text: 'Deal: ' + String(deal.id || '-').trim(), size: 'sm', color: '#334155' },
           {
             type: 'text',
-            text: `ยอดคุ้มครอง ${Number(toEscrowAmountThb(deal.paymentAmountSatang || 0)).toLocaleString()} THB`,
+            text:
+              'Protected amount ' +
+              Number(toEscrowAmountThb(deal.paymentAmountSatang || 0)).toLocaleString() +
+              ' THB',
             size: 'sm',
             color: '#334155',
             wrap: true,
           },
           {
             type: 'text',
-            text: 'ขั้นตอนถัดไป: ผู้ขายกดส่งเลขพัสดุพร้อมสลิปที่หน้า LIFF ผู้ขาย',
+            text: 'Next step: seller submits tracking number and shipping slip in seller LIFF page.',
             size: 'xs',
             color: '#6b7280',
             wrap: true,
@@ -2979,28 +3019,7 @@ const buildLineEscrowPaymentSuccessFlexMessage = (dealInput) => {
         type: 'box',
         layout: 'vertical',
         spacing: '8px',
-        contents: sellerLiffUrl
-          ? [
-              {
-                type: 'button',
-                style: 'primary',
-                color: '#0f766e',
-                action: {
-                  type: 'uri',
-                  label: 'เปิดหน้า LIFF ผู้ขาย',
-                  uri: sellerLiffUrl,
-                },
-              },
-            ]
-          : [
-              {
-                type: 'text',
-                text: 'ยังไม่ได้ตั้งค่า LIFF ผู้ขาย',
-                size: 'xs',
-                color: '#991b1b',
-                wrap: true,
-              },
-            ],
+        contents: footerButtons,
       },
     },
   };
