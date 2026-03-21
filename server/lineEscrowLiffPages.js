@@ -147,6 +147,20 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
         max-height: 240px;
         border-radius: 8px;
       }
+      .preview-grid {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+        gap: 8px;
+      }
+      .preview-grid img {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 1px solid #dbe4f0;
+        background: #ffffff;
+      }
       .qr {
         margin-top: 10px;
         border: 1px solid #dbeafe;
@@ -928,7 +942,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       })();
     `,
   });
-export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
+export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0, maxSlipImageCount = 10 } = {}) =>
   buildShell({
     title: 'ผู้ขายส่งเลขพัสดุ',
     subtitle: 'ส่งเลขพัสดุ + รูปหลักฐานให้ระบบ',
@@ -953,9 +967,8 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
           </div>
           <div>
             <label>รูปหลักฐานการส่ง</label>
-            <input id="seller-slip-input" type="file" accept="image/*" class="hidden" />
+            <input id="seller-slip-input" type="file" accept="image/*" class="hidden" multiple />
             <button id="seller-slip-pick-btn" class="btn upload" type="button">อัปโหลดรูปหลักฐาน</button>
-            <p class="tiny">รองรับเฉพาะไฟล์ภาพ ขนาดสูงสุด ${Math.max(0, Number(maxSlipImageBytes || 0))} bytes</p>
             <div id="seller-slip-preview" class="preview">ยังไม่ได้เลือกรูป</div>
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
@@ -978,8 +991,9 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var fileInput = document.getElementById('seller-slip-input');
       var pickBtn = document.getElementById('seller-slip-pick-btn');
       var preview = document.getElementById('seller-slip-preview');
-      var slipImage = null;
+      var slipImages = [];
       var maxBytes = ${Math.max(0, Number(maxSlipImageBytes || 0))};
+      var maxImageCount = ${Math.max(1, Math.min(10, Number(maxSlipImageCount || 10)))};
 
       var presetDealId = parseDealIdFromLocationOnly();
       if (presetDealId) {
@@ -1011,36 +1025,79 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
         fileInput.click();
       });
 
-      fileInput.addEventListener('change', function (event) {
-        var file = event.target.files && event.target.files[0];
-        if (!file) return;
-        if (!String(file.type || '').toLowerCase().startsWith('image/')) {
-          showStatus(statusBox, 'อนุญาตเฉพาะไฟล์ภาพเท่านั้น', 'error');
-          fileInput.value = '';
-          return;
-        }
-        if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
-          showStatus(statusBox, 'ไฟล์ใหญ่เกินกำหนด (' + maxBytes + ' bytes)', 'error');
-          fileInput.value = '';
-          return;
-        }
-        var reader = new FileReader();
-        reader.onload = function () {
-          var dataUrl = String(reader.result || '');
-          slipImage = {
-            id: 'slip-' + Date.now(),
-            name: String(file.name || 'shipping-slip').slice(0, 180),
-            mimeType: String(file.type || 'image/*').toLowerCase(),
-            size: Number(file.size || 0),
-            dataUrl: dataUrl
+      function readFileAsDataUrl(file) {
+        return new Promise(function (resolve, reject) {
+          var reader = new FileReader();
+          reader.onload = function () {
+            resolve(String(reader.result || ''));
           };
-          preview.innerHTML = '<img alt="slip preview" src="' + dataUrl + '" />';
-          hideStatus(statusBox);
-        };
-        reader.onerror = function () {
-          showStatus(statusBox, 'อ่านไฟล์รูปไม่สำเร็จ', 'error');
-        };
-        reader.readAsDataURL(file);
+          reader.onerror = function () {
+            reject(new Error('อ่านไฟล์รูปไม่สำเร็จ'));
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      function renderSlipPreview(images) {
+        if (!Array.isArray(images) || images.length === 0) {
+          preview.textContent = 'ยังไม่ได้เลือกรูป';
+          return;
+        }
+        preview.innerHTML =
+          '<div class="preview-grid">' +
+          images
+            .map(function (image) {
+              return '<img alt="slip preview" src="' + escapeHtml(image && image.dataUrl ? image.dataUrl : '') + '" />';
+            })
+            .join('') +
+          '</div>';
+      }
+
+      fileInput.addEventListener('change', function (event) {
+        var files = Array.from((event.target && event.target.files) || []);
+        if (files.length === 0) return;
+        if (files.length > maxImageCount) {
+          showStatus(statusBox, 'อัปโหลดได้สูงสุด ' + maxImageCount + ' รูปต่อครั้ง', 'error');
+          fileInput.value = '';
+          return;
+        }
+        for (var i = 0; i < files.length; i += 1) {
+          var file = files[i];
+          if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+            showStatus(statusBox, 'อนุญาตเฉพาะไฟล์ภาพเท่านั้น', 'error');
+            fileInput.value = '';
+            return;
+          }
+          if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
+            showStatus(statusBox, 'ไฟล์รูปมีขนาดใหญ่เกินกำหนด', 'error');
+            fileInput.value = '';
+            return;
+          }
+        }
+        Promise.all(files.map(function (file) { return readFileAsDataUrl(file); }))
+          .then(function (dataUrls) {
+            slipImages = dataUrls
+              .map(function (dataUrl, index) {
+                var currentFile = files[index] || {};
+                return {
+                  id: 'slip-' + Date.now() + '-' + index,
+                  name: String(currentFile.name || 'shipping-slip').slice(0, 180),
+                  mimeType: String(currentFile.type || 'image/*').toLowerCase(),
+                  size: Number(currentFile.size || 0),
+                  dataUrl: String(dataUrl || ''),
+                };
+              })
+              .filter(function (item) {
+                return item.dataUrl;
+              })
+              .slice(0, maxImageCount);
+            renderSlipPreview(slipImages);
+            hideStatus(statusBox);
+          })
+          .catch(function (error) {
+            showStatus(statusBox, (error && error.message) || 'อ่านไฟล์รูปไม่สำเร็จ', 'error');
+            fileInput.value = '';
+          });
       });
 
       function renderDeal(deal) {
@@ -1072,7 +1129,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
         if (!requireDealIdOrShowError()) {
           return;
         }
-        if (!slipImage) {
+        if (!Array.isArray(slipImages) || slipImages.length === 0) {
           showStatus(statusBox, 'กรุณาอัปโหลดรูปหลักฐานก่อนส่ง', 'error');
           return;
         }
@@ -1085,7 +1142,8 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
               dealId: String(dealInput.value || '').trim(),
               trackingNumber: String(trackingInput.value || '').trim(),
               courierCode: String(courierInput.value || '').trim(),
-              shippingSlipImage: slipImage
+              shippingSlipImages: slipImages,
+              shippingSlipImage: slipImages[0] || null
             })
           });
           var payload = await response.json().catch(function () { return null; });

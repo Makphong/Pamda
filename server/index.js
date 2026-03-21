@@ -26,7 +26,7 @@ app.set('trust proxy', true);
 app.use(helmet());
 app.use(
   express.json({
-    limit: String(process.env.REQUEST_BODY_LIMIT || '10mb'),
+    limit: String(process.env.REQUEST_BODY_LIMIT || '150mb'),
     verify: (req, _res, buffer) => {
       req.rawBody = buffer;
     },
@@ -181,7 +181,11 @@ const SCAM_REPORT_IMAGE_MAX_BYTES = Math.max(
 );
 const SCAM_LIFF_IMAGE_MAX_BYTES = Math.max(
   120_000,
-  Number(process.env.SCAM_LIFF_IMAGE_MAX_BYTES || 2_500_000)
+  Number(process.env.SCAM_LIFF_IMAGE_MAX_BYTES || 10_485_760)
+);
+const SCAM_LIFF_IMAGE_MAX_COUNT = Math.max(
+  1,
+  Math.min(10, Number(process.env.SCAM_LIFF_IMAGE_MAX_COUNT || 10))
 );
 const SUPPORT_TICKET_MAX_MESSAGE_LENGTH = Math.max(
   200,
@@ -256,7 +260,11 @@ const LINE_ESCROW_AUTO_RELEASE_HOURS = Math.max(
 );
 const LINE_ESCROW_SLIP_IMAGE_MAX_BYTES = Math.max(
   120_000,
-  Number(process.env.LINE_ESCROW_SLIP_IMAGE_MAX_BYTES || 2_500_000)
+  Number(process.env.LINE_ESCROW_SLIP_IMAGE_MAX_BYTES || 10_485_760)
+);
+const LINE_ESCROW_SLIP_IMAGE_MAX_COUNT = Math.max(
+  1,
+  Math.min(10, Number(process.env.LINE_ESCROW_SLIP_IMAGE_MAX_COUNT || 10))
 );
 const LINE_ESCROW_CRON_SECRET = String(process.env.LINE_ESCROW_CRON_SECRET || '').trim();
 const LINE_ESCROW_PAYMENT_WEBHOOK_SECRET = String(
@@ -759,6 +767,7 @@ const extractJsonObjectFromText = (textInput) => {
 const callGeminiStructuredJson = async ({
   prompt,
   imageDataUrl = '',
+  imageDataUrls = [],
   model = GEMINI_MODEL,
   taskName = 'analysis',
 }) => {
@@ -775,11 +784,35 @@ const callGeminiStructuredJson = async ({
   }
 
   const parts = [{ text: safePrompt }];
-  if (imageDataUrl) {
+  const imageCandidates = Array.isArray(imageDataUrls)
+    ? imageDataUrls
+    : imageDataUrl
+      ? [imageDataUrl]
+      : [];
+  const normalizedImageDataUrls = imageCandidates
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .slice(0, SCAM_LIFF_IMAGE_MAX_COUNT);
+  if (normalizedImageDataUrls.length > 0) {
+    for (const imageCandidate of normalizedImageDataUrls) {
+      const parsedImage = parseImageDataUrlForGemini(imageCandidate, SCAM_LIFF_IMAGE_MAX_BYTES);
+      if (!parsedImage) {
+        const error = new Error('Invalid image data. Please upload valid image files.');
+        error.status = 400;
+        throw error;
+      }
+      parts.push({
+        inline_data: {
+          mime_type: parsedImage.mimeType,
+          data: parsedImage.data,
+        },
+      });
+    }
+  } else if (imageDataUrl) {
     const parsedImage = parseImageDataUrlForGemini(imageDataUrl, SCAM_LIFF_IMAGE_MAX_BYTES);
     if (!parsedImage) {
       const error = new Error(
-        `Invalid image data. Please upload image/* base64 and keep size <= ${SCAM_LIFF_IMAGE_MAX_BYTES} bytes.`
+        'Invalid image data. Please upload valid image files.'
       );
       error.status = 400;
       throw error;
@@ -872,7 +905,6 @@ const resolveLineScamRiskLevel = (riskPercentInput) => {
 
 const buildLineScamActionFlexMessage = ({
   title,
-  subtitle = '',
   bodyText = '',
   actionLabel = 'เริ่มใช้งานตอนนี้',
   actionUrl = '',
@@ -905,17 +937,6 @@ const buildLineScamActionFlexMessage = ({
                 color: '#ffffff',
                 wrap: true,
               },
-              ...(subtitle
-                ? [
-                    {
-                      type: 'text',
-                      text: normalizeOptionalString(subtitle, 120),
-                      size: 'xs',
-                      color: '#ffffffcc',
-                      wrap: true,
-                    },
-                  ]
-                : []),
             ],
           },
           ...(bodyText
@@ -965,7 +986,6 @@ const buildLineScamActionFlexMessage = ({
 const buildLineScamHelpFlexMessage = () =>
   buildLineScamActionFlexMessage({
     title: 'คำแนะนำเมื่อถูกโกง',
-    subtitle: 'หยุดโอนเพิ่ม และเก็บหลักฐานทันที',
     bodyText:
       '1) แคปแชท/สลิป/โปรไฟล์ผู้ขาย\\n2) โทรอายัดบัญชีปลายทางผ่านธนาคาร\\n3) แจ้งความออนไลน์ผ่าน Thaipoliceonline\\n4) แจ้งความคืบหน้าในช่องทางทางการเท่านั้น',
     actionLabel: 'เปิดเว็บแจ้งความ',
@@ -977,7 +997,6 @@ const buildLineScamHelpFlexMessage = () =>
 const buildLineScamUsageFlexMessage = () =>
   buildLineScamActionFlexMessage({
     title: 'วิธีใช้งาน LINE Scam Bot',
-    subtitle: 'เลือกเมนูจาก Rich Menu ได้ 5 ฟังก์ชัน',
     bodyText:
       'ตรวจสอบมิจฉาชีพ: ค้นฐานข้อมูลเคสโกง\\nตรวจสอบข่าวปลอม: วิเคราะห์ข่าวและแหล่งอ้างอิง\\nประเมินความเสี่ยง: อัปโหลดรูปแชทเพื่อวิเคราะห์\\nเมนูคำแนะนำ: อ่านขั้นตอนป้องกันโดนโกง',
     actionLabel: 'เปิดหน้าตรวจสอบมิจฉาชีพ',
@@ -1005,7 +1024,6 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
     return [
       buildLineScamActionFlexMessage({
         title: 'ตรวจสอบมิจฉาชีพ',
-        subtitle: 'ค้นหาประวัติโกงจากฐานข้อมูล',
         bodyText: 'กดปุ่มด้านล่างเพื่อกรอก ชื่อ บัญชี เบอร์โทรเพื่อค้นหา',
         actionLabel: 'เริ่มใช้งานตอนนี้',
         actionUrl: urls.scammerCheck || '',
@@ -1018,7 +1036,6 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
     return [
       buildLineScamActionFlexMessage({
         title: 'ตรวจสอบข่าวปลอม',
-        subtitle: 'วิเคราะห์ข้อความข่าวหรือรูปข่าว',
         bodyText: 'ระบบจะให้เปอร์เซ็นต์ข่าวปลอม พร้อมเหตุผลและแหล่งอ้างอิงที่ควรตรวจซ้ำ',
         actionLabel: 'เริ่มใช้งานตอนนี้',
         actionUrl: urls.fakeNews || '',
@@ -1031,7 +1048,6 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
     return [
       buildLineScamActionFlexMessage({
         title: 'ประเมินความเสี่ยงการโดนโกง',
-        subtitle: 'อัปโหลดรูปแชทให้ AI วิเคราะห์',
         bodyText: 'ระบบจะแสดงเปอร์เซ็นต์ความเสี่ยง สัญญาณเตือน และคำแนะนำที่ควรทำต่อ',
         actionLabel: 'เริ่มใช้งานตอนนี้',
         actionUrl: urls.riskAssess || '',
@@ -2205,6 +2221,7 @@ const toLineScamBotPublicConfig = (req, configInput = {}) => {
     geminiConfigured: Boolean(GEMINI_API_KEY),
     geminiModel: GEMINI_MODEL,
     imageUploadMaxBytes: SCAM_LIFF_IMAGE_MAX_BYTES,
+    imageUploadMaxCount: SCAM_LIFF_IMAGE_MAX_COUNT,
     updatedAt: normalized.updatedAt,
   };
 };
@@ -2291,6 +2308,7 @@ const toLineEscrowBotPublicConfig = (req, configInput = {}) => {
     trackingConfigured: Boolean(TRACKING_API_KEY),
     autoReleaseHours: LINE_ESCROW_AUTO_RELEASE_HOURS,
     slipUploadMaxBytes: LINE_ESCROW_SLIP_IMAGE_MAX_BYTES,
+    slipUploadMaxCount: LINE_ESCROW_SLIP_IMAGE_MAX_COUNT,
     cronSecretConfigured: Boolean(LINE_ESCROW_CRON_SECRET),
     paymentWebhookSecretConfigured: Boolean(LINE_ESCROW_PAYMENT_WEBHOOK_SECRET),
     manualPaymentConfirmEnabled: LINE_ESCROW_MANUAL_PAYMENT_CONFIRM_ENABLED,
@@ -2334,6 +2352,13 @@ const normalizeEscrowSlipImage = (imageInput) => {
     size,
     dataUrl,
   };
+};
+
+const normalizeEscrowSlipImageList = (imagesInput, maxCount = LINE_ESCROW_SLIP_IMAGE_MAX_COUNT) => {
+  const limit = Math.max(1, Math.min(10, Number(maxCount || LINE_ESCROW_SLIP_IMAGE_MAX_COUNT)));
+  const source = Array.isArray(imagesInput) ? imagesInput : [];
+  const normalized = source.map((image) => normalizeEscrowSlipImage(image)).filter(Boolean);
+  return normalized.slice(0, limit);
 };
 
 const normalizeEscrowBankBrand = (bankInput) => {
@@ -2423,6 +2448,14 @@ const toEscrowDealResponse = (docId, dataInput) => {
   const sellerPromptpayNumber = normalizeEscrowPromptpayNumber(data.sellerPromptpayNumber || '');
   const sellerPayoutMethodRaw = normalizeEscrowPayoutMethod(data.sellerPayoutMethod || '');
   const sellerPayoutMethod = sellerPayoutMethodRaw || (sellerPromptpayNumber ? 'promptpay' : 'bank');
+  const shippingSlipImages = normalizeEscrowSlipImageList(
+    Array.isArray(data.shippingSlipImages)
+      ? data.shippingSlipImages
+      : data.shippingSlipImage
+        ? [data.shippingSlipImage]
+        : []
+  );
+  const shippingSlipImage = shippingSlipImages[0] || null;
   return {
     id: String(docId || '').trim(),
     groupId: String(data.groupId || '').trim(),
@@ -2449,7 +2482,8 @@ const toEscrowDealResponse = (docId, dataInput) => {
     shipmentStatus: String(data.shipmentStatus || 'pending').trim().toLowerCase(),
     courierCode: String(data.courierCode || '').trim(),
     trackingNumber: String(data.trackingNumber || '').trim(),
-    shippingSlipImage: normalizeEscrowSlipImage(data.shippingSlipImage),
+    shippingSlipImage,
+    shippingSlipImages,
     shippingSubmittedAt: toEpochMs(data.shippingSubmittedAt) > 0 ? String(data.shippingSubmittedAt).trim() : null,
     trackingStatus: String(data.trackingStatus || '').trim(),
     trackingStatusText: String(data.trackingStatusText || '').trim(),
@@ -7174,7 +7208,12 @@ app.get('/line/scam/liff/fake-news', (_req, res) => {
   return res
     .status(200)
     .type('html')
-    .send(renderLineScamFakeNewsPage({ maxImageBytes: SCAM_LIFF_IMAGE_MAX_BYTES }));
+    .send(
+      renderLineScamFakeNewsPage({
+        maxImageBytes: SCAM_LIFF_IMAGE_MAX_BYTES,
+        maxImageCount: SCAM_LIFF_IMAGE_MAX_COUNT,
+      })
+    );
 });
 
 app.get('/line/scam/liff/risk-assess', (_req, res) => {
@@ -7182,7 +7221,12 @@ app.get('/line/scam/liff/risk-assess', (_req, res) => {
   return res
     .status(200)
     .type('html')
-    .send(renderLineScamRiskAssessPage({ maxImageBytes: SCAM_LIFF_IMAGE_MAX_BYTES }));
+    .send(
+      renderLineScamRiskAssessPage({
+        maxImageBytes: SCAM_LIFF_IMAGE_MAX_BYTES,
+        maxImageCount: SCAM_LIFF_IMAGE_MAX_COUNT,
+      })
+    );
 });
 
 app.post('/line/scam/liff/api/scammer-check', async (req, res) => {
@@ -7239,9 +7283,22 @@ app.post('/line/scam/liff/api/scammer-check', async (req, res) => {
 app.post('/line/scam/liff/api/fake-news', async (req, res) => {
   try {
     const text = normalizeOptionalString(req.body?.text || req.body?.newsText || '', 5000);
-    const imageDataUrl = String(req.body?.imageDataUrl || '').trim();
-    if (!text && !imageDataUrl) {
-      return res.status(400).json({ message: 'text or imageDataUrl is required.' });
+    const imageDataUrls = (Array.isArray(req.body?.imageDataUrls) ? req.body.imageDataUrls : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const fallbackImageDataUrl = String(req.body?.imageDataUrl || '').trim();
+    const mergedImageDataUrls = imageDataUrls.length
+      ? imageDataUrls
+      : fallbackImageDataUrl
+        ? [fallbackImageDataUrl]
+        : [];
+    if (mergedImageDataUrls.length > SCAM_LIFF_IMAGE_MAX_COUNT) {
+      return res
+        .status(400)
+        .json({ message: `รองรับรูปสูงสุด ${SCAM_LIFF_IMAGE_MAX_COUNT} รูปต่อครั้ง` });
+    }
+    if (!text && mergedImageDataUrls.length === 0) {
+      return res.status(400).json({ message: 'text or imageDataUrls is required.' });
     }
 
     const analysisPrompt = [
@@ -7264,7 +7321,7 @@ app.post('/line/scam/liff/api/fake-news', async (req, res) => {
 
     const gemini = await callGeminiStructuredJson({
       prompt: analysisPrompt,
-      imageDataUrl,
+      imageDataUrls: mergedImageDataUrls,
       taskName: 'fake-news',
     });
     const json = gemini.json || {};
@@ -7319,10 +7376,23 @@ app.post('/line/scam/liff/api/fake-news', async (req, res) => {
 
 app.post('/line/scam/liff/api/risk-assess', async (req, res) => {
   try {
-    const imageDataUrl = String(req.body?.imageDataUrl || '').trim();
+    const imageDataUrls = (Array.isArray(req.body?.imageDataUrls) ? req.body.imageDataUrls : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const fallbackImageDataUrl = String(req.body?.imageDataUrl || '').trim();
+    const mergedImageDataUrls = imageDataUrls.length
+      ? imageDataUrls
+      : fallbackImageDataUrl
+        ? [fallbackImageDataUrl]
+        : [];
     const contextText = normalizeOptionalString(req.body?.contextText || '', 2000);
-    if (!imageDataUrl) {
-      return res.status(400).json({ message: 'imageDataUrl is required.' });
+    if (mergedImageDataUrls.length > SCAM_LIFF_IMAGE_MAX_COUNT) {
+      return res
+        .status(400)
+        .json({ message: `รองรับรูปสูงสุด ${SCAM_LIFF_IMAGE_MAX_COUNT} รูปต่อครั้ง` });
+    }
+    if (mergedImageDataUrls.length === 0) {
+      return res.status(400).json({ message: 'imageDataUrls is required.' });
     }
 
     const analysisPrompt = [
@@ -7344,7 +7414,7 @@ app.post('/line/scam/liff/api/risk-assess', async (req, res) => {
 
     const gemini = await callGeminiStructuredJson({
       prompt: analysisPrompt,
-      imageDataUrl,
+      imageDataUrls: mergedImageDataUrls,
       taskName: 'risk-assess',
     });
     const json = gemini.json || {};
@@ -7450,7 +7520,12 @@ app.get('/line/escrow/liff/seller', (_req, res) => {
   return res
     .status(200)
     .type('html')
-    .send(renderLineEscrowSellerPage({ maxSlipImageBytes: LINE_ESCROW_SLIP_IMAGE_MAX_BYTES }));
+    .send(
+      renderLineEscrowSellerPage({
+        maxSlipImageBytes: LINE_ESCROW_SLIP_IMAGE_MAX_BYTES,
+        maxSlipImageCount: LINE_ESCROW_SLIP_IMAGE_MAX_COUNT,
+      })
+    );
 });
 
 app.get('/line/escrow/liff/buyer', (_req, res) => {
@@ -7927,11 +8002,25 @@ app.post('/line/escrow/liff/api/deals/submit-shipment', async (req, res) => {
     if (!trackingNumber) {
       return res.status(400).json({ message: 'trackingNumber is required.' });
     }
-    const shippingSlipImage = normalizeEscrowSlipImage(req.body?.shippingSlipImage);
-    if (!shippingSlipImage) {
+    const incomingSlipImages = Array.isArray(req.body?.shippingSlipImages)
+      ? req.body.shippingSlipImages
+      : req.body?.shippingSlipImage
+        ? [req.body.shippingSlipImage]
+        : [];
+    const shippingSlipImages = normalizeEscrowSlipImageList(
+      incomingSlipImages,
+      LINE_ESCROW_SLIP_IMAGE_MAX_COUNT
+    );
+    const shippingSlipImage = shippingSlipImages[0] || null;
+    if (!shippingSlipImage || shippingSlipImages.length === 0) {
       return res.status(400).json({
-        message: `shippingSlipImage is required and must be image data URL <= ${LINE_ESCROW_SLIP_IMAGE_MAX_BYTES} bytes.`,
+        message: 'shippingSlipImages is required and each image must be valid.',
       });
+    }
+    if (incomingSlipImages.length > LINE_ESCROW_SLIP_IMAGE_MAX_COUNT) {
+      return res
+        .status(400)
+        .json({ message: `รองรับรูปสูงสุด ${LINE_ESCROW_SLIP_IMAGE_MAX_COUNT} รูปต่อครั้ง` });
     }
     const nowIso = new Date().toISOString();
     const patch = {
@@ -7940,6 +8029,7 @@ app.post('/line/escrow/liff/api/deals/submit-shipment', async (req, res) => {
       trackingNumber,
       courierCode,
       shippingSlipImage,
+      shippingSlipImages,
       shippingSubmittedAt: nowIso,
       updatedAt: nowIso,
     };

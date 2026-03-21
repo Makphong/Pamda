@@ -151,6 +151,20 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
         max-height: 250px;
         border-radius: 8px;
       }
+      .preview-grid {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+        gap: 8px;
+      }
+      .preview-grid img {
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 1px solid #dbe4f0;
+        background: #ffffff;
+      }
       .status {
         margin-top: 10px;
         border: 1px solid #bfdbfe;
@@ -376,7 +390,7 @@ export const renderLineScamScammerCheckPage = () =>
     `,
   });
 
-export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0 } = {}) =>
+export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0, maxImageCount = 10 } = {}) =>
   buildShell({
     title: 'ตรวจสอบข่าวปลอม',
     // subtitle: 'วิเคราะห์ข้อความข่าวหรือรูปข่าวด้วย Gemini',
@@ -394,8 +408,7 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0 } = {}) =>
             <label class="btn upload" style="display:inline-flex;align-items:center;justify-content:center;" for="news-image">
               อัปโหลดรูปภาพข่าว
             </label>
-            <input id="news-image" type="file" accept="image/*" class="hidden" />
-            <p class="tiny">รองรับเฉพาะไฟล์ภาพ ขนาดสูงสุด ${Math.max(0, Number(maxImageBytes || 0))} bytes</p>
+            <input id="news-image" type="file" accept="image/*" class="hidden" multiple />
             <div id="news-preview" class="preview">ยังไม่ได้เลือกไฟล์ภาพ</div>
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
@@ -414,7 +427,9 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0 } = {}) =>
       const submitBtn = document.getElementById('fake-news-submit');
       const statusBox = document.getElementById('fake-news-status');
       const resultBox = document.getElementById('fake-news-result');
-      let imageDataUrl = '';
+      const maxBytes = ${Math.max(0, Number(maxImageBytes || 0))};
+      const maxImages = ${Math.max(1, Math.min(10, Number(maxImageCount || 10)))};
+      let imageDataUrls = [];
 
       function escapeHtml(value) {
         return String(value || '').replace(/[&<>"']/g, function (char) {
@@ -441,6 +456,34 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0 } = {}) =>
       function setBusy(isBusy) {
         submitBtn.disabled = Boolean(isBusy);
         submitBtn.textContent = isBusy ? 'กำลังวิเคราะห์...' : 'วิเคราะห์ข่าว';
+      }
+
+      function readFileAsDataUrl(file) {
+        return new Promise(function (resolve, reject) {
+          const reader = new FileReader();
+          reader.onload = function () {
+            resolve(String(reader.result || ''));
+          };
+          reader.onerror = function () {
+            reject(new Error('อ่านไฟล์รูปไม่สำเร็จ'));
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      function renderImagePreviewList(images) {
+        if (!Array.isArray(images) || images.length === 0) {
+          preview.textContent = 'ยังไม่ได้เลือกไฟล์ภาพ';
+          return;
+        }
+        preview.innerHTML =
+          '<div class="preview-grid">' +
+          images
+            .map(function (src) {
+              return '<img alt="preview" src="' + src + '" />';
+            })
+            .join('') +
+          '</div>';
       }
 
       function toBadgeClass(percent) {
@@ -499,30 +542,42 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0 } = {}) =>
       }
 
       fileInput.addEventListener('change', function (event) {
-        const file = event.target.files && event.target.files[0];
-        if (!file) return;
-        if (!String(file.type || '').toLowerCase().startsWith('image/')) {
-          showStatus('อนุญาตเฉพาะไฟล์ภาพ', 'error');
+        const files = Array.from((event.target && event.target.files) || []);
+        if (files.length === 0) return;
+        if (files.length > maxImages) {
+          showStatus('อัปโหลดได้สูงสุด ' + maxImages + ' รูปต่อครั้ง', 'error');
           fileInput.value = '';
           return;
         }
-        const reader = new FileReader();
-        reader.onload = function () {
-          imageDataUrl = String(reader.result || '');
-          preview.innerHTML = '<img alt="preview" src="' + imageDataUrl + '" />';
-          hideStatus();
-        };
-        reader.onerror = function () {
-          showStatus('อ่านไฟล์รูปไม่สำเร็จ', 'error');
-          fileInput.value = '';
-        };
-        reader.readAsDataURL(file);
+        for (let index = 0; index < files.length; index += 1) {
+          const file = files[index];
+          if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+            showStatus('อนุญาตเฉพาะไฟล์ภาพ', 'error');
+            fileInput.value = '';
+            return;
+          }
+          if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
+            showStatus('ไฟล์รูปมีขนาดใหญ่เกินกำหนด', 'error');
+            fileInput.value = '';
+            return;
+          }
+        }
+        Promise.all(files.map(function (file) { return readFileAsDataUrl(file); }))
+          .then(function (images) {
+            imageDataUrls = images.filter(Boolean).slice(0, maxImages);
+            renderImagePreviewList(imageDataUrls);
+            hideStatus();
+          })
+          .catch(function (error) {
+            showStatus((error && error.message) || 'อ่านไฟล์รูปไม่สำเร็จ', 'error');
+            fileInput.value = '';
+          });
       });
 
       form.addEventListener('submit', async function (event) {
         event.preventDefault();
         const text = String(textInput.value || '').trim();
-        if (!text && !imageDataUrl) {
+        if (!text && imageDataUrls.length === 0) {
           showStatus('กรุณาใส่ข้อความข่าวหรืออัปโหลดรูปอย่างน้อย 1 อย่าง', 'error');
           return;
         }
@@ -535,7 +590,8 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0 } = {}) =>
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               text: text,
-              imageDataUrl: imageDataUrl
+              imageDataUrls: imageDataUrls,
+              imageDataUrl: imageDataUrls[0] || ''
             })
           });
           const payload = await response.json().catch(function () { return null; });
@@ -553,7 +609,7 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0 } = {}) =>
     `,
   });
 
-export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0 } = {}) =>
+export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0, maxImageCount = 10 } = {}) =>
   buildShell({
     title: 'ประเมินความเสี่ยงการโดนโกง',
     // subtitle: 'วิเคราะห์รูปแชทหรือหลักฐานสนทนาด้วย Gemini',
@@ -567,8 +623,7 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0 } = {}) =>
             <label class="btn upload" style="display:inline-flex;align-items:center;justify-content:center;" for="risk-image">
               อัปโหลดรูปแชท
             </label>
-            <input id="risk-image" type="file" accept="image/*" class="hidden" />
-            <p class="tiny">รองรับเฉพาะไฟล์ภาพ ขนาดสูงสุด ${Math.max(0, Number(maxImageBytes || 0))} bytes</p>
+            <input id="risk-image" type="file" accept="image/*" class="hidden" multiple />
             <div id="risk-preview" class="preview">ยังไม่ได้เลือกไฟล์ภาพ</div>
           </div>
           <div>
@@ -591,7 +646,9 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0 } = {}) =>
       const submitBtn = document.getElementById('risk-submit');
       const statusBox = document.getElementById('risk-status');
       const resultBox = document.getElementById('risk-result');
-      let imageDataUrl = '';
+      const maxBytes = ${Math.max(0, Number(maxImageBytes || 0))};
+      const maxImages = ${Math.max(1, Math.min(10, Number(maxImageCount || 10)))};
+      let imageDataUrls = [];
 
       function escapeHtml(value) {
         return String(value || '').replace(/[&<>"']/g, function (char) {
@@ -618,6 +675,34 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0 } = {}) =>
       function setBusy(isBusy) {
         submitBtn.disabled = Boolean(isBusy);
         submitBtn.textContent = isBusy ? 'กำลังประเมิน...' : 'ประเมินความเสี่ยง';
+      }
+
+      function readFileAsDataUrl(file) {
+        return new Promise(function (resolve, reject) {
+          const reader = new FileReader();
+          reader.onload = function () {
+            resolve(String(reader.result || ''));
+          };
+          reader.onerror = function () {
+            reject(new Error('อ่านไฟล์รูปไม่สำเร็จ'));
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      function renderImagePreviewList(images) {
+        if (!Array.isArray(images) || images.length === 0) {
+          preview.textContent = 'ยังไม่ได้เลือกไฟล์ภาพ';
+          return;
+        }
+        preview.innerHTML =
+          '<div class="preview-grid">' +
+          images
+            .map(function (src) {
+              return '<img alt="preview" src="' + src + '" />';
+            })
+            .join('') +
+          '</div>';
       }
 
       function resolveBadgeClass(percent) {
@@ -664,29 +749,41 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0 } = {}) =>
       }
 
       fileInput.addEventListener('change', function (event) {
-        const file = event.target.files && event.target.files[0];
-        if (!file) return;
-        if (!String(file.type || '').toLowerCase().startsWith('image/')) {
-          showStatus('อนุญาตเฉพาะไฟล์ภาพ', 'error');
+        const files = Array.from((event.target && event.target.files) || []);
+        if (files.length === 0) return;
+        if (files.length > maxImages) {
+          showStatus('อัปโหลดได้สูงสุด ' + maxImages + ' รูปต่อครั้ง', 'error');
           fileInput.value = '';
           return;
         }
-        const reader = new FileReader();
-        reader.onload = function () {
-          imageDataUrl = String(reader.result || '');
-          preview.innerHTML = '<img alt="preview" src="' + imageDataUrl + '" />';
-          hideStatus();
-        };
-        reader.onerror = function () {
-          showStatus('อ่านไฟล์รูปไม่สำเร็จ', 'error');
-          fileInput.value = '';
-        };
-        reader.readAsDataURL(file);
+        for (let index = 0; index < files.length; index += 1) {
+          const file = files[index];
+          if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+            showStatus('อนุญาตเฉพาะไฟล์ภาพ', 'error');
+            fileInput.value = '';
+            return;
+          }
+          if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
+            showStatus('ไฟล์รูปมีขนาดใหญ่เกินกำหนด', 'error');
+            fileInput.value = '';
+            return;
+          }
+        }
+        Promise.all(files.map(function (file) { return readFileAsDataUrl(file); }))
+          .then(function (images) {
+            imageDataUrls = images.filter(Boolean).slice(0, maxImages);
+            renderImagePreviewList(imageDataUrls);
+            hideStatus();
+          })
+          .catch(function (error) {
+            showStatus((error && error.message) || 'อ่านไฟล์รูปไม่สำเร็จ', 'error');
+            fileInput.value = '';
+          });
       });
 
       form.addEventListener('submit', async function (event) {
         event.preventDefault();
-        if (!imageDataUrl) {
+        if (imageDataUrls.length === 0) {
           showStatus('กรุณาอัปโหลดรูปแชทก่อนประเมิน', 'error');
           return;
         }
@@ -698,7 +795,8 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0 } = {}) =>
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              imageDataUrl: imageDataUrl,
+              imageDataUrls: imageDataUrls,
+              imageDataUrl: imageDataUrls[0] || '',
               contextText: String(contextInput.value || '').trim()
             })
           });
@@ -716,4 +814,3 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0 } = {}) =>
       });
     `,
   });
-
