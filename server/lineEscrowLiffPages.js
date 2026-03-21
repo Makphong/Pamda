@@ -61,6 +61,18 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
       label[for="deal-group-id"],
       label[for="seller-deal-id"],
       label[for="buyer-deal-id"] { display: none; }
+      .section-block {
+        border: 1px solid #dbe4f0;
+        border-radius: 12px;
+        padding: 12px;
+        background: #f8fbff;
+      }
+      .section-title {
+        margin: 0 0 10px;
+        font-size: 0.84rem;
+        font-weight: 700;
+        color: #1e3a8a;
+      }
       input[type="text"],
       input[type="number"],
       select,
@@ -303,80 +315,86 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         <form id="escrow-create-form" class="row">
           <div class="hidden" aria-hidden="true">
             <label for="deal-group-id">รหัสกลุ่ม (Group ID)</label>
-            <input id="deal-group-id" type="text" placeholder="วาง Group ID ของกลุ่ม LINE ที่ใช้งานดีลนี้" required />
+            <input id="deal-group-id" type="text" required />
             <p class="tiny">ถ้าเปิดจากปุ่ม LIFF ในกลุ่ม ระบบมักจะใส่ค่า Group ID ให้อัตโนมัติ</p>
             <button id="deal-group-confirm-btn" class="btn secondary" type="button" style="margin-top:8px;">ยืนยัน Group ID</button>
           </div>
 
           <div id="deal-input-fields" class="hidden">
-            <div class="row two">
-              <div>
-                <label for="deal-buyer-name">ชื่อผู้ซื้อ</label>
-                <input id="deal-buyer-name" type="text" placeholder="เช่น คุณเอ" />
+            <div class="section-block">
+              <p class="section-title">ข้อมูลธุรกรรม</p>
+              <div class="row two">
+                <div>
+                  <label for="deal-buyer-name">เบอร์ติดต่อผู้ซื้อ</label>
+                  <input id="deal-buyer-name" type="text" required />
+                </div>
+                <div>
+                  <label for="deal-seller-name">เบอร์ติดต่อผู้ขาย</label>
+                  <input id="deal-seller-name" type="text" required />
+                </div>
               </div>
-              <div>
-                <label for="deal-seller-name">ชื่อผู้รับเงิน</label>
-                <input id="deal-seller-name" type="text" placeholder="เช่น ร้าน B" required />
+
+              <div class="row two">
+                <div>
+                  <label for="deal-item-name">รายละเอียดสินค้า</label>
+                  <input id="deal-item-name" type="text" required />
+                </div>
+                <div>
+                  <label for="deal-amount">ยอดเงิน (THB)</label>
+                  <input id="deal-amount" type="number" min="1" step="0.01" required />
+                </div>
               </div>
             </div>
 
-            <div class="row two">
-              <div>
-                <label for="deal-item-name">สินค้า</label>
-                <input id="deal-item-name" type="text" placeholder="ชื่อสินค้า" required />
+            <div class="section-block" style="margin-top:10px;">
+              <p class="section-title">ช่องทางการรับเงินผู้ขาย</p>
+              <div class="row two">
+                <div>
+                  <label for="seller-payout-method">ช่องทางรับเงิน</label>
+                  <select id="seller-payout-method" required>
+                    <option value="bank">โอนเข้าบัญชีธนาคาร</option>
+                    <option value="promptpay">โอนผ่าน PromptPay</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label for="deal-amount">ยอดเงิน (THB)</label>
-                <input id="deal-amount" type="number" min="1" step="0.01" placeholder="1000" required />
-              </div>
-            </div>
 
-            <div class="row two">
-              <div>
-                <label for="seller-payout-method">ช่องทางรับเงิน</label>
-                <select id="seller-payout-method" required>
-                  <option value="bank">โอนเข้าบัญชีธนาคาร</option>
-                  <option value="promptpay">โอนผ่าน PromptPay</option>
-                </select>
+              <div id="seller-bank-fields" class="row two">
+                <div>
+                  <label for="seller-bank-brand">ธนาคารผู้รับเงิน</label>
+                  <select id="seller-bank-brand" required>
+                    <option value="">เลือกธนาคาร</option>
+                    <option value="bbl">ธนาคารกรุงเทพ (BBL)</option>
+                    <option value="kbank">ธนาคารกสิกรไทย (KBANK)</option>
+                    <option value="ktb">ธนาคารกรุงไทย (KTB)</option>
+                    <option value="scb">ธนาคารไทยพาณิชย์ (SCB)</option>
+                    <option value="bay">ธนาคารกรุงศรีอยุธยา (BAY)</option>
+                    <option value="ttb">ธนาคารทหารไทยธนชาต (TTB)</option>
+                    <option value="gsb">ธนาคารออมสิน (GSB)</option>
+                    <option value="baac">ธ.ก.ส. (BAAC)</option>
+                    <option value="cimb">ธนาคารซีไอเอ็มบีไทย (CIMB)</option>
+                    <option value="uob">ธนาคารยูโอบี (UOB)</option>
+                    <option value="lhb">ธนาคารแลนด์ แอนด์ เฮ้าส์ (LHB)</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="seller-bank-account">เลขบัญชีผู้รับเงิน</label>
+                  <input id="seller-bank-account" type="text" required />
+                </div>
               </div>
-            </div>
 
-            <div id="seller-bank-fields" class="row two">
-              <div>
-                <label for="seller-bank-brand">ธนาคารผู้รับเงิน</label>
-                <select id="seller-bank-brand" required>
-                  <option value="">เลือกธนาคาร</option>
-                  <option value="bbl">ธนาคารกรุงเทพ (BBL)</option>
-                  <option value="kbank">ธนาคารกสิกรไทย (KBANK)</option>
-                  <option value="ktb">ธนาคารกรุงไทย (KTB)</option>
-                  <option value="scb">ธนาคารไทยพาณิชย์ (SCB)</option>
-                  <option value="bay">ธนาคารกรุงศรีอยุธยา (BAY)</option>
-                  <option value="ttb">ธนาคารทหารไทยธนชาต (TTB)</option>
-                  <option value="gsb">ธนาคารออมสิน (GSB)</option>
-                  <option value="baac">ธ.ก.ส. (BAAC)</option>
-                  <option value="cimb">ธนาคารซีไอเอ็มบีไทย (CIMB)</option>
-                  <option value="uob">ธนาคารยูโอบี (UOB)</option>
-                  <option value="lhb">ธนาคารแลนด์ แอนด์ เฮ้าส์ (LHB)</option>
-                </select>
-              </div>
-              <div>
-                <label for="seller-bank-account">เลขบัญชีผู้รับเงิน</label>
-                <input id="seller-bank-account" type="text" placeholder="เลขบัญชี" required />
+              <div id="seller-promptpay-fields" class="row hidden">
+                <div>
+                  <label for="seller-promptpay-number">เลข PromptPay ผู้รับเงิน</label>
+                  <input id="seller-promptpay-number" type="text" />
+                </div>
               </div>
             </div>
-
-            <div id="seller-promptpay-fields" class="row hidden">
-              <div>
-                <label for="seller-promptpay-number">เลข PromptPay ผู้รับเงิน</label>
-                <input id="seller-promptpay-number" type="text" placeholder="เบอร์มือถือ/เลขบัตรประชาชน/e-Wallet ID" />
-              </div>
-            </div>
-            <div>
+            <div class="hidden" aria-hidden="true">
               <label for="deal-note">รายละเอียดเพิ่มเติม</label>
-              <input id="deal-note" type="text" placeholder="หมายเหตุ/เงื่อนไขสินค้า" />
+              <input id="deal-note" type="hidden" value="" />
             </div>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
-              <button id="deal-create-btn" class="btn primary" type="submit">สร้างดีล + สร้าง QR ชำระเงิน</button>
+              <button id="deal-create-btn" class="btn primary" type="submit">สร้างดิล</button>
             </div>
           </div>
         </form>
@@ -473,7 +491,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         checkBtn.disabled = isBusy;
         manualPaidBtn.disabled = isBusy;
         cancelBtn.disabled = isBusy;
-        createBtn.textContent = isBusy ? 'กำลังสร้างดีล...' : 'สร้างดีล + สร้าง QR ชำระเงิน';
+        createBtn.textContent = isBusy ? 'กำลังสร้างดิล...' : 'สร้างดิล';
         updateGroupButtonText();
       }
       function updatePayoutMethodFields() {
@@ -520,9 +538,9 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         }
         setGroupReady(true);
 
-        buyerNameInput.value = String(d.buyerName || '').trim();
-        sellerNameInput.value = String(d.sellerName || '').trim();
-        itemInput.value = String(d.itemName || '').trim();
+        buyerNameInput.value = String(d.buyerContactPhone || d.buyerName || '').trim();
+        sellerNameInput.value = String(d.sellerContactPhone || d.sellerName || '').trim();
+        itemInput.value = String(d.productDetails || d.itemName || '').trim();
         amountInput.value = Number(d.paymentAmountThb || 0) > 0 ? String(d.paymentAmountThb) : '';
         noteInput.value = String(d.note || '').trim();
 
@@ -549,7 +567,9 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
             '<div class="k">สถานะดีล</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
             '<div class="k">สถานะชำระเงิน</div><div class="v">' + escapeHtml(d.paymentStatus || '-') + '</div>' +
             '<div class="k">ยอดเงิน</div><div class="v">' + escapeHtml(Number(d.paymentAmountThb || 0).toLocaleString()) + ' THB</div>' +
-            '<div class="k">สินค้า</div><div class="v">' + escapeHtml(d.itemName || '-') + '</div>' +
+            '<div class="k">เบอร์ติดต่อผู้ซื้อ</div><div class="v">' + escapeHtml(d.buyerContactPhone || d.buyerName || '-') + '</div>' +
+            '<div class="k">เบอร์ติดต่อผู้ขาย</div><div class="v">' + escapeHtml(d.sellerContactPhone || d.sellerName || '-') + '</div>' +
+            '<div class="k">รายละเอียดสินค้า</div><div class="v">' + escapeHtml(d.productDetails || d.itemName || '-') + '</div>' +
             '<div class="k">ช่องทางรับเงินผู้ขาย</div><div class="v">' + escapeHtml(getPayoutMethodLabel(payoutMethod)) + '</div>' +
           '</div>' +
           qrHtml +
@@ -614,16 +634,26 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
 
         var payload = {
           groupId: groupIdValue,
-          buyerName: String(buyerNameInput.value || '').trim(),
-          sellerName: String(sellerNameInput.value || '').trim(),
-          itemName: String(itemInput.value || '').trim(),
+          buyerContactPhone: String(buyerNameInput.value || '').trim(),
+          sellerContactPhone: String(sellerNameInput.value || '').trim(),
+          productDetails: String(itemInput.value || '').trim(),
           amountThb: Number(amountInput.value || 0),
-          note: String(noteInput.value || '').trim(),
+          note: '',
           sellerPayoutMethod: payoutMethod
         };
 
-        if (!payload.sellerName || !payload.itemName || !Number.isFinite(payload.amountThb) || payload.amountThb <= 0) {
-          throw new Error('กรุณากรอก ชื่อผู้รับเงิน, สินค้า และยอดเงิน ให้ครบถ้วน');
+        payload.buyerName = payload.buyerContactPhone;
+        payload.sellerName = payload.sellerContactPhone;
+        payload.itemName = payload.productDetails;
+
+        if (
+          !payload.buyerContactPhone ||
+          !payload.sellerContactPhone ||
+          !payload.productDetails ||
+          !Number.isFinite(payload.amountThb) ||
+          payload.amountThb <= 0
+        ) {
+          throw new Error('กรุณากรอก เบอร์ติดต่อผู้ซื้อ, เบอร์ติดต่อผู้ขาย, รายละเอียดสินค้า และยอดเงิน ให้ครบถ้วน');
         }
 
         if (payoutMethod === 'bank') {

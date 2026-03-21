@@ -874,7 +874,7 @@ const buildLineScamActionFlexMessage = ({
   title,
   subtitle = '',
   bodyText = '',
-  actionLabel = 'เปิด LIFF',
+  actionLabel = 'เริ่มใช้งานตอนนี้',
   actionUrl = '',
   accentColor = '#0ea5e9',
   altText = '',
@@ -1006,8 +1006,8 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
       buildLineScamActionFlexMessage({
         title: 'ตรวจสอบมิจฉาชีพ',
         subtitle: 'ค้นหาประวัติโกงจากฐานข้อมูล',
-        bodyText: 'กดปุ่มด้านล่างเพื่อเปิด LIFF แล้วกรอกชื่อ/บัญชี/เบอร์โทรเพื่อค้นหา',
-        actionLabel: 'เปิด LIFF ตรวจสอบมิจฉาชีพ',
+        bodyText: 'กดปุ่มด้านล่างเพื่อกรอก ชื่อ บัญชี เบอร์โทรเพื่อค้นหา',
+        actionLabel: 'เริ่มใช้งานตอนนี้',
         actionUrl: urls.scammerCheck || '',
         accentColor: '#b91c1c',
         altText: 'ตรวจสอบมิจฉาชีพ',
@@ -1020,7 +1020,7 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
         title: 'ตรวจสอบข่าวปลอม',
         subtitle: 'วิเคราะห์ข้อความข่าวหรือรูปข่าว',
         bodyText: 'ระบบจะให้เปอร์เซ็นต์ข่าวปลอม พร้อมเหตุผลและแหล่งอ้างอิงที่ควรตรวจซ้ำ',
-        actionLabel: 'เปิด LIFF ตรวจสอบข่าวปลอม',
+        actionLabel: 'เริ่มใช้งานตอนนี้',
         actionUrl: urls.fakeNews || '',
         accentColor: '#0f766e',
         altText: 'ตรวจสอบข่าวปลอม',
@@ -1033,7 +1033,7 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
         title: 'ประเมินความเสี่ยงการโดนโกง',
         subtitle: 'อัปโหลดรูปแชทให้ AI วิเคราะห์',
         bodyText: 'ระบบจะแสดงเปอร์เซ็นต์ความเสี่ยง สัญญาณเตือน และคำแนะนำที่ควรทำต่อ',
-        actionLabel: 'เปิด LIFF ประเมินความเสี่ยง',
+        actionLabel: 'เริ่มใช้งานตอนนี้',
         actionUrl: urls.riskAssess || '',
         accentColor: '#a16207',
         altText: 'ประเมินความเสี่ยง',
@@ -2428,10 +2428,13 @@ const toEscrowDealResponse = (docId, dataInput) => {
     groupId: String(data.groupId || '').trim(),
     status: String(data.status || 'created').trim().toLowerCase() || 'created',
     itemName: String(data.itemName || '').trim(),
+    productDetails: String(data.productDetails || data.itemName || '').trim(),
     note: String(data.note || '').trim(),
     buyerName: String(data.buyerName || '').trim(),
+    buyerContactPhone: String(data.buyerContactPhone || data.buyerName || '').trim(),
     buyerLineUserId: String(data.buyerLineUserId || '').trim(),
     sellerName: String(data.sellerName || '').trim(),
+    sellerContactPhone: String(data.sellerContactPhone || data.sellerName || '').trim(),
     sellerLineUserId: String(data.sellerLineUserId || '').trim(),
     paymentProvider: String(data.paymentProvider || LINE_ESCROW_PAYMENT_PROVIDER).trim().toLowerCase(),
     paymentStatus: String(data.paymentStatus || 'pending').trim().toLowerCase(),
@@ -7458,11 +7461,14 @@ app.get('/line/escrow/liff/buyer', (_req, res) => {
 app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
   try {
     const groupId = normalizeOptionalString(req.body?.groupId || '', 120);
-    const buyerName = normalizeOptionalString(req.body?.buyerName || '', 120);
+    const buyerContactPhone = normalizeOptionalString(req.body?.buyerContactPhone || req.body?.buyerName || '', 40);
+    const sellerContactPhone = normalizeOptionalString(req.body?.sellerContactPhone || req.body?.sellerName || '', 40);
+    const productDetails = normalizeOptionalString(req.body?.productDetails || req.body?.itemName || '', 1200);
+    const buyerName = normalizeOptionalString(req.body?.buyerName || buyerContactPhone || '', 120);
     const buyerLineUserId = normalizeOptionalString(req.body?.buyerLineUserId || '', 120);
-    const sellerName = normalizeOptionalString(req.body?.sellerName || '', 120);
+    const sellerName = normalizeOptionalString(req.body?.sellerName || sellerContactPhone || '', 120);
     const sellerLineUserId = normalizeOptionalString(req.body?.sellerLineUserId || '', 120);
-    const itemName = normalizeOptionalString(req.body?.itemName || '', 220);
+    const itemName = normalizeOptionalString(req.body?.itemName || productDetails || '', 220);
     const note = normalizeOptionalString(req.body?.note || '', 1200);
     const sellerPayoutMethodInput = normalizeEscrowPayoutMethod(req.body?.sellerPayoutMethod || '');
     const sellerPromptpayNumber = normalizeEscrowPromptpayNumber(req.body?.sellerPromptpayNumber || '');
@@ -7477,9 +7483,9 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
     const amountSatang = normalizeEscrowMoneySatang(amountThb);
     const sellerPayoutMethod = sellerPayoutMethodInput || (sellerPromptpayNumber ? 'promptpay' : 'bank');
 
-    if (!groupId || !sellerName || !itemName || amountSatang <= 0) {
+    if (!groupId || !buyerContactPhone || !sellerContactPhone || !productDetails || amountSatang <= 0) {
       return res.status(400).json({
-        message: 'groupId, sellerName, itemName and amountThb are required.',
+        message: 'groupId, buyerContactPhone, sellerContactPhone, productDetails and amountThb are required.',
       });
     }
     if (sellerPayoutMethod === 'bank' && (!sellerBankBrand || !sellerBankAccount)) {
@@ -7549,10 +7555,13 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
       groupId,
       status: paymentStatus === 'paid' ? 'paid_waiting_shipment' : 'awaiting_payment',
       itemName,
+      productDetails,
       note,
       buyerName,
+      buyerContactPhone,
       buyerLineUserId,
       sellerName,
+      sellerContactPhone,
       sellerLineUserId,
       paymentProvider: LINE_ESCROW_PAYMENT_PROVIDER,
       paymentStatus: paymentStatus === 'successful' ? 'paid' : paymentStatus,
