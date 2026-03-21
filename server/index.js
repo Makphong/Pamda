@@ -1,4 +1,4 @@
-﻿import cors from 'cors';
+import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import nodemailer from 'nodemailer';
@@ -2371,6 +2371,24 @@ const normalizeEscrowBankBrand = (bankInput) => {
   return '';
 };
 
+const ESCROW_PAYOUT_METHODS = new Set(['bank', 'promptpay', 'seller_qr']);
+
+const normalizeEscrowPayoutMethod = (valueInput) => {
+  const value = String(valueInput || '')
+    .trim()
+    .toLowerCase();
+  return ESCROW_PAYOUT_METHODS.has(value) ? value : '';
+};
+
+const normalizeEscrowPromptpayNumber = (valueInput) =>
+  String(valueInput || '')
+    .replace(/[^0-9]/g, '')
+    .trim()
+    .slice(0, 20);
+
+const isValidEscrowPromptpayNumber = (valueInput) =>
+  /^(?:\d{10}|\d{13}|\d{15})$/.test(normalizeEscrowPromptpayNumber(valueInput));
+
 const normalizeEscrowTrackingStatus = (statusInput) =>
   normalizeOptionalString(statusInput || '', 120)
     .trim()
@@ -2398,6 +2416,15 @@ const toEscrowDealResponse = (docId, dataInput) => {
   const payoutAmountSatang = Number(data.payoutAmountSatang || 0) || paymentAmountSatang;
   const trackingMapUrl = normalizeOptionalHttpUrl(data.trackingMapUrl || '', 1200) || '';
   const trackingPublicUrl = normalizeOptionalHttpUrl(data.trackingPublicUrl || '', 1200) || '';
+  const sellerBankName = String(data.sellerBankName || '').trim();
+  const sellerBankBrand = String(data.sellerBankBrand || '').trim();
+  const sellerBankAccount = String(data.sellerBankAccount || '').trim();
+  const sellerBankAccountName = String(data.sellerBankAccountName || '').trim();
+  const sellerPromptpayNumber = normalizeEscrowPromptpayNumber(data.sellerPromptpayNumber || '');
+  const sellerPayoutQrImage = normalizeEscrowSlipImage(data.sellerPayoutQrImage);
+  const sellerPayoutMethodRaw = normalizeEscrowPayoutMethod(data.sellerPayoutMethod || '');
+  const sellerPayoutMethod =
+    sellerPayoutMethodRaw || (sellerPromptpayNumber ? 'promptpay' : sellerPayoutQrImage ? 'seller_qr' : 'bank');
   return {
     id: String(docId || '').trim(),
     groupId: String(data.groupId || '').trim(),
@@ -2441,10 +2468,13 @@ const toEscrowDealResponse = (docId, dataInput) => {
     payoutReleasedAt: toEpochMs(data.payoutReleasedAt) > 0 ? String(data.payoutReleasedAt).trim() : null,
     payoutFailedReason: String(data.payoutFailedReason || '').trim(),
     paidStepCardSentAt: toEpochMs(data.paidStepCardSentAt) > 0 ? String(data.paidStepCardSentAt).trim() : null,
-    sellerBankName: String(data.sellerBankName || '').trim(),
-    sellerBankBrand: String(data.sellerBankBrand || '').trim(),
-    sellerBankAccount: String(data.sellerBankAccount || '').trim(),
-    sellerBankAccountName: String(data.sellerBankAccountName || '').trim(),
+    sellerPayoutMethod,
+    sellerPromptpayNumber,
+    sellerPayoutQrImage,
+    sellerBankName,
+    sellerBankBrand,
+    sellerBankAccount,
+    sellerBankAccountName,
     createdAt,
     updatedAt,
   };
@@ -3156,6 +3186,25 @@ const releaseEscrowDealPayout = async ({
     const error = new Error('Invalid payout amount.');
     error.status = 400;
     throw error;
+  }
+  const sellerPayoutMethod = normalizeEscrowPayoutMethod(deal.sellerPayoutMethod || '') || 'bank';
+  if (sellerPayoutMethod !== 'bank') {
+    const manualRequiredNowIso = new Date().toISOString();
+    const patch = {
+      payoutStatus: 'manual_required',
+      payoutFailedReason: `Auto payout is not supported for method: ${sellerPayoutMethod}`,
+      updatedAt: manualRequiredNowIso,
+    };
+    await lineEscrowDealRef.doc(dealId).set(patch, { merge: true });
+    return {
+      ok: false,
+      manualRequired: true,
+      deal: {
+        ...deal,
+        ...patch,
+      },
+      transferId: '',
+    };
   }
   const sellerBankBrand =
     String(deal.sellerBankBrand || '').trim().toLowerCase() || normalizeEscrowBankBrand(deal.sellerBankName);
@@ -7356,7 +7405,10 @@ app.put('/admin/line-escrow-bot/config', requireAuth, requireRootAdmin, async (r
 
 app.get('/line/escrow/liff/deal', (_req, res) => {
   setLineScamLiffHtmlHeaders(res);
-  return res.status(200).type('html').send(renderLineEscrowDealPage());
+  return res
+    .status(200)
+    .type('html')
+    .send(renderLineEscrowDealPage({ maxSlipImageBytes: LINE_ESCROW_SLIP_IMAGE_MAX_BYTES }));
 });
 
 app.get('/line/escrow/liff/seller', (_req, res) => {
@@ -7381,6 +7433,9 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
     const sellerLineUserId = normalizeOptionalString(req.body?.sellerLineUserId || '', 120);
     const itemName = normalizeOptionalString(req.body?.itemName || '', 220);
     const note = normalizeOptionalString(req.body?.note || '', 1200);
+    const sellerPayoutMethodInput = normalizeEscrowPayoutMethod(req.body?.sellerPayoutMethod || '');
+    const sellerPromptpayNumber = normalizeEscrowPromptpayNumber(req.body?.sellerPromptpayNumber || '');
+    const sellerPayoutQrImage = normalizeEscrowSlipImage(req.body?.sellerPayoutQrImage);
     const sellerBankName = normalizeOptionalString(req.body?.sellerBankName || '', 140);
     const sellerBankBrand = normalizeEscrowBankBrand(req.body?.sellerBankBrand || sellerBankName || '');
     const sellerBankAccount = String(req.body?.sellerBankAccount || '')
@@ -7390,17 +7445,23 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
     const sellerBankAccountName = normalizeOptionalString(req.body?.sellerBankAccountName || '', 120);
     const amountThb = Number(req.body?.amountThb || req.body?.amount || 0);
     const amountSatang = normalizeEscrowMoneySatang(amountThb);
+    const sellerPayoutMethod =
+      sellerPayoutMethodInput || (sellerPromptpayNumber ? 'promptpay' : sellerPayoutQrImage ? 'seller_qr' : 'bank');
 
     if (!groupId || !sellerName || !itemName || amountSatang <= 0) {
       return res.status(400).json({
         message: 'groupId, sellerName, itemName and amountThb are required.',
       });
     }
-    if (!sellerBankBrand || !sellerBankAccount || !sellerBankAccountName) {
+    if (!sellerBankAccountName) {
+      return res.status(400).json({
+        message: 'sellerBankAccountName is required.',
+      });
+    }
+    if (sellerPayoutMethod === 'bank' && (!sellerBankBrand || !sellerBankAccount)) {
       const missing = [];
       if (!sellerBankBrand) missing.push('sellerBankBrand/sellerBankName');
       if (!sellerBankAccount) missing.push('sellerBankAccount');
-      if (!sellerBankAccountName) missing.push('sellerBankAccountName');
       return res.status(400).json({
         message:
           `${missing.join(', ')} are required for auto payout.`,
@@ -7408,6 +7469,16 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
           sellerBankName,
           supportedBankBrands: ['bbl', 'kbank', 'ktb', 'scb', 'bay', 'ttb', 'gsb', 'baac', 'cimb', 'uob', 'lhb'],
         },
+      });
+    }
+    if (sellerPayoutMethod === 'promptpay' && !isValidEscrowPromptpayNumber(sellerPromptpayNumber)) {
+      return res.status(400).json({
+        message: 'sellerPromptpayNumber must be 10, 13 or 15 digits.',
+      });
+    }
+    if (sellerPayoutMethod === 'seller_qr' && !sellerPayoutQrImage) {
+      return res.status(400).json({
+        message: 'sellerPayoutQrImage is required when sellerPayoutMethod is seller_qr.',
       });
     }
     const activePaymentDeal = await loadLatestEscrowAwaitingPaymentDealByGroup(groupId);
@@ -7483,6 +7554,9 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
       payoutReleasedAt: null,
       payoutFailedReason: '',
       payoutAmountSatang: amountSatang,
+      sellerPayoutMethod,
+      sellerPromptpayNumber: sellerPayoutMethod === 'promptpay' ? sellerPromptpayNumber : '',
+      sellerPayoutQrImage: sellerPayoutMethod === 'seller_qr' ? sellerPayoutQrImage : null,
       sellerBankName,
       sellerBankBrand,
       sellerBankAccount,
@@ -7980,13 +8054,24 @@ app.post('/line/escrow/liff/api/deals/:dealId/confirm-delivery', async (req, res
       reason: 'buyer_confirmed',
     });
     deal = releaseResult.deal || deal;
+    const payoutStatus = String(deal.payoutStatus || '').trim().toLowerCase();
+    const payoutReleased = payoutStatus === 'released' && releaseResult?.ok === true;
+    const manualPayoutRequired = payoutStatus === 'manual_required' || releaseResult?.manualRequired === true;
+    const payoutMethodLabel =
+      String(deal.sellerPayoutMethod || '').trim().toLowerCase() === 'promptpay'
+        ? 'PromptPay'
+        : String(deal.sellerPayoutMethod || '').trim().toLowerCase() === 'seller_qr'
+          ? 'QR ผู้ขาย'
+          : 'ธนาคาร';
     const config = await loadLineEscrowBotConfigRecord();
     const finalDeal = buildEscrowDealQueryWithLiffUrls(req, deal, config);
 
     if (String(deal.groupId || '').trim()) {
       const payoutCard = {
         type: 'flex',
-        altText: `ดีล ${deal.id} โอนเงินให้ผู้ขายแล้ว`,
+        altText: payoutReleased
+          ? `ดีล ${deal.id} โอนเงินให้ผู้ขายแล้ว`
+          : `ดีล ${deal.id} รอแอดมินโอนเงินให้ผู้ขาย`,
         contents: {
           type: 'bubble',
           body: {
@@ -7994,22 +8079,34 @@ app.post('/line/escrow/liff/api/deals/:dealId/confirm-delivery', async (req, res
             layout: 'vertical',
             spacing: '8px',
             contents: [
-              { type: 'text', text: 'ยืนยันรับของเรียบร้อย', size: 'lg', weight: 'bold', color: '#166534' },
+              {
+                type: 'text',
+                text: payoutReleased ? 'ยืนยันรับของเรียบร้อย' : 'ยืนยันรับของแล้ว (รอโอนให้ผู้ขาย)',
+                size: 'lg',
+                weight: 'bold',
+                color: payoutReleased ? '#166534' : '#b45309',
+              },
               { type: 'text', text: `ดีล: ${deal.id}`, size: 'sm', color: '#334155' },
               {
                 type: 'text',
-                text: `โอนเงินให้ผู้ขายแล้ว ${Number(finalDeal.payoutAmountThb || 0).toLocaleString()} THB`,
+                text: payoutReleased
+                  ? `โอนเงินให้ผู้ขายแล้ว ${Number(finalDeal.payoutAmountThb || 0).toLocaleString()} THB`
+                  : `ดีลนี้ใช้ช่องทางรับเงินแบบ ${payoutMethodLabel} ต้องโอนให้ผู้ขายแบบ manual`,
                 size: 'sm',
                 color: '#334155',
                 wrap: true,
               },
-              {
-                type: 'text',
-                text: `รหัสโอนเงิน: ${String(finalDeal.payoutTransferId || '-').slice(0, 64)}`,
-                size: 'xs',
-                color: '#64748b',
-                wrap: true,
-              },
+              ...(payoutReleased
+                ? [
+                    {
+                      type: 'text',
+                      text: `รหัสโอนเงิน: ${String(finalDeal.payoutTransferId || '-').slice(0, 64)}`,
+                      size: 'xs',
+                      color: '#64748b',
+                      wrap: true,
+                    },
+                  ]
+                : []),
             ],
           },
         },
@@ -8022,8 +8119,11 @@ app.post('/line/escrow/liff/api/deals/:dealId/confirm-delivery', async (req, res
     }
 
     return res.json({
-      message: 'Delivery confirmed and payout released.',
+      message: payoutReleased
+        ? 'Delivery confirmed and payout released.'
+        : 'Delivery confirmed. Auto payout is not available for this payout method. Please transfer manually.',
       deal: finalDeal,
+      manualPayoutRequired,
     });
   } catch (error) {
     const status = Number(error?.status || 0);

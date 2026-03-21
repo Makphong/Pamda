@@ -200,99 +200,143 @@ const commonUtilsScript = `
   }
 `;
 
-export const renderLineEscrowDealPage = () =>
+export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
   buildShell({
     title: 'สร้างดีลตัวกลางซื้อขาย',
     subtitle: 'ผู้ซื้อสร้างดีลและชำระเงินเข้าระบบก่อน',
     description:
-      'ขั้นตอนที่ 1: ผู้ซื้อสร้างดีลและโอนเงินผ่าน QR PromptPay จากนั้นระบบจะส่งขั้นตอนถัดไปให้ในกลุ่มอัตโนมัติ',
+      'กรอก Group ID ก่อนทุกครั้ง จากนั้นระบบจะตรวจดีลที่รอชำระของกลุ่มนี้ ถ้ามีจะเปิด QR เดิมให้ทันที ถ้าไม่มีจะแสดงฟอร์มสร้างดีลใหม่',
     bodyHtml: `
       <section class="card">
         <form id="escrow-create-form" class="row">
-          <div class="row two">
-            <div>
-              <label for="deal-group-id">รหัสกลุ่ม (Group ID ระบบดึงจากกลุ่มอัตโนมัติ)</label>
-              <input id="deal-group-id" type="text" placeholder="เปิดจากปุ่มในกลุ่มแล้วระบบจะใส่ให้เอง" required />
-              <p class="tiny">ถ้าเปิดจากปุ่มในแชทกลุ่ม LINE ผู้ใช้ไม่ต้องกรอกเอง</p>
-            </div>
-            <div>
-              <label for="deal-buyer-name">ชื่อผู้ซื้อ</label>
-              <input id="deal-buyer-name" type="text" placeholder="เช่น คุณเอ" />
-            </div>
-          </div>
-          <div class="row two">
-            <div>
-              <label for="deal-seller-name">ชื่อผู้ขาย</label>
-              <input id="deal-seller-name" type="text" placeholder="เช่น ร้าน B" required />
-            </div>
-            <div>
-              <label for="deal-item-name">สินค้า</label>
-              <input id="deal-item-name" type="text" placeholder="ชื่อสินค้า" required />
-            </div>
-          </div>
-          <div class="row three">
-            <div>
-              <label for="deal-amount">ยอดเงิน (THB)</label>
-              <input id="deal-amount" type="number" min="1" step="0.01" placeholder="1000" required />
-            </div>
-            <div>
-              <label for="seller-bank-brand">ธนาคารผู้ขาย</label>
-              <select id="seller-bank-brand" required>
-                <option value="">เลือกธนาคาร</option>
-                <option value="bbl">ธนาคารกรุงเทพ (BBL)</option>
-                <option value="kbank">ธนาคารกสิกรไทย (KBANK)</option>
-                <option value="ktb">ธนาคารกรุงไทย (KTB)</option>
-                <option value="scb">ธนาคารไทยพาณิชย์ (SCB)</option>
-                <option value="bay">ธนาคารกรุงศรีอยุธยา (BAY)</option>
-                <option value="ttb">ธนาคารทหารไทยธนชาต (TTB)</option>
-                <option value="gsb">ธนาคารออมสิน (GSB)</option>
-                <option value="baac">ธ.ก.ส. (BAAC)</option>
-                <option value="cimb">ธนาคารซีไอเอ็มบีไทย (CIMB)</option>
-                <option value="uob">ธนาคารยูโอบี (UOB)</option>
-                <option value="lhb">ธนาคารแลนด์ แอนด์ เฮ้าส์ (LHB)</option>
-              </select>
-            </div>
-            <div>
-              <label for="seller-bank-account">เลขบัญชีผู้ขาย</label>
-              <input id="seller-bank-account" type="text" placeholder="เลขบัญชี" required />
-            </div>
-          </div>
-          <div class="row two">
-            <div>
-              <label for="seller-bank-account-name">ชื่อบัญชีผู้ขาย</label>
-              <input id="seller-bank-account-name" type="text" placeholder="ชื่อตรงกับบัญชีธนาคาร" required />
-            </div>
-            <div>
-              <label for="deal-seller-user-id">LINE User ID ของผู้ขาย (ไม่บังคับ)</label>
-              <input id="deal-seller-user-id" type="text" placeholder="Uxxxxxxxx" />
-            </div>
-          </div>
           <div>
-            <label for="deal-note">รายละเอียดเพิ่มเติม</label>
-            <textarea id="deal-note" placeholder="เงื่อนไขสินค้า/หมายเหตุ"></textarea>
+            <label for="deal-group-id">รหัสกลุ่ม (Group ID)</label>
+            <input id="deal-group-id" type="text" placeholder="วาง Group ID ของกลุ่ม LINE ที่ใช้งานดีลนี้" required />
+            <p class="tiny">ถ้าเปิดจากปุ่ม LIFF ในกลุ่ม ระบบมักจะใส่ค่า Group ID ให้อัตโนมัติ</p>
+            <button id="deal-group-confirm-btn" class="btn secondary" type="button" style="margin-top:8px;">ยืนยัน Group ID</button>
           </div>
-          <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <button id="deal-create-btn" class="btn primary" type="submit">สร้างดีล + สร้าง QR ชำระเงิน</button>
-            <button id="deal-check-btn" class="btn ghost" type="button">เช็กสถานะการชำระเงิน</button>
-            <button id="deal-manual-paid-btn" class="btn warn hidden" type="button">ติ๊กว่าชำระเงินแล้ว (โหมดทดสอบ)</button>
-            <button id="deal-cancel-btn" class="btn danger hidden" type="button">ยกเลิกดีล</button>
+
+          <div id="deal-input-fields" class="hidden">
+            <div class="row two">
+              <div>
+                <label for="deal-buyer-name">ชื่อผู้ซื้อ</label>
+                <input id="deal-buyer-name" type="text" placeholder="เช่น คุณเอ" />
+              </div>
+              <div>
+                <label for="deal-seller-name">ชื่อผู้ขาย</label>
+                <input id="deal-seller-name" type="text" placeholder="เช่น ร้าน B" required />
+              </div>
+            </div>
+
+            <div class="row two">
+              <div>
+                <label for="deal-item-name">สินค้า</label>
+                <input id="deal-item-name" type="text" placeholder="ชื่อสินค้า" required />
+              </div>
+              <div>
+                <label for="deal-amount">ยอดเงิน (THB)</label>
+                <input id="deal-amount" type="number" min="1" step="0.01" placeholder="1000" required />
+              </div>
+            </div>
+
+            <div class="row two">
+              <div>
+                <label for="seller-payout-method">ช่องทางรับเงินของผู้ขาย</label>
+                <select id="seller-payout-method" required>
+                  <option value="bank">โอนเข้าบัญชีธนาคาร</option>
+                  <option value="promptpay">โอนผ่าน PromptPay</option>
+                  <option value="seller_qr">ผู้ขายแนบ QR รับเงิน</option>
+                </select>
+              </div>
+              <div>
+                <label for="deal-seller-user-id">LINE User ID ของผู้ขาย (ไม่บังคับ)</label>
+                <input id="deal-seller-user-id" type="text" placeholder="Uxxxxxxxx" />
+              </div>
+            </div>
+
+            <div id="seller-bank-fields" class="row two">
+              <div>
+                <label for="seller-bank-brand">ธนาคารผู้ขาย</label>
+                <select id="seller-bank-brand" required>
+                  <option value="">เลือกธนาคาร</option>
+                  <option value="bbl">ธนาคารกรุงเทพ (BBL)</option>
+                  <option value="kbank">ธนาคารกสิกรไทย (KBANK)</option>
+                  <option value="ktb">ธนาคารกรุงไทย (KTB)</option>
+                  <option value="scb">ธนาคารไทยพาณิชย์ (SCB)</option>
+                  <option value="bay">ธนาคารกรุงศรีอยุธยา (BAY)</option>
+                  <option value="ttb">ธนาคารทหารไทยธนชาต (TTB)</option>
+                  <option value="gsb">ธนาคารออมสิน (GSB)</option>
+                  <option value="baac">ธ.ก.ส. (BAAC)</option>
+                  <option value="cimb">ธนาคารซีไอเอ็มบีไทย (CIMB)</option>
+                  <option value="uob">ธนาคารยูโอบี (UOB)</option>
+                  <option value="lhb">ธนาคารแลนด์ แอนด์ เฮ้าส์ (LHB)</option>
+                </select>
+              </div>
+              <div>
+                <label for="seller-bank-account">เลขบัญชีผู้ขาย</label>
+                <input id="seller-bank-account" type="text" placeholder="เลขบัญชี" required />
+              </div>
+            </div>
+
+            <div id="seller-promptpay-fields" class="row hidden">
+              <div>
+                <label for="seller-promptpay-number">เลข PromptPay ผู้ขาย</label>
+                <input id="seller-promptpay-number" type="text" placeholder="เบอร์มือถือ/เลขบัตรประชาชน/e-Wallet ID" />
+              </div>
+            </div>
+
+            <div id="seller-qr-fields" class="row hidden">
+              <div>
+                <label>QR รับเงินของผู้ขาย</label>
+                <input id="seller-payout-qr-file" type="file" accept="image/*" class="hidden" />
+                <button id="seller-payout-qr-btn" class="btn upload" type="button">อัปโหลด QR รับเงิน</button>
+                <p class="tiny">รองรับเฉพาะไฟล์ภาพ ขนาดสูงสุด ${Math.max(0, Number(maxSlipImageBytes || 0))} bytes</p>
+                <div id="seller-payout-qr-preview" class="preview">ยังไม่ได้อัปโหลด QR</div>
+              </div>
+            </div>
+
+            <div class="row two">
+              <div>
+                <label for="seller-bank-account-name">ชื่อผู้รับเงินผู้ขาย</label>
+                <input id="seller-bank-account-name" type="text" placeholder="ชื่อผู้รับเงินจริง" required />
+              </div>
+              <div>
+                <label for="deal-note">รายละเอียดเพิ่มเติม</label>
+                <input id="deal-note" type="text" placeholder="หมายเหตุ/เงื่อนไขสินค้า" />
+              </div>
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button id="deal-create-btn" class="btn primary" type="submit">สร้างดีล + สร้าง QR ชำระเงิน</button>
+            </div>
           </div>
         </form>
+
+        <div id="deal-payment-actions" class="hidden" style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button id="deal-check-btn" class="btn ghost hidden" type="button">เช็คสถานะชำระเงิน</button>
+          <button id="deal-manual-paid-btn" class="btn warn hidden" type="button">ติ๊กว่าชำระเงินแล้ว (โหมดทดสอบ)</button>
+          <button id="deal-cancel-btn" class="btn danger hidden" type="button">ยกเลิกดีล</button>
+        </div>
+
         <div id="deal-status" class="status hidden"></div>
         <div id="deal-result" class="result hidden"></div>
       </section>
     `,
     script: `
       ${commonUtilsScript}
+
+      var maxQrImageBytes = Number(${Math.max(0, Number(maxSlipImageBytes || 0))}) || 0;
+
       var form = document.getElementById('escrow-create-form');
+      var dealFieldsWrap = document.getElementById('deal-input-fields');
+      var paymentActionsWrap = document.getElementById('deal-payment-actions');
       var createBtn = document.getElementById('deal-create-btn');
+      var groupConfirmBtn = document.getElementById('deal-group-confirm-btn');
       var checkBtn = document.getElementById('deal-check-btn');
       var manualPaidBtn = document.getElementById('deal-manual-paid-btn');
       var cancelBtn = document.getElementById('deal-cancel-btn');
       var statusBox = document.getElementById('deal-status');
       var resultBox = document.getElementById('deal-result');
-      var dealId = parseDealIdFromLocation();
-      var STORAGE_KEY_PREFIX = 'lineEscrowDealIdByGroup:';
 
       var groupInput = document.getElementById('deal-group-id');
       var buyerNameInput = document.getElementById('deal-buyer-name');
@@ -301,50 +345,99 @@ export const renderLineEscrowDealPage = () =>
       var itemInput = document.getElementById('deal-item-name');
       var amountInput = document.getElementById('deal-amount');
       var noteInput = document.getElementById('deal-note');
+      var payoutMethodInput = document.getElementById('seller-payout-method');
       var bankBrandInput = document.getElementById('seller-bank-brand');
       var bankAccountInput = document.getElementById('seller-bank-account');
+      var promptpayInput = document.getElementById('seller-promptpay-number');
+      var bankFieldsWrap = document.getElementById('seller-bank-fields');
+      var promptpayFieldsWrap = document.getElementById('seller-promptpay-fields');
+      var qrFieldsWrap = document.getElementById('seller-qr-fields');
+      var payoutQrFileInput = document.getElementById('seller-payout-qr-file');
+      var payoutQrBtn = document.getElementById('seller-payout-qr-btn');
+      var payoutQrPreview = document.getElementById('seller-payout-qr-preview');
       var bankAccountNameInput = document.getElementById('seller-bank-account-name');
+
+      var dealId = parseDealIdFromLocation();
+      var groupReady = false;
+      var isBusy = false;
+      var sellerPayoutQrImage = null;
 
       var groupFromQuery = parseGroupIdFromLocation();
       if (groupFromQuery) {
         groupInput.value = groupFromQuery;
-        groupInput.readOnly = true;
-        groupInput.setAttribute('aria-readonly', 'true');
       }
 
-      function getStorageKey(groupIdValue) {
-        return STORAGE_KEY_PREFIX + String(groupIdValue || '').trim();
+      function getSelectedBankName() {
+        if (!bankBrandInput.options || bankBrandInput.selectedIndex < 0) return '';
+        return String(bankBrandInput.options[bankBrandInput.selectedIndex].text || '').trim();
       }
 
-      function saveStoredDealId(groupIdValue, dealIdValue) {
-        var groupIdText = String(groupIdValue || '').trim();
-        var dealIdText = String(dealIdValue || '').trim();
-        if (!groupIdText || !dealIdText || !window.localStorage) return;
-        try {
-          window.localStorage.setItem(getStorageKey(groupIdText), dealIdText);
-        } catch (_error) {}
+      function getPayoutMethodLabel(methodInput) {
+        var method = String(methodInput || '').trim().toLowerCase();
+        if (method === 'promptpay') return 'PromptPay';
+        if (method === 'seller_qr') return 'QR ผู้ขาย';
+        return 'ธนาคาร';
       }
 
-      function loadStoredDealId(groupIdValue) {
-        var groupIdText = String(groupIdValue || '').trim();
-        if (!groupIdText || !window.localStorage) return '';
-        try {
-          return String(window.localStorage.getItem(getStorageKey(groupIdText)) || '').trim();
-        } catch (_error) {
-          return '';
+      function isDealAwaitingPayment(deal) {
+        var d = deal && typeof deal === 'object' ? deal : {};
+        var status = String(d.status || '').trim().toLowerCase();
+        var paymentStatus = String(d.paymentStatus || '').trim().toLowerCase();
+        return Boolean(d.id) && status === 'awaiting_payment' && paymentStatus !== 'paid' && paymentStatus !== 'cancelled';
+      }
+
+      function setCreateFormVisible(visible) {
+        dealFieldsWrap.classList.toggle('hidden', !visible);
+      }
+
+      function updateGroupButtonText() {
+        if (isBusy) {
+          groupConfirmBtn.textContent = groupReady ? 'กำลังประมวลผล...' : 'กำลังตรวจสอบ Group ID...';
+          return;
         }
+        groupConfirmBtn.textContent = groupReady ? 'เปลี่ยน Group ID' : 'ยืนยัน Group ID';
       }
 
-      function clearStoredDealId(groupIdValue) {
-        var groupIdText = String(groupIdValue || '').trim();
-        if (!groupIdText || !window.localStorage) return;
-        try {
-          window.localStorage.removeItem(getStorageKey(groupIdText));
-        } catch (_error) {}
+      function setGroupReady(isReady) {
+        groupReady = Boolean(isReady);
+        groupInput.readOnly = groupReady;
+        groupInput.setAttribute('aria-readonly', groupReady ? 'true' : 'false');
+        updateGroupButtonText();
+      }
+
+      function setBusy(nextBusy) {
+        isBusy = Boolean(nextBusy);
+        createBtn.disabled = isBusy;
+        groupConfirmBtn.disabled = isBusy;
+        checkBtn.disabled = isBusy;
+        manualPaidBtn.disabled = isBusy;
+        cancelBtn.disabled = isBusy;
+        createBtn.textContent = isBusy ? 'กำลังสร้างดีล...' : 'สร้างดีล + สร้าง QR ชำระเงิน';
+        updateGroupButtonText();
+      }
+
+      function resetPayoutQrPreview() {
+        sellerPayoutQrImage = null;
+        payoutQrPreview.textContent = 'ยังไม่ได้อัปโหลด QR';
+      }
+
+      function updatePayoutMethodFields() {
+        var method = String(payoutMethodInput.value || 'bank').trim().toLowerCase();
+        var isBank = method === 'bank';
+        var isPromptpay = method === 'promptpay';
+        var isSellerQr = method === 'seller_qr';
+
+        bankFieldsWrap.classList.toggle('hidden', !isBank);
+        promptpayFieldsWrap.classList.toggle('hidden', !isPromptpay);
+        qrFieldsWrap.classList.toggle('hidden', !isSellerQr);
+
+        bankBrandInput.required = isBank;
+        bankAccountInput.required = isBank;
+        promptpayInput.required = isPromptpay;
       }
 
       function syncBankBrandByDeal(deal) {
-        var brand = String(deal && deal.sellerBankBrand || '').trim().toLowerCase();
+        var brand = String((deal && deal.sellerBankBrand) || '').trim().toLowerCase();
         if (!brand) return;
         for (var i = 0; i < bankBrandInput.options.length; i += 1) {
           if (String(bankBrandInput.options[i].value || '').trim().toLowerCase() === brand) {
@@ -354,34 +447,62 @@ export const renderLineEscrowDealPage = () =>
         }
       }
 
-      function updateDealActionButtons(deal) {
-        var d = deal && typeof deal === 'object' ? deal : null;
-        var status = String(d && d.status || '').trim().toLowerCase();
-        var paymentStatus = String(d && d.paymentStatus || '').trim().toLowerCase();
-        var canManagePendingPayment = Boolean(d && d.id) && status === 'awaiting_payment' && paymentStatus !== 'paid' && paymentStatus !== 'cancelled';
-        manualPaidBtn.classList.toggle('hidden', !canManagePendingPayment);
-        cancelBtn.classList.toggle('hidden', !canManagePendingPayment);
+      function showPayoutQrPreview(image) {
+        if (!image || !image.dataUrl) {
+          resetPayoutQrPreview();
+          return;
+        }
+        sellerPayoutQrImage = image;
+        payoutQrPreview.innerHTML =
+          '<img alt="seller payout qr" src="' + escapeHtml(image.dataUrl) + '" />';
       }
 
-      function setBusy(isBusy) {
-        createBtn.disabled = Boolean(isBusy);
-        checkBtn.disabled = Boolean(isBusy);
-        manualPaidBtn.disabled = Boolean(isBusy);
-        cancelBtn.disabled = Boolean(isBusy);
-        createBtn.textContent = isBusy ? 'กำลังสร้างดีล...' : 'สร้างดีล + สร้าง QR ชำระเงิน';
+      function updateDealActionButtons(deal) {
+        var awaitingPayment = isDealAwaitingPayment(deal);
+        paymentActionsWrap.classList.toggle('hidden', !awaitingPayment);
+        checkBtn.classList.toggle('hidden', !awaitingPayment);
+        manualPaidBtn.classList.toggle('hidden', !awaitingPayment);
+        cancelBtn.classList.toggle('hidden', !awaitingPayment);
       }
 
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
-        if (d.id) dealId = String(d.id);
-        if (d.groupId && d.id) saveStoredDealId(d.groupId, d.id);
+        if (!d || !d.id) return;
+
+        dealId = String(d.id || '').trim();
+        if (String(d.groupId || '').trim()) {
+          groupInput.value = String(d.groupId || '').trim();
+        }
+        setGroupReady(true);
+
+        buyerNameInput.value = String(d.buyerName || '').trim();
+        sellerNameInput.value = String(d.sellerName || '').trim();
+        sellerUserIdInput.value = String(d.sellerLineUserId || '').trim();
+        itemInput.value = String(d.itemName || '').trim();
+        amountInput.value = Number(d.paymentAmountThb || 0) > 0 ? String(d.paymentAmountThb) : '';
+        noteInput.value = String(d.note || '').trim();
+        bankAccountNameInput.value = String(d.sellerBankAccountName || '').trim();
+
+        var payoutMethod = String(d.sellerPayoutMethod || '').trim().toLowerCase() || 'bank';
+        payoutMethodInput.value = payoutMethod;
+        updatePayoutMethodFields();
         syncBankBrandByDeal(d);
+        bankAccountInput.value = String(d.sellerBankAccount || '').trim();
+        promptpayInput.value = String(d.sellerPromptpayNumber || '').trim();
+        if (d.sellerPayoutQrImage && d.sellerPayoutQrImage.dataUrl) {
+          showPayoutQrPreview(d.sellerPayoutQrImage);
+        } else {
+          resetPayoutQrPreview();
+        }
+
         var qrHtml = d.paymentQrImageUrl
-          ? '<div class="qr"><div style="font-size:0.78rem;color:#334155;">สแกน QR นี้เพื่อโอนเงินเข้าระบบ</div><img alt="คิวอาร์พร้อมเพย์" src="' + escapeHtml(d.paymentQrImageUrl) + '" /></div>'
-          : '<p class="tiny">ยังไม่มี QR (ตรวจสอบการตั้งค่า Payment Provider)</p>';
+          ? '<div class="qr"><div style="font-size:0.78rem;color:#334155;">สแกน QR นี้เพื่อชำระเงินเข้าระบบ</div><img alt="payment qr" src="' + escapeHtml(d.paymentQrImageUrl) + '" /></div>'
+          : '<p class="tiny">ยังไม่มี QR สำหรับดีลนี้</p>';
+
         var links = '';
         if (d.sellerLiffUrl) links += '<a href="' + escapeHtml(d.sellerLiffUrl) + '" target="_blank" rel="noreferrer">เปิดหน้า LIFF ผู้ขาย</a><br />';
         if (d.buyerLiffUrl) links += '<a href="' + escapeHtml(d.buyerLiffUrl) + '" target="_blank" rel="noreferrer">เปิดหน้า LIFF ผู้ซื้อ</a>';
+
         resultBox.innerHTML =
           '<h3>รายละเอียดดีล</h3>' +
           '<div class="kv">' +
@@ -389,25 +510,23 @@ export const renderLineEscrowDealPage = () =>
             '<div class="k">รหัสกลุ่ม</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
             '<div class="k">สถานะดีล</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
             '<div class="k">สถานะชำระเงิน</div><div class="v">' + escapeHtml(d.paymentStatus || '-') + '</div>' +
-            '<div class="k">ยอดเงิน</div><div class="v">' + escapeHtml((Number(d.paymentAmountThb || 0)).toLocaleString()) + ' THB</div>' +
+            '<div class="k">ยอดเงิน</div><div class="v">' + escapeHtml(Number(d.paymentAmountThb || 0).toLocaleString()) + ' THB</div>' +
             '<div class="k">สินค้า</div><div class="v">' + escapeHtml(d.itemName || '-') + '</div>' +
-            '<div class="k">ธนาคารผู้ขาย</div><div class="v">' + escapeHtml(d.sellerBankName || d.sellerBankBrand || '-') + '</div>' +
+            '<div class="k">ช่องทางรับเงินผู้ขาย</div><div class="v">' + escapeHtml(getPayoutMethodLabel(payoutMethod)) + '</div>' +
           '</div>' +
           qrHtml +
           (links ? '<div style="margin-top:10px;font-size:0.82rem;">' + links + '</div>' : '');
         resultBox.classList.remove('hidden');
-        updateDealActionButtons(d);
 
-        var status = String(d.status || '').trim().toLowerCase();
-        var paymentStatus = String(d.paymentStatus || '').trim().toLowerCase();
-        if (d.groupId && (paymentStatus === 'paid' || status !== 'awaiting_payment')) {
-          clearStoredDealId(d.groupId);
-        }
+        var awaitingPayment = isDealAwaitingPayment(d);
+        setCreateFormVisible(!awaitingPayment);
+        updateDealActionButtons(d);
       }
 
       async function loadDealById(targetDealId, refreshPayment, silent) {
         var targetId = String(targetDealId || '').trim();
         if (!targetId) return null;
+
         var url = '/line/escrow/liff/api/deals/' + encodeURIComponent(targetId);
         if (refreshPayment) url += '?refreshPayment=1';
         var response = await fetch(url);
@@ -419,10 +538,124 @@ export const renderLineEscrowDealPage = () =>
           renderDeal(payload.deal);
           return payload.deal;
         }
-        if (!silent) {
-          showStatus(statusBox, 'ไม่พบข้อมูลดีล', 'error');
-        }
+        if (!silent) showStatus(statusBox, 'ไม่พบข้อมูลดีล', 'error');
         return null;
+      }
+
+      async function loadActivePaymentDeal(groupIdValue) {
+        var groupIdText = String(groupIdValue || '').trim();
+        if (!groupIdText) {
+          throw new Error('กรุณากรอก Group ID');
+        }
+        var url =
+          '/line/escrow/liff/api/deals/active-payment?groupId=' +
+          encodeURIComponent(groupIdText) +
+          '&refreshPayment=1';
+        var response = await fetch(url);
+        var payload = await response.json().catch(function () { return null; });
+        if (!response.ok) {
+          throw new Error((payload && payload.message) || 'โหลดดีลที่รอชำระไม่สำเร็จ');
+        }
+        return {
+          deal: payload && payload.deal ? payload.deal : null,
+          message: String((payload && payload.message) || '').trim(),
+        };
+      }
+
+      function normalizePromptpayNumber(valueInput) {
+        return String(valueInput || '').replace(/[^0-9]/g, '').slice(0, 20);
+      }
+
+      function buildCreatePayload() {
+        var groupIdValue = String(groupInput.value || '').trim();
+        if (!groupReady || !groupIdValue) {
+          throw new Error('กรุณายืนยัน Group ID ก่อนสร้างดีล');
+        }
+        var payoutMethod = String(payoutMethodInput.value || 'bank').trim().toLowerCase();
+        if (['bank', 'promptpay', 'seller_qr'].indexOf(payoutMethod) < 0) payoutMethod = 'bank';
+
+        var payload = {
+          groupId: groupIdValue,
+          buyerName: String(buyerNameInput.value || '').trim(),
+          sellerName: String(sellerNameInput.value || '').trim(),
+          sellerLineUserId: String(sellerUserIdInput.value || '').trim(),
+          itemName: String(itemInput.value || '').trim(),
+          amountThb: Number(amountInput.value || 0),
+          note: String(noteInput.value || '').trim(),
+          sellerPayoutMethod: payoutMethod,
+          sellerBankAccountName: String(bankAccountNameInput.value || '').trim(),
+        };
+
+        if (!payload.sellerName || !payload.itemName || !Number.isFinite(payload.amountThb) || payload.amountThb <= 0) {
+          throw new Error('กรุณากรอก ชื่อผู้ขาย, สินค้า และยอดเงิน ให้ครบถ้วน');
+        }
+        if (!payload.sellerBankAccountName) {
+          throw new Error('กรุณากรอกชื่อผู้รับเงินผู้ขาย');
+        }
+
+        if (payoutMethod === 'bank') {
+          var bankBrandValue = String(bankBrandInput.value || '').trim().toLowerCase();
+          if (!bankBrandValue) {
+            throw new Error('กรุณาเลือกธนาคารผู้ขาย');
+          }
+          payload.sellerBankBrand = bankBrandValue;
+          payload.sellerBankName = getSelectedBankName();
+          payload.sellerBankAccount = String(bankAccountInput.value || '').trim();
+          if (!payload.sellerBankAccount) {
+            throw new Error('กรุณากรอกเลขบัญชีผู้ขาย');
+          }
+        } else if (payoutMethod === 'promptpay') {
+          payload.sellerPromptpayNumber = normalizePromptpayNumber(promptpayInput.value);
+          if (!payload.sellerPromptpayNumber || !/^(?:\d{10}|\d{13}|\d{15})$/.test(payload.sellerPromptpayNumber)) {
+            throw new Error('เลข PromptPay ต้องเป็นตัวเลข 10, 13 หรือ 15 หลัก');
+          }
+        } else if (payoutMethod === 'seller_qr') {
+          if (!sellerPayoutQrImage || !sellerPayoutQrImage.dataUrl) {
+            throw new Error('กรุณาอัปโหลด QR รับเงินของผู้ขาย');
+          }
+          payload.sellerPayoutQrImage = sellerPayoutQrImage;
+        }
+
+        return payload;
+      }
+
+      async function activateGroupAndLoadDeal() {
+        var groupIdValue = String(groupInput.value || '').trim();
+        if (!groupIdValue) {
+          throw new Error('กรุณากรอก Group ID ก่อน');
+        }
+
+        hideStatus(statusBox);
+        resultBox.classList.add('hidden');
+        setBusy(true);
+        try {
+          setGroupReady(true);
+          setCreateFormVisible(false);
+          updateDealActionButtons(null);
+
+          var active = await loadActivePaymentDeal(groupIdValue);
+          if (active && active.deal) {
+            renderDeal(active.deal);
+            showStatus(statusBox, 'พบดีลที่รอชำระของกลุ่มนี้ ระบบเปิด QR เดิมให้แล้ว', 'success');
+            return;
+          }
+
+          dealId = '';
+          updateDealActionButtons(null);
+          setCreateFormVisible(true);
+          showStatus(
+            statusBox,
+            active && active.message ? active.message : 'ยังไม่มีดีลที่รอชำระในกลุ่มนี้ กรุณากรอกข้อมูลเพื่อสร้างดีลใหม่',
+            'success'
+          );
+        } catch (error) {
+          setGroupReady(false);
+          setCreateFormVisible(false);
+          updateDealActionButtons(null);
+          throw error;
+        } finally {
+          setBusy(false);
+        }
       }
 
       async function checkPayment() {
@@ -440,8 +673,20 @@ export const renderLineEscrowDealPage = () =>
           });
           var payload = await response.json().catch(function () { return null; });
           if (!response.ok) throw new Error((payload && payload.message) || 'ตรวจสอบการชำระเงินไม่สำเร็จ');
-          renderDeal(payload && payload.deal);
-          showStatus(statusBox, 'ตรวจสอบสถานะชำระเงินสำเร็จ', 'success');
+          if (payload && payload.deal) {
+            renderDeal(payload.deal);
+          }
+          var isPaid =
+            payload &&
+            payload.deal &&
+            String(payload.deal.paymentStatus || '').trim().toLowerCase() === 'paid';
+          showStatus(
+            statusBox,
+            isPaid
+              ? 'ชำระเงินสำเร็จ ระบบจะไปขั้นตอนถัดไปอัตโนมัติ'
+              : 'ตรวจสอบสถานะชำระเงินสำเร็จ (ยังไม่พบการชำระ)',
+            'success'
+          );
         } catch (error) {
           showStatus(statusBox, (error && error.message) || 'ตรวจสอบการชำระเงินไม่สำเร็จ', 'error');
         } finally {
@@ -449,39 +694,18 @@ export const renderLineEscrowDealPage = () =>
         }
       }
 
-      async function loadActivePaymentDeal(groupIdValue, silent) {
-        var groupIdText = String(groupIdValue || '').trim();
-        if (!groupIdText) return null;
-        var url =
-          '/line/escrow/liff/api/deals/active-payment?groupId=' +
-          encodeURIComponent(groupIdText) +
-          '&refreshPayment=1';
-        var response = await fetch(url);
-        var payload = await response.json().catch(function () { return null; });
-        if (!response.ok) {
-          throw new Error((payload && payload.message) || 'โหลดดีลที่รอชำระไม่สำเร็จ');
-        }
-        if (payload && payload.deal) {
-          renderDeal(payload.deal);
-          return payload.deal;
-        }
-        if (payload && payload.message && !silent) {
-          showStatus(statusBox, payload.message, 'success');
-        }
-        return null;
-      }
-
       async function markManualPaidForTest() {
         if (!dealId) {
           showStatus(statusBox, 'ยังไม่มีรหัสดีลให้ยืนยันชำระเงิน', 'error');
           return;
         }
-        if (!window.confirm('ยืนยันว่ารายการนี้ได้รับเงินแล้วใช่หรือไม่?')) return;
-        var second = window.prompt('พิมพ์คำว่า "ยืนยัน" เพื่อยืนยันการชำระเงินในโหมดทดสอบ');
+        if (!window.confirm('ยืนยันว่าดีลนี้ชำระเงินแล้วใช่หรือไม่?')) return;
+        var second = window.prompt('พิมพ์คำว่า "ยืนยัน" เพื่อยืนยันการชำระเงิน');
         if (String(second || '').trim() !== 'ยืนยัน') {
           showStatus(statusBox, 'ยกเลิกการยืนยันชำระเงิน', 'error');
           return;
         }
+
         hideStatus(statusBox);
         setBusy(true);
         try {
@@ -492,7 +716,9 @@ export const renderLineEscrowDealPage = () =>
           });
           var payload = await response.json().catch(function () { return null; });
           if (!response.ok) throw new Error((payload && payload.message) || 'ยืนยันชำระเงินไม่สำเร็จ');
-          renderDeal(payload && payload.deal);
+          if (payload && payload.deal) {
+            renderDeal(payload.deal);
+          }
           showStatus(statusBox, (payload && payload.message) || 'ยืนยันชำระเงินแล้ว', 'success');
         } catch (error) {
           showStatus(statusBox, (error && error.message) || 'ยืนยันชำระเงินไม่สำเร็จ', 'error');
@@ -507,11 +733,12 @@ export const renderLineEscrowDealPage = () =>
           return;
         }
         if (!window.confirm('ต้องการยกเลิกดีลนี้ใช่หรือไม่?')) return;
-        var second = window.prompt('พิมพ์คำว่า "ยกเลิกดีล" เพื่อยืนยันการยกเลิก');
+        var second = window.prompt('พิมพ์คำว่า "ยกเลิกดีล" เพื่อยืนยัน');
         if (String(second || '').trim() !== 'ยกเลิกดีล') {
           showStatus(statusBox, 'ยกเลิกการดำเนินการยกเลิกดีล', 'error');
           return;
         }
+
         hideStatus(statusBox);
         setBusy(true);
         try {
@@ -522,8 +749,10 @@ export const renderLineEscrowDealPage = () =>
           });
           var payload = await response.json().catch(function () { return null; });
           if (!response.ok) throw new Error((payload && payload.message) || 'ยกเลิกดีลไม่สำเร็จ');
-          renderDeal(payload && payload.deal);
-          showStatus(statusBox, (payload && payload.message) || 'ยกเลิกดีลแล้ว', 'success');
+          if (payload && payload.deal) {
+            renderDeal(payload.deal);
+          }
+          showStatus(statusBox, (payload && payload.message) || 'ยกเลิกดีลเรียบร้อยแล้ว', 'success');
         } catch (error) {
           showStatus(statusBox, (error && error.message) || 'ยกเลิกดีลไม่สำเร็จ', 'error');
         } finally {
@@ -531,26 +760,61 @@ export const renderLineEscrowDealPage = () =>
         }
       }
 
-      async function bootstrapDealState() {
-        try {
-          if (dealId) {
-            await loadDealById(dealId, true, true);
-            return;
+      payoutMethodInput.addEventListener('change', updatePayoutMethodFields);
+
+      payoutQrBtn.addEventListener('click', function () {
+        payoutQrFileInput.click();
+      });
+
+      payoutQrFileInput.addEventListener('change', function (event) {
+        var file = event.target.files && event.target.files[0];
+        if (!file) return;
+        if (!String(file.type || '').toLowerCase().startsWith('image/')) {
+          showStatus(statusBox, 'อัปโหลดได้เฉพาะไฟล์รูปภาพเท่านั้น', 'error');
+          payoutQrFileInput.value = '';
+          return;
+        }
+        if (maxQrImageBytes > 0 && Number(file.size || 0) > maxQrImageBytes) {
+          showStatus(statusBox, 'ไฟล์ใหญ่เกินกำหนด (' + maxQrImageBytes + ' bytes)', 'error');
+          payoutQrFileInput.value = '';
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function () {
+          showPayoutQrPreview({
+            id: 'seller-qr-' + Date.now(),
+            name: String(file.name || 'seller-qr').slice(0, 180),
+            mimeType: String(file.type || 'image/*').toLowerCase(),
+            size: Number(file.size || 0),
+            dataUrl: String(reader.result || '')
+          });
+          hideStatus(statusBox);
+        };
+        reader.onerror = function () {
+          showStatus(statusBox, 'อ่านไฟล์รูป QR ไม่สำเร็จ', 'error');
+        };
+        reader.readAsDataURL(file);
+      });
+
+      groupConfirmBtn.addEventListener('click', function () {
+        if (groupReady) {
+          setGroupReady(false);
+          setCreateFormVisible(false);
+          updateDealActionButtons(null);
+          dealId = '';
+          resultBox.classList.add('hidden');
+          resetPayoutQrPreview();
+          showStatus(statusBox, 'แก้ไข Group ID ได้แล้ว กรุณากด "ยืนยัน Group ID" อีกครั้ง', 'success');
+          return;
+        }
+        void (async function () {
+          try {
+            await activateGroupAndLoadDeal();
+          } catch (error) {
+            showStatus(statusBox, (error && error.message) || 'ตรวจสอบ Group ID ไม่สำเร็จ', 'error');
           }
-          var groupIdValue = String(groupInput.value || '').trim();
-          if (!groupIdValue) return;
-          var storedDealId = loadStoredDealId(groupIdValue);
-          if (storedDealId) {
-            try {
-              await loadDealById(storedDealId, true, true);
-              if (dealId) return;
-            } catch (_error) {
-              clearStoredDealId(groupIdValue);
-            }
-          }
-          await loadActivePaymentDeal(groupIdValue, true);
-        } catch (_error) {}
-      }
+        })();
+      });
 
       checkBtn.addEventListener('click', function () {
         void checkPayment();
@@ -561,91 +825,95 @@ export const renderLineEscrowDealPage = () =>
       cancelBtn.addEventListener('click', function () {
         void cancelDeal();
       });
-      updateDealActionButtons(null);
-      void bootstrapDealState();
 
-      form.addEventListener('submit', async function (event) {
+      form.addEventListener('submit', function (event) {
         event.preventDefault();
-        hideStatus(statusBox);
-        resultBox.classList.add('hidden');
-        setBusy(true);
-        try {
-          var groupIdValue = String(groupInput.value || '').trim();
-          if (!groupIdValue) {
-            throw new Error('ไม่พบ Group ID กรุณาเปิดหน้านี้จากปุ่มในแชทกลุ่ม LINE เพื่อให้ระบบใส่ Group ID อัตโนมัติ');
+        void (async function () {
+          hideStatus(statusBox);
+          resultBox.classList.add('hidden');
+          setBusy(true);
+          try {
+            var payloadData = buildCreatePayload();
+            var response = await fetch('/line/escrow/liff/api/deals/create', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payloadData)
+            });
+            var payload = await response.json().catch(function () { return null; });
+            if (!response.ok) throw new Error((payload && payload.message) || 'สร้างดีลไม่สำเร็จ');
+            if (payload && payload.deal) {
+              renderDeal(payload.deal);
+            }
+            showStatus(statusBox, (payload && payload.message) || 'สร้างดีลสำเร็จ', 'success');
+          } catch (error) {
+            showStatus(statusBox, (error && error.message) || 'สร้างดีลไม่สำเร็จ', 'error');
+          } finally {
+            setBusy(false);
           }
-          var bankBrandValue = String(bankBrandInput.value || '').trim().toLowerCase();
-          if (!bankBrandValue) {
-            throw new Error('กรุณาเลือกธนาคารผู้ขาย');
-          }
-          var selectedBankName =
-            bankBrandInput.options && bankBrandInput.selectedIndex >= 0
-              ? String(bankBrandInput.options[bankBrandInput.selectedIndex].text || '').trim()
-              : '';
-          var response = await fetch('/line/escrow/liff/api/deals/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              groupId: groupIdValue,
-              buyerName: String(buyerNameInput.value || '').trim(),
-              sellerName: String(sellerNameInput.value || '').trim(),
-              sellerLineUserId: String(sellerUserIdInput.value || '').trim(),
-              itemName: String(itemInput.value || '').trim(),
-              amountThb: Number(amountInput.value || 0),
-              note: String(noteInput.value || '').trim(),
-              sellerBankBrand: bankBrandValue,
-              sellerBankName: selectedBankName,
-              sellerBankAccount: String(bankAccountInput.value || '').trim(),
-              sellerBankAccountName: String(bankAccountNameInput.value || '').trim()
-            })
-          });
-          var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'สร้างดีลไม่สำเร็จ');
-          renderDeal(payload && payload.deal);
-          showStatus(statusBox, (payload && payload.message) || 'สร้างดีลสำเร็จ', 'success');
-        } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'สร้างดีลไม่สำเร็จ', 'error');
-        } finally {
-          setBusy(false);
-        }
+        })();
       });
+
+      updatePayoutMethodFields();
+      updateDealActionButtons(null);
+      setCreateFormVisible(false);
+      setGroupReady(false);
+      resetPayoutQrPreview();
+
+      (function bootstrapFromDealIdIfProvided() {
+        if (!dealId) return;
+        void (async function () {
+          setBusy(true);
+          try {
+            var loaded = await loadDealById(dealId, true, true);
+            if (loaded && loaded.groupId) {
+              groupInput.value = String(loaded.groupId || '').trim();
+              setGroupReady(true);
+            }
+          } catch (_error) {
+            setGroupReady(false);
+            setCreateFormVisible(false);
+            updateDealActionButtons(null);
+          } finally {
+            setBusy(false);
+          }
+        })();
+      })();
     `,
   });
-
 export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
   buildShell({
-    title: 'ผู้ขายส่งเลขพัสดุ',
-    subtitle: 'ส่งเลขพัสดุ + รูปหลักฐานให้ระบบ',
+    title: 'à¸œà¸¹à¹‰à¸‚à¸²à¸¢à¸ªà¹ˆà¸‡à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸',
+    subtitle: 'à¸ªà¹ˆà¸‡à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸ + à¸£à¸¹à¸›à¸«à¸¥à¸±à¸à¸à¸²à¸™à¹ƒà¸«à¹‰à¸£à¸°à¸šà¸š',
     description:
-      'ขั้นตอนที่ 2: ทำหลังผู้ซื้อชำระเงินแล้ว เมื่อส่งสำเร็จ ระบบจะแจ้งในกลุ่มและผู้ซื้อจะติดตามสถานะได้',
+      'à¸‚à¸±à¹‰à¸™à¸•à¸­à¸™à¸—à¸µà¹ˆ 2: à¸—à¸³à¸«à¸¥à¸±à¸‡à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™à¹à¸¥à¹‰à¸§ à¹€à¸¡à¸·à¹ˆà¸­à¸ªà¹ˆà¸‡à¸ªà¸³à¹€à¸£à¹‡à¸ˆ à¸£à¸°à¸šà¸šà¸ˆà¸°à¹à¸ˆà¹‰à¸‡à¹ƒà¸™à¸à¸¥à¸¸à¹ˆà¸¡à¹à¸¥à¸°à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¸ˆà¸°à¸•à¸´à¸”à¸•à¸²à¸¡à¸ªà¸–à¸²à¸™à¸°à¹„à¸”à¹‰',
     bodyHtml: `
       <section class="card">
         <form id="seller-form" class="row">
           <div class="row two">
             <div>
-              <label for="seller-deal-id">รหัสดีล</label>
+              <label for="seller-deal-id">à¸£à¸«à¸±à¸ªà¸”à¸µà¸¥</label>
               <input id="seller-deal-id" type="text" placeholder="escrow deal id" required />
             </div>
             <div>
-              <label for="seller-tracking-no">เลขพัสดุ</label>
-              <input id="seller-tracking-no" type="text" placeholder="เลขพัสดุ" required />
+              <label for="seller-tracking-no">à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸</label>
+              <input id="seller-tracking-no" type="text" placeholder="à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸" required />
             </div>
           </div>
           <div>
-            <label for="seller-courier-code">Courier Code (ไม่บังคับ)</label>
-            <input id="seller-courier-code" type="text" placeholder="เช่น thailand-post, kerry, flash" />
+            <label for="seller-courier-code">Courier Code (à¹„à¸¡à¹ˆà¸šà¸±à¸‡à¸„à¸±à¸š)</label>
+            <input id="seller-courier-code" type="text" placeholder="à¹€à¸Šà¹ˆà¸™ thailand-post, kerry, flash" />
           </div>
           <div>
-            <label>รูปหลักฐานการส่ง</label>
+            <label>à¸£à¸¹à¸›à¸«à¸¥à¸±à¸à¸à¸²à¸™à¸à¸²à¸£à¸ªà¹ˆà¸‡</label>
             <label class="btn upload" style="display:inline-flex;align-items:center;justify-content:center;" for="seller-slip-input">
-              อัปโหลดรูปหลักฐาน
+              à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¸«à¸¥à¸±à¸à¸à¸²à¸™
             </label>
             <input id="seller-slip-input" type="file" accept="image/*" class="hidden" />
-            <p class="tiny">รองรับเฉพาะไฟล์ภาพ ขนาดสูงสุด ${Math.max(0, Number(maxSlipImageBytes || 0))} bytes</p>
-            <div id="seller-slip-preview" class="preview">ยังไม่ได้เลือกรูป</div>
+            <p class="tiny">à¸£à¸­à¸‡à¸£à¸±à¸šà¹€à¸‰à¸žà¸²à¸°à¹„à¸Ÿà¸¥à¹Œà¸ à¸²à¸ž à¸‚à¸™à¸²à¸”à¸ªà¸¹à¸‡à¸ªà¸¸à¸” ${Math.max(0, Number(maxSlipImageBytes || 0))} bytes</p>
+            <div id="seller-slip-preview" class="preview">à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¹„à¸”à¹‰à¹€à¸¥à¸·à¸­à¸à¸£à¸¹à¸›</div>
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <button id="seller-submit-btn" class="btn secondary" type="submit">ยืนยันส่งเลขพัสดุและหลักฐาน</button>
+            <button id="seller-submit-btn" class="btn secondary" type="submit">à¸¢à¸·à¸™à¸¢à¸±à¸™à¸ªà¹ˆà¸‡à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸à¹à¸¥à¸°à¸«à¸¥à¸±à¸à¸à¸²à¸™</button>
           </div>
         </form>
         <div id="seller-status" class="status hidden"></div>
@@ -671,19 +939,19 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
 
       function setBusy(isBusy) {
         submitBtn.disabled = Boolean(isBusy);
-        submitBtn.textContent = isBusy ? 'กำลังบันทึก...' : 'ยืนยันส่งเลขพัสดุและหลักฐาน';
+        submitBtn.textContent = isBusy ? 'à¸à¸³à¸¥à¸±à¸‡à¸šà¸±à¸™à¸—à¸¶à¸...' : 'à¸¢à¸·à¸™à¸¢à¸±à¸™à¸ªà¹ˆà¸‡à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸à¹à¸¥à¸°à¸«à¸¥à¸±à¸à¸à¸²à¸™';
       }
 
       fileInput.addEventListener('change', function (event) {
         var file = event.target.files && event.target.files[0];
         if (!file) return;
         if (!String(file.type || '').toLowerCase().startsWith('image/')) {
-          showStatus(statusBox, 'อนุญาตเฉพาะไฟล์ภาพเท่านั้น', 'error');
+          showStatus(statusBox, 'à¸­à¸™à¸¸à¸à¸²à¸•à¹€à¸‰à¸žà¸²à¸°à¹„à¸Ÿà¸¥à¹Œà¸ à¸²à¸žà¹€à¸—à¹ˆà¸²à¸™à¸±à¹‰à¸™', 'error');
           fileInput.value = '';
           return;
         }
         if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
-          showStatus(statusBox, 'ไฟล์ใหญ่เกินกำหนด (' + maxBytes + ' bytes)', 'error');
+          showStatus(statusBox, 'à¹„à¸Ÿà¸¥à¹Œà¹ƒà¸«à¸à¹ˆà¹€à¸à¸´à¸™à¸à¸³à¸«à¸™à¸” (' + maxBytes + ' bytes)', 'error');
           fileInput.value = '';
           return;
         }
@@ -701,7 +969,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
           hideStatus(statusBox);
         };
         reader.onerror = function () {
-          showStatus(statusBox, 'อ่านไฟล์รูปไม่สำเร็จ', 'error');
+          showStatus(statusBox, 'à¸­à¹ˆà¸²à¸™à¹„à¸Ÿà¸¥à¹Œà¸£à¸¹à¸›à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
         };
         reader.readAsDataURL(file);
       });
@@ -709,16 +977,16 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
         resultBox.innerHTML =
-          '<h3>บันทึกการจัดส่งสำเร็จ</h3>' +
+          '<h3>à¸šà¸±à¸™à¸—à¸¶à¸à¸à¸²à¸£à¸ˆà¸±à¸”à¸ªà¹ˆà¸‡à¸ªà¸³à¹€à¸£à¹‡à¸ˆ</h3>' +
           '<div class="kv">' +
-            '<div class="k">รหัสดีล</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
-            '<div class="k">รหัสกลุ่ม</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
-            '<div class="k">สถานะดีล</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
-            '<div class="k">เลขพัสดุ</div><div class="v">' + escapeHtml(d.trackingNumber || '-') + '</div>' +
-            '<div class="k">สถานะขนส่ง</div><div class="v">' + escapeHtml(d.trackingStatusText || d.trackingStatus || '-') + '</div>' +
+            '<div class="k">à¸£à¸«à¸±à¸ªà¸”à¸µà¸¥</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
+            '<div class="k">à¸£à¸«à¸±à¸ªà¸à¸¥à¸¸à¹ˆà¸¡</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
+            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
+            '<div class="k">à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸</div><div class="v">' + escapeHtml(d.trackingNumber || '-') + '</div>' +
+            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸‚à¸™à¸ªà¹ˆà¸‡</div><div class="v">' + escapeHtml(d.trackingStatusText || d.trackingStatus || '-') + '</div>' +
           '</div>' +
           (d.buyerLiffUrl
-            ? '<p class="tiny"><a href="' + escapeHtml(d.buyerLiffUrl) + '" target="_blank" rel="noreferrer">เปิดหน้า LIFF ผู้ซื้อเพื่อติดตาม/ยืนยันรับของ</a></p>'
+            ? '<p class="tiny"><a href="' + escapeHtml(d.buyerLiffUrl) + '" target="_blank" rel="noreferrer">à¹€à¸›à¸´à¸”à¸«à¸™à¹‰à¸² LIFF à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¹€à¸žà¸·à¹ˆà¸­à¸•à¸´à¸”à¸•à¸²à¸¡/à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸‚à¸­à¸‡</a></p>'
             : '');
         resultBox.classList.remove('hidden');
       }
@@ -728,7 +996,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
         hideStatus(statusBox);
         resultBox.classList.add('hidden');
         if (!slipImage) {
-          showStatus(statusBox, 'กรุณาอัปโหลดรูปหลักฐานก่อนส่ง', 'error');
+          showStatus(statusBox, 'à¸à¸£à¸¸à¸“à¸²à¸­à¸±à¸›à¹‚à¸«à¸¥à¸”à¸£à¸¹à¸›à¸«à¸¥à¸±à¸à¸à¸²à¸™à¸à¹ˆà¸­à¸™à¸ªà¹ˆà¸‡', 'error');
           return;
         }
         setBusy(true);
@@ -744,11 +1012,11 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
             })
           });
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'ส่งข้อมูลพัสดุไม่สำเร็จ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'à¸ªà¹ˆà¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸žà¸±à¸ªà¸”à¸¸à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, (payload && payload.message) || 'ส่งข้อมูลพัสดุสำเร็จ', 'success');
+          showStatus(statusBox, (payload && payload.message) || 'à¸ªà¹ˆà¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸žà¸±à¸ªà¸”à¸¸à¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'ส่งข้อมูลพัสดุไม่สำเร็จ', 'error');
+          showStatus(statusBox, (error && error.message) || 'à¸ªà¹ˆà¸‡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸žà¸±à¸ªà¸”à¸¸à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
         } finally {
           setBusy(false);
         }
@@ -758,21 +1026,21 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
 
 export const renderLineEscrowBuyerPage = () =>
   buildShell({
-    title: 'ผู้ซื้อเช็กสถานะและยืนยันรับของ',
-    subtitle: 'ดูสถานะชำระเงิน ขนส่ง แผนที่ และยืนยันรับสินค้า',
+    title: 'à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¹€à¸Šà¹‡à¸à¸ªà¸–à¸²à¸™à¸°à¹à¸¥à¸°à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸‚à¸­à¸‡',
+    subtitle: 'à¸”à¸¹à¸ªà¸–à¸²à¸™à¸°à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™ à¸‚à¸™à¸ªà¹ˆà¸‡ à¹à¸œà¸™à¸—à¸µà¹ˆ à¹à¸¥à¸°à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²',
     description:
-      'ขั้นตอนที่ 3: เมื่อสถานะขึ้นว่า delivered ผู้ซื้อกดยืนยันรับของเพื่อปล่อยเงินให้ผู้ขาย หรือรอครบเวลาอัตโนมัติ',
+      'à¸‚à¸±à¹‰à¸™à¸•à¸­à¸™à¸—à¸µà¹ˆ 3: à¹€à¸¡à¸·à¹ˆà¸­à¸ªà¸–à¸²à¸™à¸°à¸‚à¸¶à¹‰à¸™à¸§à¹ˆà¸² delivered à¸œà¸¹à¹‰à¸‹à¸·à¹‰à¸­à¸à¸”à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸‚à¸­à¸‡à¹€à¸žà¸·à¹ˆà¸­à¸›à¸¥à¹ˆà¸­à¸¢à¹€à¸‡à¸´à¸™à¹ƒà¸«à¹‰à¸œà¸¹à¹‰à¸‚à¸²à¸¢ à¸«à¸£à¸·à¸­à¸£à¸­à¸„à¸£à¸šà¹€à¸§à¸¥à¸²à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´',
     bodyHtml: `
       <section class="card">
         <form id="buyer-form" class="row">
           <div>
-            <label for="buyer-deal-id">รหัสดีล</label>
+            <label for="buyer-deal-id">à¸£à¸«à¸±à¸ªà¸”à¸µà¸¥</label>
             <input id="buyer-deal-id" type="text" placeholder="escrow deal id" required />
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
-            <button id="buyer-load-btn" class="btn primary" type="button">โหลดสถานะดีล</button>
-            <button id="buyer-refresh-track-btn" class="btn ghost" type="button">รีเฟรชสถานะขนส่ง</button>
-            <button id="buyer-confirm-btn" class="btn secondary" type="button">ยืนยันรับสินค้า</button>
+            <button id="buyer-load-btn" class="btn primary" type="button">à¹‚à¸«à¸¥à¸”à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥</button>
+            <button id="buyer-refresh-track-btn" class="btn ghost" type="button">à¸£à¸µà¹€à¸Ÿà¸£à¸Šà¸ªà¸–à¸²à¸™à¸°à¸‚à¸™à¸ªà¹ˆà¸‡</button>
+            <button id="buyer-confirm-btn" class="btn secondary" type="button">à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²</button>
           </div>
         </form>
         <div id="buyer-status" class="status hidden"></div>
@@ -800,23 +1068,23 @@ export const renderLineEscrowBuyerPage = () =>
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
         var links = '';
-        if (d.trackingPublicUrl) links += '<a href="' + escapeHtml(d.trackingPublicUrl) + '" target="_blank" rel="noreferrer">ดูสถานะพัสดุแบบสาธารณะ</a><br />';
-        if (d.trackingMapUrl) links += '<a href="' + escapeHtml(d.trackingMapUrl) + '" target="_blank" rel="noreferrer">ดูตำแหน่งล่าสุดบนแผนที่</a><br />';
-        if (d.paymentQrImageUrl && d.paymentStatus !== 'paid') links += '<a href="' + escapeHtml(d.paymentQrImageUrl) + '" target="_blank" rel="noreferrer">เปิด QR ชำระเงิน</a>';
+        if (d.trackingPublicUrl) links += '<a href="' + escapeHtml(d.trackingPublicUrl) + '" target="_blank" rel="noreferrer">à¸”à¸¹à¸ªà¸–à¸²à¸™à¸°à¸žà¸±à¸ªà¸”à¸¸à¹à¸šà¸šà¸ªà¸²à¸˜à¸²à¸£à¸“à¸°</a><br />';
+        if (d.trackingMapUrl) links += '<a href="' + escapeHtml(d.trackingMapUrl) + '" target="_blank" rel="noreferrer">à¸”à¸¹à¸•à¸³à¹à¸«à¸™à¹ˆà¸‡à¸¥à¹ˆà¸²à¸ªà¸¸à¸”à¸šà¸™à¹à¸œà¸™à¸—à¸µà¹ˆ</a><br />';
+        if (d.paymentQrImageUrl && d.paymentStatus !== 'paid') links += '<a href="' + escapeHtml(d.paymentQrImageUrl) + '" target="_blank" rel="noreferrer">à¹€à¸›à¸´à¸” QR à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™</a>';
         resultBox.innerHTML =
-          '<h3>สถานะดีล</h3>' +
+          '<h3>à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥</h3>' +
           '<div class="kv">' +
-            '<div class="k">รหัสดีล</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
-            '<div class="k">รหัสกลุ่ม</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
-            '<div class="k">สินค้า</div><div class="v">' + escapeHtml(d.itemName || '-') + '</div>' +
-            '<div class="k">สถานะดีล</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
-            '<div class="k">สถานะชำระเงิน</div><div class="v">' + escapeHtml(d.paymentStatus || '-') + '</div>' +
-            '<div class="k">สถานะขนส่ง</div><div class="v">' + escapeHtml(d.trackingStatusText || d.trackingStatus || '-') + '</div>' +
-            '<div class="k">เลขพัสดุ</div><div class="v">' + escapeHtml(d.trackingNumber || '-') + '</div>' +
-            '<div class="k">จุดล่าสุด</div><div class="v">' + escapeHtml(d.trackingLastEventLocation || '-') + '</div>' +
-            '<div class="k">เวลาล่าสุด</div><div class="v">' + escapeHtml(d.trackingLastEventTime || '-') + '</div>' +
-            '<div class="k">ยืนยันอัตโนมัติ</div><div class="v">' + escapeHtml(d.autoReleaseAt || '-') + '</div>' +
-            '<div class="k">สถานะปล่อยเงิน</div><div class="v">' + escapeHtml(d.payoutStatus || '-') + '</div>' +
+            '<div class="k">à¸£à¸«à¸±à¸ªà¸”à¸µà¸¥</div><div class="v">' + escapeHtml(d.id || '-') + '</div>' +
+            '<div class="k">à¸£à¸«à¸±à¸ªà¸à¸¥à¸¸à¹ˆà¸¡</div><div class="v">' + escapeHtml(d.groupId || '-') + '</div>' +
+            '<div class="k">à¸ªà¸´à¸™à¸„à¹‰à¸²</div><div class="v">' + escapeHtml(d.itemName || '-') + '</div>' +
+            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
+            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸Šà¸³à¸£à¸°à¹€à¸‡à¸´à¸™</div><div class="v">' + escapeHtml(d.paymentStatus || '-') + '</div>' +
+            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸‚à¸™à¸ªà¹ˆà¸‡</div><div class="v">' + escapeHtml(d.trackingStatusText || d.trackingStatus || '-') + '</div>' +
+            '<div class="k">à¹€à¸¥à¸‚à¸žà¸±à¸ªà¸”à¸¸</div><div class="v">' + escapeHtml(d.trackingNumber || '-') + '</div>' +
+            '<div class="k">à¸ˆà¸¸à¸”à¸¥à¹ˆà¸²à¸ªà¸¸à¸”</div><div class="v">' + escapeHtml(d.trackingLastEventLocation || '-') + '</div>' +
+            '<div class="k">à¹€à¸§à¸¥à¸²à¸¥à¹ˆà¸²à¸ªà¸¸à¸”</div><div class="v">' + escapeHtml(d.trackingLastEventTime || '-') + '</div>' +
+            '<div class="k">à¸¢à¸·à¸™à¸¢à¸±à¸™à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´</div><div class="v">' + escapeHtml(d.autoReleaseAt || '-') + '</div>' +
+            '<div class="k">à¸ªà¸–à¸²à¸™à¸°à¸›à¸¥à¹ˆà¸­à¸¢à¹€à¸‡à¸´à¸™</div><div class="v">' + escapeHtml(d.payoutStatus || '-') + '</div>' +
           '</div>' +
           (links ? '<p class="tiny" style="margin-top:10px;">' + links + '</p>' : '');
         resultBox.classList.remove('hidden');
@@ -825,7 +1093,7 @@ export const renderLineEscrowBuyerPage = () =>
       async function loadDeal(refreshPayment) {
         var id = String(dealInput.value || '').trim();
         if (!id) {
-          showStatus(statusBox, 'กรุณากรอกรหัสดีล', 'error');
+          showStatus(statusBox, 'à¸à¸£à¸¸à¸“à¸²à¸à¸£à¸­à¸à¸£à¸«à¸±à¸ªà¸”à¸µà¸¥', 'error');
           return;
         }
         hideStatus(statusBox);
@@ -835,11 +1103,11 @@ export const renderLineEscrowBuyerPage = () =>
           if (refreshPayment) url += '?refreshPayment=1';
           var response = await fetch(url);
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'โหลดสถานะดีลไม่สำเร็จ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'à¹‚à¸«à¸¥à¸”à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, 'โหลดสถานะดีลสำเร็จ', 'success');
+          showStatus(statusBox, 'à¹‚à¸«à¸¥à¸”à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥à¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'โหลดสถานะดีลไม่สำเร็จ', 'error');
+          showStatus(statusBox, (error && error.message) || 'à¹‚à¸«à¸¥à¸”à¸ªà¸–à¸²à¸™à¸°à¸”à¸µà¸¥à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
         } finally {
           setBusy(false);
         }
@@ -848,7 +1116,7 @@ export const renderLineEscrowBuyerPage = () =>
       async function refreshTracking() {
         var id = String(dealInput.value || '').trim();
         if (!id) {
-          showStatus(statusBox, 'กรุณากรอกรหัสดีล', 'error');
+          showStatus(statusBox, 'à¸à¸£à¸¸à¸“à¸²à¸à¸£à¸­à¸à¸£à¸«à¸±à¸ªà¸”à¸µà¸¥', 'error');
           return;
         }
         hideStatus(statusBox);
@@ -860,11 +1128,11 @@ export const renderLineEscrowBuyerPage = () =>
             body: JSON.stringify({})
           });
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'รีเฟรชขนส่งไม่สำเร็จ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'à¸£à¸µà¹€à¸Ÿà¸£à¸Šà¸‚à¸™à¸ªà¹ˆà¸‡à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, 'รีเฟรชขนส่งสำเร็จ', 'success');
+          showStatus(statusBox, 'à¸£à¸µà¹€à¸Ÿà¸£à¸Šà¸‚à¸™à¸ªà¹ˆà¸‡à¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'รีเฟรชขนส่งไม่สำเร็จ', 'error');
+          showStatus(statusBox, (error && error.message) || 'à¸£à¸µà¹€à¸Ÿà¸£à¸Šà¸‚à¸™à¸ªà¹ˆà¸‡à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
         } finally {
           setBusy(false);
         }
@@ -873,7 +1141,7 @@ export const renderLineEscrowBuyerPage = () =>
       async function confirmDelivery() {
         var id = String(dealInput.value || '').trim();
         if (!id) {
-          showStatus(statusBox, 'กรุณากรอกรหัสดีล', 'error');
+          showStatus(statusBox, 'à¸à¸£à¸¸à¸“à¸²à¸à¸£à¸­à¸à¸£à¸«à¸±à¸ªà¸”à¸µà¸¥', 'error');
           return;
         }
         hideStatus(statusBox);
@@ -885,11 +1153,11 @@ export const renderLineEscrowBuyerPage = () =>
             body: JSON.stringify({})
           });
           var payload = await response.json().catch(function () { return null; });
-          if (!response.ok) throw new Error((payload && payload.message) || 'ยืนยันรับสินค้าไม่สำเร็จ');
+          if (!response.ok) throw new Error((payload && payload.message) || 'à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ');
           renderDeal(payload && payload.deal);
-          showStatus(statusBox, (payload && payload.message) || 'ยืนยันรับสินค้าเรียบร้อย', 'success');
+          showStatus(statusBox, (payload && payload.message) || 'à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢', 'success');
         } catch (error) {
-          showStatus(statusBox, (error && error.message) || 'ยืนยันรับสินค้าไม่สำเร็จ', 'error');
+          showStatus(statusBox, (error && error.message) || 'à¸¢à¸·à¸™à¸¢à¸±à¸™à¸£à¸±à¸šà¸ªà¸´à¸™à¸„à¹‰à¸²à¹„à¸¡à¹ˆà¸ªà¸³à¹€à¸£à¹‡à¸ˆ', 'error');
         } finally {
           setBusy(false);
         }
@@ -902,3 +1170,4 @@ export const renderLineEscrowBuyerPage = () =>
       if (presetDealId) void loadDeal(true);
     `,
   });
+
