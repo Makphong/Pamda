@@ -261,7 +261,7 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
 export const renderLineScamScammerCheckPage = () =>
   buildShell({
     title: 'ตรวจสอบมิจฉาชีพ',
-    subtitle: 'ค้นหาข้อมูลผู้ขายจากฐานข้อมูลเคสโกง',
+    // subtitle: 'ค้นหาข้อมูลผู้ขายจากฐานข้อมูลเคสโกง',
     description:
       'กรอกชื่อ, นามสกุล, เบอร์โทร, เลขบัญชีธนาคาร หรือข้อมูลที่สงสัย แล้วระบบจะสรุปว่าพบประวัติการโกงหรือไม่',
     bodyHtml: `
@@ -379,7 +379,7 @@ export const renderLineScamScammerCheckPage = () =>
 export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0 } = {}) =>
   buildShell({
     title: 'ตรวจสอบข่าวปลอม',
-    subtitle: 'วิเคราะห์ข้อความข่าวหรือรูปข่าวด้วย Gemini',
+    // subtitle: 'วิเคราะห์ข้อความข่าวหรือรูปข่าวด้วย Gemini',
     description:
       'ใส่ข้อความข่าว หรืออัปโหลดภาพข่าว ระบบจะวิเคราะห์ความน่าเชื่อถือ พร้อมเปอร์เซ็นต์ข่าวปลอม แหล่งอ้างอิง และช่องทางข่าวจริงที่ควรติดตาม',
     bodyHtml: `
@@ -556,7 +556,7 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0 } = {}) =>
 export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0 } = {}) =>
   buildShell({
     title: 'ประเมินความเสี่ยงการโดนโกง',
-    subtitle: 'วิเคราะห์รูปแชทหรือหลักฐานสนทนาด้วย Gemini',
+    // subtitle: 'วิเคราะห์รูปแชทหรือหลักฐานสนทนาด้วย Gemini',
     description:
       'อัปโหลดภาพแชทที่สงสัย พร้อมข้อมูลเสริม (ถ้ามี) ระบบจะประเมินเปอร์เซ็นต์ความเสี่ยงและแนะนำขั้นตอนป้องกัน',
     bodyHtml: `
