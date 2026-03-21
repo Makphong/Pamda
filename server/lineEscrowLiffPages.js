@@ -905,10 +905,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
           </div>
           <div>
             <label>รูปหลักฐานการส่ง</label>
-            <label class="btn upload" style="display:inline-flex;align-items:center;justify-content:center;" for="seller-slip-input">
-              อัปโหลดรูปหลักฐาน
-            </label>
-            <input id="seller-slip-input" type="file" accept="image/*" class="hidden" />
+            <input id="seller-slip-input" type="file" accept="image/*" class="hidden" />`r`n            <button id="seller-slip-pick-btn" class="btn upload" type="button">Upload shipping proof</button>
             <p class="tiny">รองรับเฉพาะไฟล์ภาพ ขนาดสูงสุด ${Math.max(0, Number(maxSlipImageBytes || 0))} bytes</p>
             <div id="seller-slip-preview" class="preview">ยังไม่ได้เลือกรูป</div>
           </div>
@@ -930,6 +927,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var trackingInput = document.getElementById('seller-tracking-no');
       var courierInput = document.getElementById('seller-courier-code');
       var fileInput = document.getElementById('seller-slip-input');
+      var pickBtn = document.getElementById('seller-slip-pick-btn');
       var preview = document.getElementById('seller-slip-preview');
       var slipImage = null;
       var maxBytes = ${Math.max(0, Number(maxSlipImageBytes || 0))};
@@ -941,6 +939,11 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
         submitBtn.disabled = Boolean(isBusy);
         submitBtn.textContent = isBusy ? 'กำลังบันทึก...' : 'ยืนยันส่งเลขพัสดุและหลักฐาน';
       }
+
+      pickBtn.addEventListener('click', function () {
+        fileInput.value = '';
+        fileInput.click();
+      });
 
       fileInput.addEventListener('change', function (event) {
         var file = event.target.files && event.target.files[0];

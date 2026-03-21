@@ -3206,13 +3206,13 @@ const releaseEscrowDealPayout = async ({
     error.status = 400;
     throw error;
   }
-  const sellerPayoutMethod = normalizeEscrowPayoutMethod(deal.sellerPayoutMethod || '') || 'bank';
-  if (sellerPayoutMethod !== 'bank') {
-    const manualRequiredNowIso = new Date().toISOString();
+  const markManualRequired = async (reasonTextInput, extraPatchInput = {}) => {
+    const nowIso = new Date().toISOString();
     const patch = {
       payoutStatus: 'manual_required',
-      payoutFailedReason: `Auto payout is not supported for method: ${sellerPayoutMethod}`,
-      updatedAt: manualRequiredNowIso,
+      payoutFailedReason: normalizeOptionalString(reasonTextInput || 'Auto payout is not available.', 320),
+      updatedAt: nowIso,
+      ...extraPatchInput,
     };
     await lineEscrowDealRef.doc(dealId).set(patch, { merge: true });
     return {
@@ -3224,57 +3224,65 @@ const releaseEscrowDealPayout = async ({
       },
       transferId: '',
     };
+  };
+  const sellerPayoutMethod = normalizeEscrowPayoutMethod(deal.sellerPayoutMethod || '') || 'bank';
+  if (sellerPayoutMethod !== 'bank') {
+    return markManualRequired(`Auto payout is not supported for method: ${sellerPayoutMethod}`);
   }
   const sellerBankBrand =
     String(deal.sellerBankBrand || '').trim().toLowerCase() || normalizeEscrowBankBrand(deal.sellerBankName);
-  const sellerBankAccount = String(deal.sellerBankAccount || '').replace(/\s+/g, '').trim();
+  const sellerBankAccount = String(deal.sellerBankAccount || '').replace(/[^0-9]/g, '').trim();
   const sellerBankAccountName = String(deal.sellerBankAccountName || deal.sellerName || '').trim();
   if (!sellerBankBrand || !sellerBankAccount || !sellerBankAccountName) {
-    const error = new Error('Seller payout bank information is incomplete.');
-    error.status = 400;
-    throw error;
+    return markManualRequired('Seller payout bank information is incomplete.');
   }
 
   let recipientId = String(deal.payoutRecipientId || '').trim();
-  if (!recipientId) {
-    const recipient = await createEscrowRecipient({
-      sellerName: deal.sellerName,
-      sellerBankBrand,
-      sellerBankAccount,
-      sellerBankAccountName,
-    });
-    recipientId = recipient.recipientId;
+  try {
     if (!recipientId) {
-      const error = new Error('Failed to create payout recipient.');
-      error.status = 502;
-      throw error;
+      const recipient = await createEscrowRecipient({
+        sellerName: deal.sellerName,
+        sellerBankBrand,
+        sellerBankAccount,
+        sellerBankAccountName,
+      });
+      recipientId = recipient.recipientId;
+      if (!recipientId) {
+        const error = new Error('Failed to create payout recipient.');
+        error.status = 502;
+        throw error;
+      }
     }
-  }
 
-  const transfer = await createEscrowTransfer({
-    amountSatang,
-    recipientId,
-  });
-  const nowIso = new Date().toISOString();
-  const patch = {
-    status: 'released',
-    payoutStatus: 'released',
-    payoutTransferId: transfer.transferId,
-    payoutRecipientId: recipientId,
-    payoutReleasedAt: nowIso,
-    payoutFailedReason: '',
-    releasedReason: normalizeOptionalString(reason || '', 80),
-    updatedAt: nowIso,
-  };
-  await lineEscrowDealRef.doc(dealId).set(patch, { merge: true });
-  return {
-    ok: true,
-    deal: {
-      ...deal,
-      ...patch,
-    },
-    transferId: transfer.transferId,
-  };
+    const transfer = await createEscrowTransfer({
+      amountSatang,
+      recipientId,
+    });
+    const nowIso = new Date().toISOString();
+    const patch = {
+      status: 'released',
+      payoutStatus: 'released',
+      payoutTransferId: transfer.transferId,
+      payoutRecipientId: recipientId,
+      payoutReleasedAt: nowIso,
+      payoutFailedReason: '',
+      releasedReason: normalizeOptionalString(reason || '', 80),
+      updatedAt: nowIso,
+    };
+    await lineEscrowDealRef.doc(dealId).set(patch, { merge: true });
+    return {
+      ok: true,
+      deal: {
+        ...deal,
+        ...patch,
+      },
+      transferId: transfer.transferId,
+    };
+  } catch (error) {
+    return markManualRequired(error?.message || 'Auto payout failed.', {
+      payoutRecipientId: recipientId || String(deal.payoutRecipientId || '').trim(),
+    });
+  }
 };
 
 const refreshEscrowDealTrackingStatus = async ({
@@ -7458,7 +7466,7 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
     const sellerBankName = normalizeOptionalString(req.body?.sellerBankName || '', 140);
     const sellerBankBrand = normalizeEscrowBankBrand(req.body?.sellerBankBrand || sellerBankName || '');
     const sellerBankAccount = String(req.body?.sellerBankAccount || '')
-      .replace(/\s+/g, '')
+      .replace(/[^0-9]/g, '')
       .trim()
       .slice(0, 80);
     const sellerBankAccountName = normalizeOptionalString(req.body?.sellerBankAccountName || '', 120);
