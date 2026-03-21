@@ -2779,7 +2779,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
       type: 'button',
       style: 'primary',
       color: '#1d4ed8',
-      action: { type: 'uri', label: '1) ผู้ซื้อสร้างดีลและชำระเงิน', uri: dealUrl },
+      action: { type: 'uri', label: '1) ผู้ขายสร้างดีลและชำระเงิน', uri: dealUrl },
     });
   }
   if (!isStartStage && sellerUrl) {
@@ -2828,8 +2828,8 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
           {
             type: 'text',
             text: isStartStage
-              ? 'เริ่มที่ขั้นตอนนี้: ผู้ซื้อสร้างดีลและชำระเงินก่อน เมื่อชำระสำเร็จ ระบบจะส่งการ์ดขั้นตอนถัดไปอัตโนมัติ'
-              : 'ลำดับงาน: ผู้ซื้อชำระเงิน -> ผู้ขายส่งสินค้าและเลขพัสดุ -> ผู้ซื้อยืนยันรับของ (หรือครบเวลาอัตโนมัติ) -> ระบบโอนเงินให้ผู้ขาย',
+              ? 'เริ่มที่ขั้นตอนนี้: ผู้ขายสร้างดีลและชำระเงินก่อน เมื่อชำระสำเร็จ ระบบจะส่งการ์ดขั้นตอนถัดไปอัตโนมัติ'
+              : 'ลำดับงาน: ผู้ขายสร้างดีลและชำระเงิน -> ผู้ขายส่งสินค้าและเลขพัสดุ -> ผู้ซื้อยืนยันรับของ (หรือครบเวลาอัตโนมัติ) -> ระบบโอนเงินให้ผู้รับเงิน',
             size: 'sm',
             color: '#334155',
             wrap: true,
@@ -7472,7 +7472,7 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
       .replace(/[^0-9]/g, '')
       .trim()
       .slice(0, 80);
-    const sellerBankAccountName = normalizeOptionalString(req.body?.sellerBankAccountName || '', 120);
+    const sellerBankAccountName = normalizeOptionalString(req.body?.sellerBankAccountName || sellerName || '', 120);
     const amountThb = Number(req.body?.amountThb || req.body?.amount || 0);
     const amountSatang = normalizeEscrowMoneySatang(amountThb);
     const sellerPayoutMethod = sellerPayoutMethodInput || (sellerPromptpayNumber ? 'promptpay' : 'bank');
@@ -7480,11 +7480,6 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
     if (!groupId || !sellerName || !itemName || amountSatang <= 0) {
       return res.status(400).json({
         message: 'groupId, sellerName, itemName and amountThb are required.',
-      });
-    }
-    if (!sellerBankAccountName) {
-      return res.status(400).json({
-        message: 'sellerBankAccountName is required.',
       });
     }
     if (sellerPayoutMethod === 'bank' && (!sellerBankBrand || !sellerBankAccount)) {
@@ -7503,11 +7498,6 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
     if (sellerPayoutMethod === 'promptpay' && !isValidEscrowPromptpayNumber(sellerPromptpayNumber)) {
       return res.status(400).json({
         message: 'sellerPromptpayNumber must be 10, 13 or 15 digits.',
-      });
-    }
-    if (sellerPayoutMethod === 'promptpay' && !sellerBankBrand) {
-      return res.status(400).json({
-        message: 'sellerBankBrand/sellerBankName is required for promptpay auto payout.',
       });
     }
     if (String(req.body?.sellerPayoutMethod || '').trim().toLowerCase() === 'seller_qr') {

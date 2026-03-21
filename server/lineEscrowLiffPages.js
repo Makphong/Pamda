@@ -163,6 +163,8 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
 </html>`;
 
 const commonUtilsScript = `
+  var ESCROW_STORAGE_GROUP_KEY = 'lineEscrow:lastGroupId';
+  var ESCROW_STORAGE_DEAL_KEY = 'lineEscrow:lastDealId';
   function escapeHtml(value) {
     return String(value || '').replace(/[&<>"']/g, function (char) {
       if (char === '&') return '&amp;';
@@ -182,28 +184,105 @@ const commonUtilsScript = `
     el.classList.add('hidden');
     el.textContent = '';
   }
-  function parseDealIdFromLocation() {
+  function safeStorageGet(key) {
     try {
-      var params = new URLSearchParams(window.location.search || '');
-      return String(params.get('dealId') || '').trim();
+      return String(window.localStorage.getItem(String(key || '')) || '').trim();
     } catch (_e) {
       return '';
     }
   }
-  function parseGroupIdFromLocation() {
+  function safeStorageSet(key, value) {
+    var normalizedKey = String(key || '').trim();
+    if (!normalizedKey) return;
+    var normalizedValue = String(value || '').trim();
+    if (!normalizedValue) return;
     try {
-      var params = new URLSearchParams(window.location.search || '');
-      return String(params.get('groupId') || '').trim();
+      window.localStorage.setItem(normalizedKey, normalizedValue);
+    } catch (_e) {}
+  }
+  function safeDecodeURIComponentLoop(valueInput) {
+    var value = String(valueInput || '');
+    for (var i = 0; i < 3; i += 1) {
+      try {
+        var decoded = decodeURIComponent(value);
+        if (decoded === value) break;
+        value = decoded;
+      } catch (_e) {
+        break;
+      }
+    }
+    return String(value || '').trim();
+  }
+  function parseNestedQueryValueFromLiffState(stateInput, paramName) {
+    var state = safeDecodeURIComponentLoop(stateInput);
+    if (!state) return '';
+    var query = '';
+    if (state.charAt(0) === '?') {
+      query = state.slice(1);
+    } else {
+      var questionIndex = state.indexOf('?');
+      query = questionIndex >= 0 ? state.slice(questionIndex + 1) : state;
+    }
+    if (!query) return '';
+    try {
+      var nestedParams = new URLSearchParams(query);
+      return String(nestedParams.get(paramName) || '').trim();
     } catch (_e) {
       return '';
     }
+  }
+  function parseParamFromLocation(paramName) {
+    var name = String(paramName || '').trim();
+    if (!name) return '';
+    try {
+      var params = new URLSearchParams(window.location.search || '');
+      var directValue = String(params.get(name) || '').trim();
+      if (directValue) return directValue;
+      var liffStateValue = String(params.get('liff.state') || '').trim();
+      if (!liffStateValue && window.location.hash) {
+        try {
+          var hashParams = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+          liffStateValue = String(hashParams.get('liff.state') || '').trim();
+        } catch (_e) {}
+      }
+      if (!liffStateValue) return '';
+      return parseNestedQueryValueFromLiffState(liffStateValue, name);
+    } catch (_e) {
+      return '';
+    }
+  }
+  function rememberEscrowGroupId(valueInput) {
+    var value = String(valueInput || '').trim();
+    if (!value) return;
+    safeStorageSet(ESCROW_STORAGE_GROUP_KEY, value);
+  }
+  function rememberEscrowDealId(valueInput) {
+    var value = String(valueInput || '').trim();
+    if (!value) return;
+    safeStorageSet(ESCROW_STORAGE_DEAL_KEY, value);
+  }
+  function parseDealIdFromLocation() {
+    var fromLocation = parseParamFromLocation('dealId');
+    if (fromLocation) {
+      rememberEscrowDealId(fromLocation);
+      return fromLocation;
+    }
+    return safeStorageGet(ESCROW_STORAGE_DEAL_KEY);
+  }
+  function parseGroupIdFromLocation() {
+    var fromLocation = parseParamFromLocation('groupId');
+    if (fromLocation) {
+      rememberEscrowGroupId(fromLocation);
+      return fromLocation;
+    }
+    return safeStorageGet(ESCROW_STORAGE_GROUP_KEY);
   }
 `;
 
 export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
   buildShell({
     title: 'สร้างดีลตัวกลางซื้อขาย',
-    subtitle: 'ผู้ซื้อสร้างดีลและชำระเงินเข้าระบบก่อน',
+    subtitle: 'ผู้ขายสร้างดีลและชำระเงินเข้าระบบก่อน',
     description:
       'กรอก Group ID ก่อนทุกครั้ง จากนั้นระบบจะตรวจดีลที่รอชำระของกลุ่มนี้ ถ้ามีจะเปิด QR เดิมให้ทันที ถ้าไม่มีจะแสดงฟอร์มสร้างดีลใหม่',
     bodyHtml: `
@@ -223,7 +302,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
                 <input id="deal-buyer-name" type="text" placeholder="เช่น คุณเอ" />
               </div>
               <div>
-                <label for="deal-seller-name">ชื่อผู้ขาย</label>
+                <label for="deal-seller-name">ชื่อผู้รับเงิน</label>
                 <input id="deal-seller-name" type="text" placeholder="เช่น ร้าน B" required />
               </div>
             </div>
@@ -241,21 +320,17 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
 
             <div class="row two">
               <div>
-                <label for="seller-payout-method">ช่องทางรับเงินของผู้ขาย</label>
+                <label for="seller-payout-method">ช่องทางรับเงิน</label>
                 <select id="seller-payout-method" required>
                   <option value="bank">โอนเข้าบัญชีธนาคาร</option>
                   <option value="promptpay">โอนผ่าน PromptPay</option>
                 </select>
               </div>
-              <div>
-                <label for="deal-seller-user-id">LINE User ID ของผู้ขาย (ไม่บังคับ)</label>
-                <input id="deal-seller-user-id" type="text" placeholder="Uxxxxxxxx" />
-              </div>
             </div>
 
             <div id="seller-bank-fields" class="row two">
               <div>
-                <label for="seller-bank-brand">ธนาคารผู้ขาย</label>
+                <label for="seller-bank-brand">ธนาคารผู้รับเงิน</label>
                 <select id="seller-bank-brand" required>
                   <option value="">เลือกธนาคาร</option>
                   <option value="bbl">ธนาคารกรุงเทพ (BBL)</option>
@@ -272,29 +347,21 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
                 </select>
               </div>
               <div>
-                <label for="seller-bank-account">เลขบัญชีผู้ขาย</label>
+                <label for="seller-bank-account">เลขบัญชีผู้รับเงิน</label>
                 <input id="seller-bank-account" type="text" placeholder="เลขบัญชี" required />
               </div>
             </div>
 
             <div id="seller-promptpay-fields" class="row hidden">
               <div>
-                <label for="seller-promptpay-number">เลข PromptPay ผู้ขาย</label>
+                <label for="seller-promptpay-number">เลข PromptPay ผู้รับเงิน</label>
                 <input id="seller-promptpay-number" type="text" placeholder="เบอร์มือถือ/เลขบัตรประชาชน/e-Wallet ID" />
               </div>
             </div>
-
-            <div class="row two">
-              <div>
-                <label for="seller-bank-account-name">ชื่อผู้รับเงินผู้ขาย</label>
-                <input id="seller-bank-account-name" type="text" placeholder="ชื่อผู้รับเงินจริง" required />
-              </div>
-              <div>
-                <label for="deal-note">รายละเอียดเพิ่มเติม</label>
-                <input id="deal-note" type="text" placeholder="หมายเหตุ/เงื่อนไขสินค้า" />
-              </div>
+            <div>
+              <label for="deal-note">รายละเอียดเพิ่มเติม</label>
+              <input id="deal-note" type="text" placeholder="หมายเหตุ/เงื่อนไขสินค้า" />
             </div>
-
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
               <button id="deal-create-btn" class="btn primary" type="submit">สร้างดีล + สร้าง QR ชำระเงิน</button>
             </div>
@@ -328,7 +395,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var groupInput = document.getElementById('deal-group-id');
       var buyerNameInput = document.getElementById('deal-buyer-name');
       var sellerNameInput = document.getElementById('deal-seller-name');
-      var sellerUserIdInput = document.getElementById('deal-seller-user-id');
       var itemInput = document.getElementById('deal-item-name');
       var amountInput = document.getElementById('deal-amount');
       var noteInput = document.getElementById('deal-note');
@@ -338,7 +404,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var promptpayInput = document.getElementById('seller-promptpay-number');
       var bankFieldsWrap = document.getElementById('seller-bank-fields');
       var promptpayFieldsWrap = document.getElementById('seller-promptpay-fields');
-      var bankAccountNameInput = document.getElementById('seller-bank-account-name');
 
       var dealId = parseDealIdFromLocation();
       var groupReady = false;
@@ -347,6 +412,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var groupFromQuery = parseGroupIdFromLocation();
       if (groupFromQuery) {
         groupInput.value = groupFromQuery;
+        rememberEscrowGroupId(groupFromQuery);
       }
 
       function getSelectedBankName() {
@@ -396,17 +462,15 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         createBtn.textContent = isBusy ? 'กำลังสร้างดีล...' : 'สร้างดีล + สร้าง QR ชำระเงิน';
         updateGroupButtonText();
       }
-
       function updatePayoutMethodFields() {
         var method = String(payoutMethodInput.value || 'bank').trim().toLowerCase();
         var isBank = method === 'bank';
         var isPromptpay = method === 'promptpay';
-        var needsBankDetails = isBank || isPromptpay;
 
-        bankFieldsWrap.classList.toggle('hidden', !needsBankDetails);
+        bankFieldsWrap.classList.toggle('hidden', !isBank);
         promptpayFieldsWrap.classList.toggle('hidden', !isPromptpay);
 
-        bankBrandInput.required = needsBankDetails;
+        bankBrandInput.required = isBank;
         bankAccountInput.required = isBank;
         promptpayInput.required = isPromptpay;
       }
@@ -435,18 +499,18 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         if (!d || !d.id) return;
 
         dealId = String(d.id || '').trim();
+        rememberEscrowDealId(dealId);
         if (String(d.groupId || '').trim()) {
           groupInput.value = String(d.groupId || '').trim();
+          rememberEscrowGroupId(d.groupId);
         }
         setGroupReady(true);
 
         buyerNameInput.value = String(d.buyerName || '').trim();
         sellerNameInput.value = String(d.sellerName || '').trim();
-        sellerUserIdInput.value = String(d.sellerLineUserId || '').trim();
         itemInput.value = String(d.itemName || '').trim();
         amountInput.value = Number(d.paymentAmountThb || 0) > 0 ? String(d.paymentAmountThb) : '';
         noteInput.value = String(d.note || '').trim();
-        bankAccountNameInput.value = String(d.sellerBankAccountName || '').trim();
 
         var payoutMethod = String(d.sellerPayoutMethod || '').trim().toLowerCase() || 'bank';
         payoutMethodInput.value = payoutMethod;
@@ -523,7 +587,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       }
 
       function normalizePromptpayNumber(valueInput) {
-        return String(valueInput || '').replace(/[^0-9]/g, '').slice(0, 20);
+        return String(valueInput || '').replace(/[^0-9]/g, '').slice(0, 15);
       }
 
       function buildCreatePayload() {
@@ -538,39 +602,28 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           groupId: groupIdValue,
           buyerName: String(buyerNameInput.value || '').trim(),
           sellerName: String(sellerNameInput.value || '').trim(),
-          sellerLineUserId: String(sellerUserIdInput.value || '').trim(),
           itemName: String(itemInput.value || '').trim(),
           amountThb: Number(amountInput.value || 0),
           note: String(noteInput.value || '').trim(),
-          sellerPayoutMethod: payoutMethod,
-          sellerBankAccountName: String(bankAccountNameInput.value || '').trim(),
+          sellerPayoutMethod: payoutMethod
         };
 
         if (!payload.sellerName || !payload.itemName || !Number.isFinite(payload.amountThb) || payload.amountThb <= 0) {
-          throw new Error('กรุณากรอก ชื่อผู้ขาย, สินค้า และยอดเงิน ให้ครบถ้วน');
-        }
-        if (!payload.sellerBankAccountName) {
-          throw new Error('กรุณากรอกชื่อผู้รับเงินผู้ขาย');
+          throw new Error('กรุณากรอก ชื่อผู้รับเงิน, สินค้า และยอดเงิน ให้ครบถ้วน');
         }
 
         if (payoutMethod === 'bank') {
           var bankBrandValue = String(bankBrandInput.value || '').trim().toLowerCase();
           if (!bankBrandValue) {
-            throw new Error('กรุณาเลือกธนาคารผู้ขาย');
+            throw new Error('กรุณาเลือกธนาคารผู้รับเงิน');
           }
           payload.sellerBankBrand = bankBrandValue;
           payload.sellerBankName = getSelectedBankName();
           payload.sellerBankAccount = String(bankAccountInput.value || '').trim();
           if (!payload.sellerBankAccount) {
-            throw new Error('กรุณากรอกเลขบัญชีผู้ขาย');
+            throw new Error('กรุณากรอกเลขบัญชีผู้รับเงิน');
           }
         } else if (payoutMethod === 'promptpay') {
-          var promptpayBankBrandValue = String(bankBrandInput.value || '').trim().toLowerCase();
-          if (!promptpayBankBrandValue) {
-            throw new Error('กรุณาเลือกธนาคารผู้ขาย');
-          }
-          payload.sellerBankBrand = promptpayBankBrandValue;
-          payload.sellerBankName = getSelectedBankName();
           payload.sellerPromptpayNumber = normalizePromptpayNumber(promptpayInput.value);
           if (!payload.sellerPromptpayNumber || !/^(?:\d{10}|\d{13}|\d{15})$/.test(payload.sellerPromptpayNumber)) {
             throw new Error('เลข PromptPay ต้องเป็นตัวเลข 10, 13 หรือ 15 หลัก');
@@ -587,6 +640,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           throw new Error('กรุณากรอก Group ID ก่อน');
         }
 
+        rememberEscrowGroupId(groupIdValue);
         hideStatus(statusBox);
         resultBox.classList.add('hidden');
         setBusy(true);
@@ -722,6 +776,10 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         }
       }
 
+      promptpayInput.addEventListener('input', function () {
+        promptpayInput.value = normalizePromptpayNumber(promptpayInput.value);
+      });
+
       payoutMethodInput.addEventListener('change', updatePayoutMethodFields);
 
       groupConfirmBtn.addEventListener('click', function () {
@@ -804,6 +862,17 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           }
         })();
       })();
+
+      (function bootstrapFromGroupIdIfProvided() {
+        if (dealId || !groupFromQuery) return;
+        void (async function () {
+          try {
+            await activateGroupAndLoadDeal();
+          } catch (error) {
+            showStatus(statusBox, (error && error.message) || 'Failed to verify Group ID.', 'error');
+          }
+        })();
+      })();
     `,
   });
 export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
@@ -860,7 +929,10 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var maxBytes = ${Math.max(0, Number(maxSlipImageBytes || 0))};
 
       var presetDealId = parseDealIdFromLocation();
-      if (presetDealId) dealInput.value = presetDealId;
+      if (presetDealId) {
+        dealInput.value = presetDealId;
+        rememberEscrowDealId(presetDealId);
+      }
 
       function setBusy(isBusy) {
         submitBtn.disabled = Boolean(isBusy);
@@ -906,6 +978,10 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
 
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
+        var dealIdText = String(d.id || '').trim();
+        var groupIdText = String(d.groupId || '').trim();
+        if (dealIdText) rememberEscrowDealId(dealIdText);
+        if (groupIdText) rememberEscrowGroupId(groupIdText);
         resultBox.innerHTML =
           '<h3>บันทึกการจัดส่งสำเร็จ</h3>' +
           '<div class="kv">' +
@@ -987,7 +1063,10 @@ export const renderLineEscrowBuyerPage = () =>
       var resultBox = document.getElementById('buyer-result');
 
       var presetDealId = parseDealIdFromLocation();
-      if (presetDealId) dealInput.value = presetDealId;
+      if (presetDealId) {
+        dealInput.value = presetDealId;
+        rememberEscrowDealId(presetDealId);
+      }
 
       function setBusy(isBusy) {
         loadBtn.disabled = Boolean(isBusy);
@@ -997,6 +1076,10 @@ export const renderLineEscrowBuyerPage = () =>
 
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
+        var dealIdText = String(d.id || '').trim();
+        var groupIdText = String(d.groupId || '').trim();
+        if (dealIdText) rememberEscrowDealId(dealIdText);
+        if (groupIdText) rememberEscrowGroupId(groupIdText);
         var links = '';
         if (d.trackingPublicUrl) links += '<a href="' + escapeHtml(d.trackingPublicUrl) + '" target="_blank" rel="noreferrer">ดูสถานะพัสดุแบบสาธารณะ</a><br />';
         if (d.trackingMapUrl) links += '<a href="' + escapeHtml(d.trackingMapUrl) + '" target="_blank" rel="noreferrer">ดูตำแหน่งล่าสุดบนแผนที่</a><br />';
