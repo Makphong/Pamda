@@ -2371,7 +2371,7 @@ const normalizeEscrowBankBrand = (bankInput) => {
   return '';
 };
 
-const ESCROW_PAYOUT_METHODS = new Set(['bank', 'promptpay', 'seller_qr']);
+const ESCROW_PAYOUT_METHODS = new Set(['bank', 'promptpay']);
 
 const normalizeEscrowPayoutMethod = (valueInput) => {
   const value = String(valueInput || '')
@@ -2421,10 +2421,8 @@ const toEscrowDealResponse = (docId, dataInput) => {
   const sellerBankAccount = String(data.sellerBankAccount || '').trim();
   const sellerBankAccountName = String(data.sellerBankAccountName || '').trim();
   const sellerPromptpayNumber = normalizeEscrowPromptpayNumber(data.sellerPromptpayNumber || '');
-  const sellerPayoutQrImage = normalizeEscrowSlipImage(data.sellerPayoutQrImage);
   const sellerPayoutMethodRaw = normalizeEscrowPayoutMethod(data.sellerPayoutMethod || '');
-  const sellerPayoutMethod =
-    sellerPayoutMethodRaw || (sellerPromptpayNumber ? 'promptpay' : sellerPayoutQrImage ? 'seller_qr' : 'bank');
+  const sellerPayoutMethod = sellerPayoutMethodRaw || (sellerPromptpayNumber ? 'promptpay' : 'bank');
   return {
     id: String(docId || '').trim(),
     groupId: String(data.groupId || '').trim(),
@@ -2470,7 +2468,6 @@ const toEscrowDealResponse = (docId, dataInput) => {
     paidStepCardSentAt: toEpochMs(data.paidStepCardSentAt) > 0 ? String(data.paidStepCardSentAt).trim() : null,
     sellerPayoutMethod,
     sellerPromptpayNumber,
-    sellerPayoutQrImage,
     sellerBankName,
     sellerBankBrand,
     sellerBankAccount,
@@ -3226,15 +3223,22 @@ const releaseEscrowDealPayout = async ({
     };
   };
   const sellerPayoutMethod = normalizeEscrowPayoutMethod(deal.sellerPayoutMethod || '') || 'bank';
-  if (sellerPayoutMethod !== 'bank') {
+  if (sellerPayoutMethod !== 'bank' && sellerPayoutMethod !== 'promptpay') {
     return markManualRequired(`Auto payout is not supported for method: ${sellerPayoutMethod}`);
   }
   const sellerBankBrand =
     String(deal.sellerBankBrand || '').trim().toLowerCase() || normalizeEscrowBankBrand(deal.sellerBankName);
-  const sellerBankAccount = String(deal.sellerBankAccount || '').replace(/[^0-9]/g, '').trim();
+  const sellerBankAccount =
+    sellerPayoutMethod === 'promptpay'
+      ? normalizeEscrowPromptpayNumber(deal.sellerPromptpayNumber || deal.sellerBankAccount || '')
+      : String(deal.sellerBankAccount || '').replace(/[^0-9]/g, '').trim();
   const sellerBankAccountName = String(deal.sellerBankAccountName || deal.sellerName || '').trim();
   if (!sellerBankBrand || !sellerBankAccount || !sellerBankAccountName) {
-    return markManualRequired('Seller payout bank information is incomplete.');
+    return markManualRequired(
+      sellerPayoutMethod === 'promptpay'
+        ? 'PromptPay auto payout information is incomplete.'
+        : 'Seller payout bank information is incomplete.'
+    );
   }
 
   let recipientId = String(deal.payoutRecipientId || '').trim();
@@ -7462,7 +7466,6 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
     const note = normalizeOptionalString(req.body?.note || '', 1200);
     const sellerPayoutMethodInput = normalizeEscrowPayoutMethod(req.body?.sellerPayoutMethod || '');
     const sellerPromptpayNumber = normalizeEscrowPromptpayNumber(req.body?.sellerPromptpayNumber || '');
-    const sellerPayoutQrImage = normalizeEscrowSlipImage(req.body?.sellerPayoutQrImage);
     const sellerBankName = normalizeOptionalString(req.body?.sellerBankName || '', 140);
     const sellerBankBrand = normalizeEscrowBankBrand(req.body?.sellerBankBrand || sellerBankName || '');
     const sellerBankAccount = String(req.body?.sellerBankAccount || '')
@@ -7472,8 +7475,7 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
     const sellerBankAccountName = normalizeOptionalString(req.body?.sellerBankAccountName || '', 120);
     const amountThb = Number(req.body?.amountThb || req.body?.amount || 0);
     const amountSatang = normalizeEscrowMoneySatang(amountThb);
-    const sellerPayoutMethod =
-      sellerPayoutMethodInput || (sellerPromptpayNumber ? 'promptpay' : sellerPayoutQrImage ? 'seller_qr' : 'bank');
+    const sellerPayoutMethod = sellerPayoutMethodInput || (sellerPromptpayNumber ? 'promptpay' : 'bank');
 
     if (!groupId || !sellerName || !itemName || amountSatang <= 0) {
       return res.status(400).json({
@@ -7503,11 +7505,17 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
         message: 'sellerPromptpayNumber must be 10, 13 or 15 digits.',
       });
     }
-    if (sellerPayoutMethod === 'seller_qr' && !sellerPayoutQrImage) {
+    if (sellerPayoutMethod === 'promptpay' && !sellerBankBrand) {
       return res.status(400).json({
-        message: 'sellerPayoutQrImage is required when sellerPayoutMethod is seller_qr.',
+        message: 'sellerBankBrand/sellerBankName is required for promptpay auto payout.',
       });
     }
+    if (String(req.body?.sellerPayoutMethod || '').trim().toLowerCase() === 'seller_qr') {
+      return res.status(400).json({
+        message: 'seller_qr payout method is no longer supported. Please use bank or promptpay.',
+      });
+    }
+    const sellerPayoutBankAccount = sellerPayoutMethod === 'promptpay' ? sellerPromptpayNumber : sellerBankAccount;
     const activePaymentDeal = await loadLatestEscrowAwaitingPaymentDealByGroup(groupId);
     if (activePaymentDeal) {
       const config = await loadLineEscrowBotConfigRecord();
@@ -7583,10 +7591,10 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
       payoutAmountSatang: amountSatang,
       sellerPayoutMethod,
       sellerPromptpayNumber: sellerPayoutMethod === 'promptpay' ? sellerPromptpayNumber : '',
-      sellerPayoutQrImage: sellerPayoutMethod === 'seller_qr' ? sellerPayoutQrImage : null,
+      sellerPayoutQrImage: null,
       sellerBankName,
       sellerBankBrand,
-      sellerBankAccount,
+      sellerBankAccount: sellerPayoutBankAccount,
       sellerBankAccountName,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -8085,11 +8093,7 @@ app.post('/line/escrow/liff/api/deals/:dealId/confirm-delivery', async (req, res
     const payoutReleased = payoutStatus === 'released' && releaseResult?.ok === true;
     const manualPayoutRequired = payoutStatus === 'manual_required' || releaseResult?.manualRequired === true;
     const payoutMethodLabel =
-      String(deal.sellerPayoutMethod || '').trim().toLowerCase() === 'promptpay'
-        ? 'PromptPay'
-        : String(deal.sellerPayoutMethod || '').trim().toLowerCase() === 'seller_qr'
-          ? 'QR ผู้ขาย'
-          : 'ธนาคาร';
+      String(deal.sellerPayoutMethod || '').trim().toLowerCase() === 'promptpay' ? 'PromptPay' : 'ธนาคาร';
     const config = await loadLineEscrowBotConfigRecord();
     const finalDeal = buildEscrowDealQueryWithLiffUrls(req, deal, config);
 
@@ -8148,7 +8152,7 @@ app.post('/line/escrow/liff/api/deals/:dealId/confirm-delivery', async (req, res
     return res.json({
       message: payoutReleased
         ? 'Delivery confirmed and payout released.'
-        : 'Delivery confirmed. Auto payout is not available for this payout method. Please transfer manually.',
+        : `Delivery confirmed. Auto payout failed for ${payoutMethodLabel}. Please transfer manually.`,
       deal: finalDeal,
       manualPayoutRequired,
     });

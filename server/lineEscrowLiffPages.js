@@ -245,7 +245,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
                 <select id="seller-payout-method" required>
                   <option value="bank">โอนเข้าบัญชีธนาคาร</option>
                   <option value="promptpay">โอนผ่าน PromptPay</option>
-                  <option value="seller_qr">ผู้ขายแนบ QR รับเงิน</option>
                 </select>
               </div>
               <div>
@@ -285,16 +284,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
               </div>
             </div>
 
-            <div id="seller-qr-fields" class="row hidden">
-              <div>
-                <label>QR รับเงินของผู้ขาย</label>
-                <input id="seller-payout-qr-file" type="file" accept="image/*" class="hidden" />
-                <button id="seller-payout-qr-btn" class="btn upload" type="button">อัปโหลด QR รับเงิน</button>
-                <p class="tiny">รองรับเฉพาะไฟล์ภาพ ขนาดสูงสุด ${Math.max(0, Number(maxSlipImageBytes || 0))} bytes</p>
-                <div id="seller-payout-qr-preview" class="preview">ยังไม่ได้อัปโหลด QR</div>
-              </div>
-            </div>
-
             <div class="row two">
               <div>
                 <label for="seller-bank-account-name">ชื่อผู้รับเงินผู้ขาย</label>
@@ -325,8 +314,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
     script: `
       ${commonUtilsScript}
 
-      var maxQrImageBytes = Number(${Math.max(0, Number(maxSlipImageBytes || 0))}) || 0;
-
       var form = document.getElementById('escrow-create-form');
       var dealFieldsWrap = document.getElementById('deal-input-fields');
       var paymentActionsWrap = document.getElementById('deal-payment-actions');
@@ -351,16 +338,11 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var promptpayInput = document.getElementById('seller-promptpay-number');
       var bankFieldsWrap = document.getElementById('seller-bank-fields');
       var promptpayFieldsWrap = document.getElementById('seller-promptpay-fields');
-      var qrFieldsWrap = document.getElementById('seller-qr-fields');
-      var payoutQrFileInput = document.getElementById('seller-payout-qr-file');
-      var payoutQrBtn = document.getElementById('seller-payout-qr-btn');
-      var payoutQrPreview = document.getElementById('seller-payout-qr-preview');
       var bankAccountNameInput = document.getElementById('seller-bank-account-name');
 
       var dealId = parseDealIdFromLocation();
       var groupReady = false;
       var isBusy = false;
-      var sellerPayoutQrImage = null;
 
       var groupFromQuery = parseGroupIdFromLocation();
       if (groupFromQuery) {
@@ -375,7 +357,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       function getPayoutMethodLabel(methodInput) {
         var method = String(methodInput || '').trim().toLowerCase();
         if (method === 'promptpay') return 'PromptPay';
-        if (method === 'seller_qr') return 'QR ผู้ขาย';
         return 'ธนาคาร';
       }
 
@@ -416,22 +397,16 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         updateGroupButtonText();
       }
 
-      function resetPayoutQrPreview() {
-        sellerPayoutQrImage = null;
-        payoutQrPreview.textContent = 'ยังไม่ได้อัปโหลด QR';
-      }
-
       function updatePayoutMethodFields() {
         var method = String(payoutMethodInput.value || 'bank').trim().toLowerCase();
         var isBank = method === 'bank';
         var isPromptpay = method === 'promptpay';
-        var isSellerQr = method === 'seller_qr';
+        var needsBankDetails = isBank || isPromptpay;
 
-        bankFieldsWrap.classList.toggle('hidden', !isBank);
+        bankFieldsWrap.classList.toggle('hidden', !needsBankDetails);
         promptpayFieldsWrap.classList.toggle('hidden', !isPromptpay);
-        qrFieldsWrap.classList.toggle('hidden', !isSellerQr);
 
-        bankBrandInput.required = isBank;
+        bankBrandInput.required = needsBankDetails;
         bankAccountInput.required = isBank;
         promptpayInput.required = isPromptpay;
       }
@@ -445,16 +420,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
             break;
           }
         }
-      }
-
-      function showPayoutQrPreview(image) {
-        if (!image || !image.dataUrl) {
-          resetPayoutQrPreview();
-          return;
-        }
-        sellerPayoutQrImage = image;
-        payoutQrPreview.innerHTML =
-          '<img alt="seller payout qr" src="' + escapeHtml(image.dataUrl) + '" />';
       }
 
       function updateDealActionButtons(deal) {
@@ -489,11 +454,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         syncBankBrandByDeal(d);
         bankAccountInput.value = String(d.sellerBankAccount || '').trim();
         promptpayInput.value = String(d.sellerPromptpayNumber || '').trim();
-        if (d.sellerPayoutQrImage && d.sellerPayoutQrImage.dataUrl) {
-          showPayoutQrPreview(d.sellerPayoutQrImage);
-        } else {
-          resetPayoutQrPreview();
-        }
 
         var qrHtml = d.paymentQrImageUrl
           ? '<div class="qr"><div style="font-size:0.78rem;color:#334155;">สแกน QR นี้เพื่อชำระเงินเข้าระบบ</div><img alt="payment qr" src="' + escapeHtml(d.paymentQrImageUrl) + '" /></div>'
@@ -572,7 +532,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           throw new Error('กรุณายืนยัน Group ID ก่อนสร้างดีล');
         }
         var payoutMethod = String(payoutMethodInput.value || 'bank').trim().toLowerCase();
-        if (['bank', 'promptpay', 'seller_qr'].indexOf(payoutMethod) < 0) payoutMethod = 'bank';
+        if (['bank', 'promptpay'].indexOf(payoutMethod) < 0) payoutMethod = 'bank';
 
         var payload = {
           groupId: groupIdValue,
@@ -605,15 +565,17 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
             throw new Error('กรุณากรอกเลขบัญชีผู้ขาย');
           }
         } else if (payoutMethod === 'promptpay') {
+          var promptpayBankBrandValue = String(bankBrandInput.value || '').trim().toLowerCase();
+          if (!promptpayBankBrandValue) {
+            throw new Error('กรุณาเลือกธนาคารผู้ขาย');
+          }
+          payload.sellerBankBrand = promptpayBankBrandValue;
+          payload.sellerBankName = getSelectedBankName();
           payload.sellerPromptpayNumber = normalizePromptpayNumber(promptpayInput.value);
           if (!payload.sellerPromptpayNumber || !/^(?:\d{10}|\d{13}|\d{15})$/.test(payload.sellerPromptpayNumber)) {
             throw new Error('เลข PromptPay ต้องเป็นตัวเลข 10, 13 หรือ 15 หลัก');
           }
-        } else if (payoutMethod === 'seller_qr') {
-          if (!sellerPayoutQrImage || !sellerPayoutQrImage.dataUrl) {
-            throw new Error('กรุณาอัปโหลด QR รับเงินของผู้ขาย');
-          }
-          payload.sellerPayoutQrImage = sellerPayoutQrImage;
+          payload.sellerBankAccount = payload.sellerPromptpayNumber;
         }
 
         return payload;
@@ -762,40 +724,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
 
       payoutMethodInput.addEventListener('change', updatePayoutMethodFields);
 
-      payoutQrBtn.addEventListener('click', function () {
-        payoutQrFileInput.click();
-      });
-
-      payoutQrFileInput.addEventListener('change', function (event) {
-        var file = event.target.files && event.target.files[0];
-        if (!file) return;
-        if (!String(file.type || '').toLowerCase().startsWith('image/')) {
-          showStatus(statusBox, 'อัปโหลดได้เฉพาะไฟล์รูปภาพเท่านั้น', 'error');
-          payoutQrFileInput.value = '';
-          return;
-        }
-        if (maxQrImageBytes > 0 && Number(file.size || 0) > maxQrImageBytes) {
-          showStatus(statusBox, 'ไฟล์ใหญ่เกินกำหนด (' + maxQrImageBytes + ' bytes)', 'error');
-          payoutQrFileInput.value = '';
-          return;
-        }
-        var reader = new FileReader();
-        reader.onload = function () {
-          showPayoutQrPreview({
-            id: 'seller-qr-' + Date.now(),
-            name: String(file.name || 'seller-qr').slice(0, 180),
-            mimeType: String(file.type || 'image/*').toLowerCase(),
-            size: Number(file.size || 0),
-            dataUrl: String(reader.result || '')
-          });
-          hideStatus(statusBox);
-        };
-        reader.onerror = function () {
-          showStatus(statusBox, 'อ่านไฟล์รูป QR ไม่สำเร็จ', 'error');
-        };
-        reader.readAsDataURL(file);
-      });
-
       groupConfirmBtn.addEventListener('click', function () {
         if (groupReady) {
           setGroupReady(false);
@@ -803,7 +731,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           updateDealActionButtons(null);
           dealId = '';
           resultBox.classList.add('hidden');
-          resetPayoutQrPreview();
           showStatus(statusBox, 'แก้ไข Group ID ได้แล้ว กรุณากด "ยืนยัน Group ID" อีกครั้ง', 'success');
           return;
         }
@@ -857,7 +784,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       updateDealActionButtons(null);
       setCreateFormVisible(false);
       setGroupReady(false);
-      resetPayoutQrPreview();
 
       (function bootstrapFromDealIdIfProvided() {
         if (!dealId) return;
