@@ -58,6 +58,9 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
         .row.three { grid-template-columns: 1fr 1fr 1fr; }
       }
       label { display: block; font-size: 0.8rem; margin-bottom: 5px; color: #334155; font-weight: 600; }
+      label[for="deal-group-id"],
+      label[for="seller-deal-id"],
+      label[for="buyer-deal-id"] { display: none; }
       input[type="text"],
       input[type="number"],
       select,
@@ -261,20 +264,30 @@ const commonUtilsScript = `
     if (!value) return;
     safeStorageSet(ESCROW_STORAGE_DEAL_KEY, value);
   }
-  function parseDealIdFromLocation() {
+  function parseDealIdFromLocationOnly() {
     var fromLocation = parseParamFromLocation('dealId');
     if (fromLocation) {
       rememberEscrowDealId(fromLocation);
       return fromLocation;
     }
-    return safeStorageGet(ESCROW_STORAGE_DEAL_KEY);
+    return '';
   }
-  function parseGroupIdFromLocation() {
+  function parseGroupIdFromLocationOnly() {
     var fromLocation = parseParamFromLocation('groupId');
     if (fromLocation) {
       rememberEscrowGroupId(fromLocation);
       return fromLocation;
     }
+    return '';
+  }
+  function parseDealIdFromLocation() {
+    var fromLocation = parseDealIdFromLocationOnly();
+    if (fromLocation) return fromLocation;
+    return safeStorageGet(ESCROW_STORAGE_DEAL_KEY);
+  }
+  function parseGroupIdFromLocation() {
+    var fromLocation = parseGroupIdFromLocationOnly();
+    if (fromLocation) return fromLocation;
     return safeStorageGet(ESCROW_STORAGE_GROUP_KEY);
   }
 `;
@@ -288,7 +301,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
     bodyHtml: `
       <section class="card">
         <form id="escrow-create-form" class="row">
-          <div>
+          <div class="hidden" aria-hidden="true">
             <label for="deal-group-id">รหัสกลุ่ม (Group ID)</label>
             <input id="deal-group-id" type="text" placeholder="วาง Group ID ของกลุ่ม LINE ที่ใช้งานดีลนี้" required />
             <p class="tiny">ถ้าเปิดจากปุ่ม LIFF ในกลุ่ม ระบบมักจะใส่ค่า Group ID ให้อัตโนมัติ</p>
@@ -404,12 +417,13 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var promptpayInput = document.getElementById('seller-promptpay-number');
       var bankFieldsWrap = document.getElementById('seller-bank-fields');
       var promptpayFieldsWrap = document.getElementById('seller-promptpay-fields');
+      groupInput.required = false;
 
-      var dealId = parseDealIdFromLocation();
+      var dealId = parseDealIdFromLocationOnly();
       var groupReady = false;
       var isBusy = false;
 
-      var groupFromQuery = parseGroupIdFromLocation();
+      var groupFromQuery = parseGroupIdFromLocationOnly();
       if (groupFromQuery) {
         groupInput.value = groupFromQuery;
         rememberEscrowGroupId(groupFromQuery);
@@ -873,6 +887,15 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           }
         })();
       })();
+
+      (function bootstrapMissingGroupContextWarning() {
+        if (dealId || groupFromQuery) return;
+        showStatus(
+          statusBox,
+          '\u0E44\u0E21\u0E48\u0E1E\u0E1A Group ID \u0E08\u0E32\u0E01 LINE \u0E01\u0E23\u0E38\u0E13\u0E32\u0E01\u0E14\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19\u0E43\u0E19\u0E01\u0E25\u0E38\u0E48\u0E21\u0E01\u0E48\u0E2D\u0E19',
+          'error'
+        );
+      })();
     `,
   });
 export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
@@ -887,7 +910,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
           <div class="row two">
             <div>
               <label for="seller-deal-id">รหัสดีล</label>
-              <input id="seller-deal-id" type="text" placeholder="escrow deal id" required />
+              <input id="seller-deal-id" type="hidden" />
             </div>
             <div>
               <label for="seller-tracking-no">เลขพัสดุ</label>
@@ -928,14 +951,28 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var slipImage = null;
       var maxBytes = ${Math.max(0, Number(maxSlipImageBytes || 0))};
 
-      var presetDealId = parseDealIdFromLocation();
+      var presetDealId = parseDealIdFromLocationOnly();
       if (presetDealId) {
         dealInput.value = presetDealId;
         rememberEscrowDealId(presetDealId);
       }
 
+      function hasDealId() {
+        return Boolean(String(dealInput.value || '').trim());
+      }
+
+      function requireDealIdOrShowError() {
+        if (hasDealId()) return true;
+        showStatus(
+          statusBox,
+          '\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E2B\u0E31\u0E2A\u0E14\u0E35\u0E25 \u0E43\u0E2B\u0E49\u0E44\u0E1B\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E14\u0E35\u0E25\u0E01\u0E48\u0E2D\u0E19',
+          'error'
+        );
+        return false;
+      }
+
       function setBusy(isBusy) {
-        submitBtn.disabled = Boolean(isBusy);
+        submitBtn.disabled = Boolean(isBusy) || !hasDealId();
         submitBtn.textContent = isBusy ? 'กำลังบันทึก...' : 'ยืนยันส่งเลขพัสดุและหลักฐาน';
       }
 
@@ -980,6 +1017,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
         var d = deal && typeof deal === 'object' ? deal : {};
         var dealIdText = String(d.id || '').trim();
         var groupIdText = String(d.groupId || '').trim();
+        if (dealIdText) dealInput.value = dealIdText;
         if (dealIdText) rememberEscrowDealId(dealIdText);
         if (groupIdText) rememberEscrowGroupId(groupIdText);
         resultBox.innerHTML =
@@ -1001,6 +1039,9 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
         event.preventDefault();
         hideStatus(statusBox);
         resultBox.classList.add('hidden');
+        if (!requireDealIdOrShowError()) {
+          return;
+        }
         if (!slipImage) {
           showStatus(statusBox, 'กรุณาอัปโหลดรูปหลักฐานก่อนส่ง', 'error');
           return;
@@ -1027,6 +1068,15 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0 } = {}) =>
           setBusy(false);
         }
       });
+
+      if (!hasDealId()) {
+        showStatus(
+          statusBox,
+          '\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E2B\u0E31\u0E2A\u0E14\u0E35\u0E25 \u0E43\u0E2B\u0E49\u0E44\u0E1B\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E14\u0E35\u0E25\u0E01\u0E48\u0E2D\u0E19',
+          'error'
+        );
+      }
+      setBusy(false);
     `,
   });
 
@@ -1041,7 +1091,7 @@ export const renderLineEscrowBuyerPage = () =>
         <form id="buyer-form" class="row">
           <div>
             <label for="buyer-deal-id">รหัสดีล</label>
-            <input id="buyer-deal-id" type="text" placeholder="escrow deal id" required />
+            <input id="buyer-deal-id" type="hidden" />
           </div>
           <div style="display:flex; gap:10px; flex-wrap:wrap;">
             <button id="buyer-load-btn" class="btn primary" type="button">โหลดสถานะดีล</button>
@@ -1062,22 +1112,38 @@ export const renderLineEscrowBuyerPage = () =>
       var statusBox = document.getElementById('buyer-status');
       var resultBox = document.getElementById('buyer-result');
 
-      var presetDealId = parseDealIdFromLocation();
+      var presetDealId = parseDealIdFromLocationOnly();
       if (presetDealId) {
         dealInput.value = presetDealId;
         rememberEscrowDealId(presetDealId);
       }
 
+      function hasDealId() {
+        return Boolean(String(dealInput.value || '').trim());
+      }
+
+      function requireDealIdOrShowError() {
+        if (hasDealId()) return true;
+        showStatus(
+          statusBox,
+          '\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E2B\u0E31\u0E2A\u0E14\u0E35\u0E25 \u0E43\u0E2B\u0E49\u0E44\u0E1B\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E14\u0E35\u0E25\u0E01\u0E48\u0E2D\u0E19',
+          'error'
+        );
+        return false;
+      }
+
       function setBusy(isBusy) {
-        loadBtn.disabled = Boolean(isBusy);
-        refreshBtn.disabled = Boolean(isBusy);
-        confirmBtn.disabled = Boolean(isBusy);
+        var disabled = Boolean(isBusy) || !hasDealId();
+        loadBtn.disabled = disabled;
+        refreshBtn.disabled = disabled;
+        confirmBtn.disabled = disabled;
       }
 
       function renderDeal(deal) {
         var d = deal && typeof deal === 'object' ? deal : {};
         var dealIdText = String(d.id || '').trim();
         var groupIdText = String(d.groupId || '').trim();
+        if (dealIdText) dealInput.value = dealIdText;
         if (dealIdText) rememberEscrowDealId(dealIdText);
         if (groupIdText) rememberEscrowGroupId(groupIdText);
         var links = '';
@@ -1104,6 +1170,9 @@ export const renderLineEscrowBuyerPage = () =>
       }
 
       async function loadDeal(refreshPayment) {
+        if (!requireDealIdOrShowError()) {
+          return;
+        }
         var id = String(dealInput.value || '').trim();
         if (!id) {
           showStatus(statusBox, 'กรุณากรอกรหัสดีล', 'error');
@@ -1127,6 +1196,9 @@ export const renderLineEscrowBuyerPage = () =>
       }
 
       async function refreshTracking() {
+        if (!requireDealIdOrShowError()) {
+          return;
+        }
         var id = String(dealInput.value || '').trim();
         if (!id) {
           showStatus(statusBox, 'กรุณากรอกรหัสดีล', 'error');
@@ -1152,6 +1224,9 @@ export const renderLineEscrowBuyerPage = () =>
       }
 
       async function confirmDelivery() {
+        if (!requireDealIdOrShowError()) {
+          return;
+        }
         var id = String(dealInput.value || '').trim();
         if (!id) {
           showStatus(statusBox, 'กรุณากรอกรหัสดีล', 'error');
@@ -1180,6 +1255,14 @@ export const renderLineEscrowBuyerPage = () =>
       refreshBtn.addEventListener('click', function () { void refreshTracking(); });
       confirmBtn.addEventListener('click', function () { void confirmDelivery(); });
 
+      if (!hasDealId()) {
+        showStatus(
+          statusBox,
+          '\u0E44\u0E21\u0E48\u0E21\u0E35\u0E23\u0E2B\u0E31\u0E2A\u0E14\u0E35\u0E25 \u0E43\u0E2B\u0E49\u0E44\u0E1B\u0E2A\u0E23\u0E49\u0E32\u0E07\u0E14\u0E35\u0E25\u0E01\u0E48\u0E2D\u0E19',
+          'error'
+        );
+      }
+      setBusy(false);
       if (presetDealId) void loadDeal(true);
     `,
   });
