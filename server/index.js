@@ -33,6 +33,10 @@ app.use(
   })
 );
 
+app.get('/favicon.ico', (_req, res) => {
+  res.status(204).end();
+});
+
 const allowedOrigins = String(process.env.CLIENT_ORIGIN || '')
   .split(',')
   .map((origin) => origin.trim())

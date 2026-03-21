@@ -1,4 +1,4 @@
-const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!doctype html>
+const buildShell = ({ title = '', subtitle = '', description = '', bodyHtml = '', script = '' }) => `<!doctype html>
 <html lang="th">
   <head>
     <meta charset="UTF-8" />
@@ -261,7 +261,7 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
     <main class="container">
       <section class="hero">
         <h1>${title}</h1>
-        <p class="subtitle">${subtitle}</p>
+        ${subtitle ? `<p class="subtitle">${subtitle}</p>` : ''}
         <p class="description">${description}</p>
       </section>
       ${bodyHtml}
@@ -429,7 +429,8 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0, maxImageCount = 
       const resultBox = document.getElementById('fake-news-result');
       const maxBytes = ${Math.max(0, Number(maxImageBytes || 0))};
       const maxImages = ${Math.max(1, Math.min(10, Number(maxImageCount || 10)))};
-      let imageDataUrls = [];
+      let selectedFiles = [];
+      let previewUrls = [];
 
       function escapeHtml(value) {
         return String(value || '').replace(/[&<>"']/g, function (char) {
@@ -465,10 +466,37 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0, maxImageCount = 
             resolve(String(reader.result || ''));
           };
           reader.onerror = function () {
-            reject(new Error('อ่านไฟล์รูปไม่สำเร็จ'));
+            reject(new Error('อ่านไฟล์รูปไม่สำเร็จ กรุณาลองเลือกรูปใหม่หรือเลือกรูปที่ขนาดเล็กลง'));
           };
           reader.readAsDataURL(file);
         });
+      }
+
+      function clearPreviewUrls() {
+        previewUrls.forEach(function (url) {
+          try {
+            URL.revokeObjectURL(url);
+          } catch (_error) {}
+        });
+        previewUrls = [];
+      }
+
+      function setSelectedFiles(files) {
+        clearPreviewUrls();
+        selectedFiles = Array.isArray(files) ? files.slice(0, maxImages) : [];
+        previewUrls = selectedFiles.map(function (file) {
+          return URL.createObjectURL(file);
+        });
+        renderImagePreviewList(previewUrls);
+      }
+
+      async function convertFilesToDataUrls(files) {
+        const output = [];
+        const list = Array.isArray(files) ? files : [];
+        for (let index = 0; index < list.length; index += 1) {
+          output.push(await readFileAsDataUrl(list[index]));
+        }
+        return output.filter(Boolean);
       }
 
       function renderImagePreviewList(images) {
@@ -547,6 +575,7 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0, maxImageCount = 
         if (files.length > maxImages) {
           showStatus('อัปโหลดได้สูงสุด ' + maxImages + ' รูปต่อครั้ง', 'error');
           fileInput.value = '';
+          setSelectedFiles([]);
           return;
         }
         for (let index = 0; index < files.length; index += 1) {
@@ -554,30 +583,24 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0, maxImageCount = 
           if (!String(file.type || '').toLowerCase().startsWith('image/')) {
             showStatus('อนุญาตเฉพาะไฟล์ภาพ', 'error');
             fileInput.value = '';
+            setSelectedFiles([]);
             return;
           }
           if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
             showStatus('ไฟล์รูปมีขนาดใหญ่เกินกำหนด', 'error');
             fileInput.value = '';
+            setSelectedFiles([]);
             return;
           }
         }
-        Promise.all(files.map(function (file) { return readFileAsDataUrl(file); }))
-          .then(function (images) {
-            imageDataUrls = images.filter(Boolean).slice(0, maxImages);
-            renderImagePreviewList(imageDataUrls);
-            hideStatus();
-          })
-          .catch(function (error) {
-            showStatus((error && error.message) || 'อ่านไฟล์รูปไม่สำเร็จ', 'error');
-            fileInput.value = '';
-          });
+        setSelectedFiles(files);
+        hideStatus();
       });
 
       form.addEventListener('submit', async function (event) {
         event.preventDefault();
         const text = String(textInput.value || '').trim();
-        if (!text && imageDataUrls.length === 0) {
+        if (!text && selectedFiles.length === 0) {
           showStatus('กรุณาใส่ข้อความข่าวหรืออัปโหลดรูปอย่างน้อย 1 อย่าง', 'error');
           return;
         }
@@ -585,6 +608,7 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0, maxImageCount = 
         resultBox.classList.add('hidden');
         setBusy(true);
         try {
+          const imageDataUrls = await convertFilesToDataUrls(selectedFiles);
           const response = await fetch('/line/scam/liff/api/fake-news', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -605,6 +629,10 @@ export const renderLineScamFakeNewsPage = ({ maxImageBytes = 0, maxImageCount = 
         } finally {
           setBusy(false);
         }
+      });
+
+      window.addEventListener('beforeunload', function () {
+        clearPreviewUrls();
       });
     `,
   });
@@ -648,7 +676,8 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0, maxImageCount 
       const resultBox = document.getElementById('risk-result');
       const maxBytes = ${Math.max(0, Number(maxImageBytes || 0))};
       const maxImages = ${Math.max(1, Math.min(10, Number(maxImageCount || 10)))};
-      let imageDataUrls = [];
+      let selectedFiles = [];
+      let previewUrls = [];
 
       function escapeHtml(value) {
         return String(value || '').replace(/[&<>"']/g, function (char) {
@@ -684,10 +713,37 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0, maxImageCount 
             resolve(String(reader.result || ''));
           };
           reader.onerror = function () {
-            reject(new Error('อ่านไฟล์รูปไม่สำเร็จ'));
+            reject(new Error('อ่านไฟล์รูปไม่สำเร็จ กรุณาลองเลือกรูปใหม่หรือเลือกรูปที่ขนาดเล็กลง'));
           };
           reader.readAsDataURL(file);
         });
+      }
+
+      function clearPreviewUrls() {
+        previewUrls.forEach(function (url) {
+          try {
+            URL.revokeObjectURL(url);
+          } catch (_error) {}
+        });
+        previewUrls = [];
+      }
+
+      function setSelectedFiles(files) {
+        clearPreviewUrls();
+        selectedFiles = Array.isArray(files) ? files.slice(0, maxImages) : [];
+        previewUrls = selectedFiles.map(function (file) {
+          return URL.createObjectURL(file);
+        });
+        renderImagePreviewList(previewUrls);
+      }
+
+      async function convertFilesToDataUrls(files) {
+        const output = [];
+        const list = Array.isArray(files) ? files : [];
+        for (let index = 0; index < list.length; index += 1) {
+          output.push(await readFileAsDataUrl(list[index]));
+        }
+        return output.filter(Boolean);
       }
 
       function renderImagePreviewList(images) {
@@ -754,6 +810,7 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0, maxImageCount 
         if (files.length > maxImages) {
           showStatus('อัปโหลดได้สูงสุด ' + maxImages + ' รูปต่อครั้ง', 'error');
           fileInput.value = '';
+          setSelectedFiles([]);
           return;
         }
         for (let index = 0; index < files.length; index += 1) {
@@ -761,29 +818,23 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0, maxImageCount 
           if (!String(file.type || '').toLowerCase().startsWith('image/')) {
             showStatus('อนุญาตเฉพาะไฟล์ภาพ', 'error');
             fileInput.value = '';
+            setSelectedFiles([]);
             return;
           }
           if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
             showStatus('ไฟล์รูปมีขนาดใหญ่เกินกำหนด', 'error');
             fileInput.value = '';
+            setSelectedFiles([]);
             return;
           }
         }
-        Promise.all(files.map(function (file) { return readFileAsDataUrl(file); }))
-          .then(function (images) {
-            imageDataUrls = images.filter(Boolean).slice(0, maxImages);
-            renderImagePreviewList(imageDataUrls);
-            hideStatus();
-          })
-          .catch(function (error) {
-            showStatus((error && error.message) || 'อ่านไฟล์รูปไม่สำเร็จ', 'error');
-            fileInput.value = '';
-          });
+        setSelectedFiles(files);
+        hideStatus();
       });
 
       form.addEventListener('submit', async function (event) {
         event.preventDefault();
-        if (imageDataUrls.length === 0) {
+        if (selectedFiles.length === 0) {
           showStatus('กรุณาอัปโหลดรูปแชทก่อนประเมิน', 'error');
           return;
         }
@@ -791,6 +842,7 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0, maxImageCount 
         resultBox.classList.add('hidden');
         setBusy(true);
         try {
+          const imageDataUrls = await convertFilesToDataUrls(selectedFiles);
           const response = await fetch('/line/scam/liff/api/risk-assess', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -811,6 +863,10 @@ export const renderLineScamRiskAssessPage = ({ maxImageBytes = 0, maxImageCount 
         } finally {
           setBusy(false);
         }
+      });
+
+      window.addEventListener('beforeunload', function () {
+        clearPreviewUrls();
       });
     `,
   });

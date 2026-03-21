@@ -1,4 +1,4 @@
-const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!doctype html>
+const buildShell = ({ title = '', subtitle = '', description = '', bodyHtml = '', script = '' }) => `<!doctype html>
 <html lang="th">
   <head>
     <meta charset="UTF-8" />
@@ -182,7 +182,7 @@ const buildShell = ({ title, subtitle, description, bodyHtml, script }) => `<!do
     <main class="container">
       <section class="hero">
         <h1>${title}</h1>
-        <p class="subtitle">${subtitle}</p>
+        ${subtitle ? `<p class="subtitle">${subtitle}</p>` : ''}
         <p class="description">${description}</p>
       </section>
       ${bodyHtml}
@@ -991,7 +991,8 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0, maxSlipImage
       var fileInput = document.getElementById('seller-slip-input');
       var pickBtn = document.getElementById('seller-slip-pick-btn');
       var preview = document.getElementById('seller-slip-preview');
-      var slipImages = [];
+      var selectedSlipFiles = [];
+      var slipPreviewUrls = [];
       var maxBytes = ${Math.max(0, Number(maxSlipImageBytes || 0))};
       var maxImageCount = ${Math.max(1, Math.min(10, Number(maxSlipImageCount || 10)))};
 
@@ -1032,25 +1033,62 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0, maxSlipImage
             resolve(String(reader.result || ''));
           };
           reader.onerror = function () {
-            reject(new Error('อ่านไฟล์รูปไม่สำเร็จ'));
+            reject(new Error('อ่านไฟล์รูปไม่สำเร็จ กรุณาลองเลือกรูปใหม่หรือเลือกรูปที่ขนาดเล็กลง'));
           };
           reader.readAsDataURL(file);
         });
       }
 
-      function renderSlipPreview(images) {
-        if (!Array.isArray(images) || images.length === 0) {
+      function clearSlipPreviewUrls() {
+        slipPreviewUrls.forEach(function (url) {
+          try {
+            URL.revokeObjectURL(url);
+          } catch (_error) {}
+        });
+        slipPreviewUrls = [];
+      }
+
+      function renderSlipPreview(imageUrls) {
+        if (!Array.isArray(imageUrls) || imageUrls.length === 0) {
           preview.textContent = 'ยังไม่ได้เลือกรูป';
           return;
         }
         preview.innerHTML =
           '<div class="preview-grid">' +
-          images
-            .map(function (image) {
-              return '<img alt="slip preview" src="' + escapeHtml(image && image.dataUrl ? image.dataUrl : '') + '" />';
+          imageUrls
+            .map(function (url) {
+              return '<img alt="slip preview" src="' + escapeHtml(url) + '" />';
             })
             .join('') +
           '</div>';
+      }
+
+      function setSelectedSlipFiles(files) {
+        clearSlipPreviewUrls();
+        selectedSlipFiles = Array.isArray(files) ? files.slice(0, maxImageCount) : [];
+        slipPreviewUrls = selectedSlipFiles.map(function (file) {
+          return URL.createObjectURL(file);
+        });
+        renderSlipPreview(slipPreviewUrls);
+      }
+
+      async function convertSlipFilesToPayload(files) {
+        var list = Array.isArray(files) ? files : [];
+        var payload = [];
+        for (var index = 0; index < list.length; index += 1) {
+          var currentFile = list[index] || {};
+          var dataUrl = await readFileAsDataUrl(currentFile);
+          payload.push({
+            id: 'slip-' + Date.now() + '-' + index,
+            name: String(currentFile.name || 'shipping-slip').slice(0, 180),
+            mimeType: String(currentFile.type || 'image/*').toLowerCase(),
+            size: Number(currentFile.size || 0),
+            dataUrl: String(dataUrl || ''),
+          });
+        }
+        return payload.filter(function (item) {
+          return item.dataUrl;
+        });
       }
 
       fileInput.addEventListener('change', function (event) {
@@ -1059,6 +1097,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0, maxSlipImage
         if (files.length > maxImageCount) {
           showStatus(statusBox, 'อัปโหลดได้สูงสุด ' + maxImageCount + ' รูปต่อครั้ง', 'error');
           fileInput.value = '';
+          setSelectedSlipFiles([]);
           return;
         }
         for (var i = 0; i < files.length; i += 1) {
@@ -1066,38 +1105,18 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0, maxSlipImage
           if (!String(file.type || '').toLowerCase().startsWith('image/')) {
             showStatus(statusBox, 'อนุญาตเฉพาะไฟล์ภาพเท่านั้น', 'error');
             fileInput.value = '';
+            setSelectedSlipFiles([]);
             return;
           }
           if (maxBytes > 0 && Number(file.size || 0) > maxBytes) {
             showStatus(statusBox, 'ไฟล์รูปมีขนาดใหญ่เกินกำหนด', 'error');
             fileInput.value = '';
+            setSelectedSlipFiles([]);
             return;
           }
         }
-        Promise.all(files.map(function (file) { return readFileAsDataUrl(file); }))
-          .then(function (dataUrls) {
-            slipImages = dataUrls
-              .map(function (dataUrl, index) {
-                var currentFile = files[index] || {};
-                return {
-                  id: 'slip-' + Date.now() + '-' + index,
-                  name: String(currentFile.name || 'shipping-slip').slice(0, 180),
-                  mimeType: String(currentFile.type || 'image/*').toLowerCase(),
-                  size: Number(currentFile.size || 0),
-                  dataUrl: String(dataUrl || ''),
-                };
-              })
-              .filter(function (item) {
-                return item.dataUrl;
-              })
-              .slice(0, maxImageCount);
-            renderSlipPreview(slipImages);
-            hideStatus(statusBox);
-          })
-          .catch(function (error) {
-            showStatus(statusBox, (error && error.message) || 'อ่านไฟล์รูปไม่สำเร็จ', 'error');
-            fileInput.value = '';
-          });
+        setSelectedSlipFiles(files);
+        hideStatus(statusBox);
       });
 
       function renderDeal(deal) {
@@ -1129,12 +1148,16 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0, maxSlipImage
         if (!requireDealIdOrShowError()) {
           return;
         }
-        if (!Array.isArray(slipImages) || slipImages.length === 0) {
+        if (!Array.isArray(selectedSlipFiles) || selectedSlipFiles.length === 0) {
           showStatus(statusBox, 'กรุณาอัปโหลดรูปหลักฐานก่อนส่ง', 'error');
           return;
         }
         setBusy(true);
         try {
+          var slipImages = await convertSlipFilesToPayload(selectedSlipFiles);
+          if (!Array.isArray(slipImages) || slipImages.length === 0) {
+            throw new Error('อ่านไฟล์รูปไม่สำเร็จ กรุณาเลือกไฟล์รูปใหม่');
+          }
           var response = await fetch('/line/escrow/liff/api/deals/submit-shipment', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1165,6 +1188,9 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0, maxSlipImage
         );
       }
       setBusy(false);
+      window.addEventListener('beforeunload', function () {
+        clearSlipPreviewUrls();
+      });
     `,
   });
 
