@@ -138,6 +138,9 @@ const FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION = String(
 const FIRESTORE_LINE_SCAM_BOT_COLLECTION = String(
   process.env.FIRESTORE_LINE_SCAM_BOT_COLLECTION || 'line_scam_bot'
 ).trim();
+const FIRESTORE_LINE_SCAM_POLICE_STATION_COLLECTION = String(
+  process.env.FIRESTORE_LINE_SCAM_POLICE_STATION_COLLECTION || 'line_scam_police_stations'
+).trim();
 const FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION = String(
   process.env.FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION || 'line_scam_webhook_logs'
 ).trim();
@@ -418,6 +421,7 @@ const lineReminderConfigRef = firestore.collection(FIRESTORE_LINE_REMINDER_COLLE
 const lineReminderLogRef = firestore.collection(FIRESTORE_LINE_REMINDER_LOG_COLLECTION);
 const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION);
 const lineScamBotRef = firestore.collection(FIRESTORE_LINE_SCAM_BOT_COLLECTION);
+const lineScamPoliceStationRef = firestore.collection(FIRESTORE_LINE_SCAM_POLICE_STATION_COLLECTION);
 const lineScamWebhookLogRef = firestore.collection(FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION);
 const lineScamBotConfigDocRef = lineScamBotRef.doc('global');
 const lineEscrowBotRef = firestore.collection(FIRESTORE_LINE_ESCROW_BOT_COLLECTION);
@@ -430,6 +434,10 @@ const scamReportRef = firestore.collection(FIRESTORE_SCAM_REPORT_COLLECTION);
 const aiThreadRef = firestore.collection(FIRESTORE_AI_THREAD_COLLECTION);
 const oauthClient = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
 let lineScamPoliceStationsCache = {
+  fetchedAtMs: 0,
+  stations: [],
+};
+let lineScamPoliceStationsDbCache = {
   fetchedAtMs: 0,
   stations: [],
 };
@@ -1872,14 +1880,18 @@ const searchLineScamPoliceStations = ({
   query = '',
   latitude = null,
   longitude = null,
-  limit = 80,
+  limit = 0,
 }) => {
   const stations = Array.isArray(stationsInput) ? stationsInput : [];
   const lat = normalizeGeoCoordinate(latitude, -90, 90);
   const lng = normalizeGeoCoordinate(longitude, -180, 180);
   const queryToken = normalizeSearchToken(query);
   const queryParts = queryToken.split(' ').filter(Boolean);
-  const safeLimit = Math.min(120, Math.max(1, Number(limit || 80)));
+  const numericLimit = Number(limit || 0);
+  const safeLimit =
+    Number.isFinite(numericLimit) && numericLimit > 0
+      ? Math.min(20000, Math.max(1, Math.trunc(numericLimit)))
+      : 0;
   const rows = [];
 
   for (const stationInput of stations) {
@@ -1928,7 +1940,7 @@ const searchLineScamPoliceStations = ({
     return String(a.name || '').localeCompare(String(b.name || ''), 'th');
   });
 
-  return rows.slice(0, safeLimit).map((row) => ({
+  const mappedRows = rows.map((row) => ({
     id: row.id,
     name: row.name,
     address: row.address,
@@ -1941,6 +1953,117 @@ const searchLineScamPoliceStations = ({
     distanceKm: row.distanceKm,
     source: row.source,
   }));
+  return safeLimit > 0 ? mappedRows.slice(0, safeLimit) : mappedRows;
+};
+
+const normalizeLineScamPoliceStationRecord = (recordInput = {}) => {
+  const record = recordInput && typeof recordInput === 'object' && !Array.isArray(recordInput) ? recordInput : {};
+  const name = normalizeOptionalString(record.name || '', 180);
+  const address = normalizeOptionalString(record.address || '', 260);
+  const phone = normalizeOptionalString(record.phone || '', 80);
+  const province = normalizeOptionalString(record.province || '', 120);
+  const district = normalizeOptionalString(record.district || '', 120);
+  const latitude = normalizeGeoCoordinate(record.latitude, -90, 90);
+  const longitude = normalizeGeoCoordinate(record.longitude, -180, 180);
+  const mapUrlNormalized = normalizeOptionalHttpUrl(record.mapUrl || '', 1200);
+  const mapUrl = mapUrlNormalized || '';
+  const source = normalizeOptionalString(record.source || 'cloud', 40).toLowerCase() || 'cloud';
+  const searchableSource =
+    normalizeOptionalString(record.searchable || '', 600) ||
+    [name, address, province, district, phone].filter(Boolean).join(' ');
+  return {
+    name,
+    address,
+    phone,
+    province,
+    district,
+    latitude: latitude === null ? null : Number(latitude.toFixed(7)),
+    longitude: longitude === null ? null : Number(longitude.toFixed(7)),
+    mapUrl,
+    source,
+    searchable: normalizeSearchToken(searchableSource),
+    updatedAt: normalizeOptionalString(record.updatedAt || '', 80) || null,
+    createdAt: normalizeOptionalString(record.createdAt || '', 80) || null,
+  };
+};
+
+const toLineScamPoliceStationResponse = (docId, dataInput = {}) => {
+  const normalized = normalizeLineScamPoliceStationRecord(dataInput || {});
+  return {
+    id: String(docId || '').trim(),
+    name: normalized.name || 'สถานีตำรวจ',
+    address: normalized.address || '-',
+    phone: normalized.phone || '',
+    province: normalized.province || '',
+    district: normalized.district || '',
+    latitude: normalized.latitude,
+    longitude: normalized.longitude,
+    mapUrl: normalized.mapUrl || '',
+    source: normalized.source || 'cloud',
+    searchable: normalized.searchable || '',
+    updatedAt: normalized.updatedAt || null,
+    createdAt: normalized.createdAt || null,
+  };
+};
+
+const loadLineScamPoliceStationsFromDb = async ({ forceRefresh = false } = {}) => {
+  const nowMs = Date.now();
+  const cacheStations = Array.isArray(lineScamPoliceStationsDbCache?.stations)
+    ? lineScamPoliceStationsDbCache.stations
+    : [];
+  const cacheAgeMs = nowMs - Number(lineScamPoliceStationsDbCache?.fetchedAtMs || 0);
+  const canUseFreshCache = cacheStations.length > 0 && cacheAgeMs >= 0 && cacheAgeMs <= LINE_SCAM_POLICE_STATIONS_CACHE_TTL_MS;
+  if (!forceRefresh && canUseFreshCache) {
+    return {
+      stations: cacheStations,
+      source: 'firestore_cache',
+      fetchedAtMs: Number(lineScamPoliceStationsDbCache.fetchedAtMs || 0),
+    };
+  }
+
+  const snapshot = await lineScamPoliceStationRef.get();
+  const stations = snapshot.docs
+    .map((doc) => toLineScamPoliceStationResponse(doc.id, doc.data() || {}))
+    .filter((station) => Boolean(String(station.name || '').trim()));
+  stations.sort((a, b) => {
+    const provinceCmp = String(a.province || '').localeCompare(String(b.province || ''), 'th');
+    if (provinceCmp !== 0) return provinceCmp;
+    return String(a.name || '').localeCompare(String(b.name || ''), 'th');
+  });
+  lineScamPoliceStationsDbCache = {
+    fetchedAtMs: nowMs,
+    stations,
+  };
+  return {
+    stations,
+    source: 'firestore',
+    fetchedAtMs: nowMs,
+  };
+};
+
+const invalidateLineScamPoliceStationsDbCache = () => {
+  lineScamPoliceStationsDbCache = {
+    fetchedAtMs: 0,
+    stations: [],
+  };
+};
+
+const paginateLineScamPoliceStations = (stationsInput, pageInput = 1, pageSizeInput = 20) => {
+  const stations = Array.isArray(stationsInput) ? stationsInput : [];
+  const pageSizeRaw = Number.parseInt(String(pageSizeInput || '20'), 10);
+  const pageSize = Number.isInteger(pageSizeRaw) ? Math.min(200, Math.max(1, pageSizeRaw)) : 20;
+  const total = stations.length;
+  const totalPages = total <= 0 ? 1 : Math.max(1, Math.ceil(total / pageSize));
+  const pageRaw = Number.parseInt(String(pageInput || '1'), 10);
+  const page = Number.isInteger(pageRaw) ? Math.min(totalPages, Math.max(1, pageRaw)) : 1;
+  const startIndex = (page - 1) * pageSize;
+  return {
+    total,
+    page,
+    pageSize,
+    totalPages,
+    stations: stations.slice(startIndex, startIndex + pageSize),
+  };
 };
 
 const setLineScamLiffHtmlHeaders = (res) => {
@@ -3010,6 +3133,7 @@ const normalizeLineScamBotConfigRecord = (recordInput) => {
     liffScammerCheckUrl: String(record.liffScammerCheckUrl || '').trim(),
     liffFakeNewsUrl: String(record.liffFakeNewsUrl || '').trim(),
     liffRiskAssessUrl: String(record.liffRiskAssessUrl || '').trim(),
+    liffPoliceStationsUrl: String(record.liffPoliceStationsUrl || '').trim(),
     richMenuId: String(record.richMenuId || '').trim(),
     updatedAt: String(record.updatedAt || '').trim() || null,
     updatedById: sanitizeUserId(record.updatedById),
@@ -3027,6 +3151,7 @@ const resolveLineScamLiffUrls = (req, configInput = {}) => {
   const configuredScammerCheck = normalizeOptionalHttpUrl(config.liffScammerCheckUrl);
   const configuredFakeNews = normalizeOptionalHttpUrl(config.liffFakeNewsUrl);
   const configuredRiskAssess = normalizeOptionalHttpUrl(config.liffRiskAssessUrl);
+  const configuredPoliceStations = normalizeOptionalHttpUrl(config.liffPoliceStationsUrl);
   const buildDefaultUrl = (path) => {
     if (!requestOrigin) return '';
     return `${requestOrigin}${path}`;
@@ -3042,7 +3167,10 @@ const resolveLineScamLiffUrls = (req, configInput = {}) => {
       configuredRiskAssess ||
       envRiskAssess ||
       buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.riskAssess),
-    policeStations: envPoliceStations || buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.policeStations),
+    policeStations:
+      configuredPoliceStations ||
+      envPoliceStations ||
+      buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.policeStations),
   };
 };
 
@@ -6597,6 +6725,7 @@ app.get('/health', (_req, res) => {
     firestoreLineReminderLogCollection: FIRESTORE_LINE_REMINDER_LOG_COLLECTION,
     firestoreLineWebhookLogCollection: FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION,
     firestoreLineScamBotCollection: FIRESTORE_LINE_SCAM_BOT_COLLECTION,
+    firestoreLineScamPoliceStationCollection: FIRESTORE_LINE_SCAM_POLICE_STATION_COLLECTION,
     firestoreLineScamWebhookLogCollection: FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION,
     firestoreLineEscrowBotCollection: FIRESTORE_LINE_ESCROW_BOT_COLLECTION,
     firestoreLineEscrowWebhookLogCollection: FIRESTORE_LINE_ESCROW_WEBHOOK_LOG_COLLECTION,
@@ -8116,10 +8245,12 @@ app.put('/admin/line-scam-bot/config', requireAuth, requireRootAdmin, async (req
     const liffScammerCheckUrl = normalizeOptionalHttpUrl(req.body?.liffScammerCheckUrl || '', 1000);
     const liffFakeNewsUrl = normalizeOptionalHttpUrl(req.body?.liffFakeNewsUrl || '', 1000);
     const liffRiskAssessUrl = normalizeOptionalHttpUrl(req.body?.liffRiskAssessUrl || '', 1000);
+    const liffPoliceStationsUrl = normalizeOptionalHttpUrl(req.body?.liffPoliceStationsUrl || '', 1000);
     if (
       liffScammerCheckUrl === null ||
       liffFakeNewsUrl === null ||
-      liffRiskAssessUrl === null
+      liffRiskAssessUrl === null ||
+      liffPoliceStationsUrl === null
     ) {
       return res.status(400).json({
         message: 'LIFF URL must be empty or start with http:// or https://',
@@ -8132,6 +8263,7 @@ app.put('/admin/line-scam-bot/config', requireAuth, requireRootAdmin, async (req
         liffScammerCheckUrl: liffScammerCheckUrl || '',
         liffFakeNewsUrl: liffFakeNewsUrl || '',
         liffRiskAssessUrl: liffRiskAssessUrl || '',
+        liffPoliceStationsUrl: liffPoliceStationsUrl || '',
         richMenuId: richMenuId || '',
         updatedAt: nowIso,
         updatedById: sanitizeUserId(req.rootAdmin?.id),
@@ -8146,6 +8278,130 @@ app.put('/admin/line-scam-bot/config', requireAuth, requireRootAdmin, async (req
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to save LINE scam bot config.' });
+  }
+});
+
+app.get('/admin/line-scam-bot/police-stations', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const query = normalizeOptionalString(req.query?.query || req.query?.q || '', 160);
+    const pageRaw = Number.parseInt(String(req.query?.page || '1'), 10);
+    const page = Number.isInteger(pageRaw) ? Math.max(1, pageRaw) : 1;
+    const pageSizeRaw = Number.parseInt(String(req.query?.pageSize || req.query?.limit || '5'), 10);
+    const pageSize = Number.isInteger(pageSizeRaw) ? Math.min(50, Math.max(1, pageSizeRaw)) : 5;
+    const forceRefresh = /^(?:1|true|yes)$/i.test(String(req.query?.refresh || '').trim());
+
+    const sourceResult = await loadLineScamPoliceStationsFromDb({ forceRefresh });
+    const filtered = searchLineScamPoliceStations({
+      stationsInput: sourceResult.stations,
+      query,
+      limit: 0,
+    });
+    const paginated = paginateLineScamPoliceStations(filtered, page, pageSize);
+    const fetchedAtMs = Number(sourceResult.fetchedAtMs || 0);
+    const fetchedAt = Number.isFinite(fetchedAtMs) && fetchedAtMs > 0 ? new Date(fetchedAtMs).toISOString() : null;
+    return res.json({
+      query,
+      source: sourceResult.source,
+      fetchedAt,
+      total: paginated.total,
+      page: paginated.page,
+      pageSize: paginated.pageSize,
+      totalPages: paginated.totalPages,
+      stations: paginated.stations.map((station) => ({
+        id: station.id,
+        name: station.name,
+        address: station.address,
+        phone: station.phone,
+        mapUrl: station.mapUrl,
+        province: station.province,
+        district: station.district,
+        updatedAt: station.updatedAt || null,
+      })),
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to load police stations admin list.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to load police stations admin list.' });
+  }
+});
+
+app.patch('/admin/line-scam-bot/police-stations/:stationId', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const stationId = normalizeOptionalString(req.params?.stationId || '', 180);
+    if (!stationId) {
+      return res.status(400).json({ message: 'stationId is required.' });
+    }
+    const ref = lineScamPoliceStationRef.doc(stationId);
+    const doc = await ref.get();
+    if (!doc.exists) {
+      return res.status(404).json({ message: 'Police station not found.' });
+    }
+    const existing = toLineScamPoliceStationResponse(doc.id, doc.data() || {});
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+
+    const nextNameInput = Object.prototype.hasOwnProperty.call(body, 'name') ? body.name : existing.name;
+    const nextAddressInput = Object.prototype.hasOwnProperty.call(body, 'address') ? body.address : existing.address;
+    const nextPhoneInput = Object.prototype.hasOwnProperty.call(body, 'phone') ? body.phone : existing.phone;
+    const nextProvinceInput = Object.prototype.hasOwnProperty.call(body, 'province') ? body.province : existing.province;
+    const nextDistrictInput = Object.prototype.hasOwnProperty.call(body, 'district') ? body.district : existing.district;
+    const nextLatitudeInput = Object.prototype.hasOwnProperty.call(body, 'latitude') ? body.latitude : existing.latitude;
+    const nextLongitudeInput = Object.prototype.hasOwnProperty.call(body, 'longitude') ? body.longitude : existing.longitude;
+    const nextMapUrlRaw = Object.prototype.hasOwnProperty.call(body, 'mapUrl') ? String(body.mapUrl || '').trim() : existing.mapUrl;
+    const nextMapUrlNormalized = normalizeOptionalHttpUrl(nextMapUrlRaw, 1200);
+    if (nextMapUrlNormalized === null && nextMapUrlRaw) {
+      return res.status(400).json({ message: 'mapUrl must be empty or start with http:// or https://' });
+    }
+
+    const normalized = normalizeLineScamPoliceStationRecord({
+      ...existing,
+      name: nextNameInput,
+      address: nextAddressInput,
+      phone: nextPhoneInput,
+      province: nextProvinceInput,
+      district: nextDistrictInput,
+      latitude: nextLatitudeInput,
+      longitude: nextLongitudeInput,
+      mapUrl: nextMapUrlNormalized || '',
+      source: existing.source || 'cloud',
+      createdAt: existing.createdAt || null,
+    });
+    if (!normalized.name) {
+      return res.status(400).json({ message: 'name is required.' });
+    }
+    const nowIso = new Date().toISOString();
+    await ref.set(
+      {
+        name: normalized.name,
+        address: normalized.address || '',
+        phone: normalized.phone || '',
+        province: normalized.province || '',
+        district: normalized.district || '',
+        latitude: normalized.latitude,
+        longitude: normalized.longitude,
+        mapUrl: normalized.mapUrl || '',
+        source: normalized.source || 'cloud',
+        searchable: normalized.searchable || normalizeSearchToken([normalized.name, normalized.address, normalized.phone].join(' ')),
+        createdAt: normalizeOptionalString(existing.createdAt || nowIso, 80) || nowIso,
+        updatedAt: nowIso,
+        updatedById: sanitizeUserId(req.rootAdmin?.id),
+        updatedByEmail: sanitizeEmail(req.rootAdmin?.email),
+      },
+      { merge: true }
+    );
+    invalidateLineScamPoliceStationsDbCache();
+    const updatedDoc = await ref.get();
+    return res.json({
+      message: 'Police station updated.',
+      station: toLineScamPoliceStationResponse(updatedDoc.id, updatedDoc.data() || {}),
+    });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (status >= 400 && status < 600) {
+      return res.status(status).json({ message: error.message || 'Failed to update police station.' });
+    }
+    return res.status(500).json({ message: error.message || 'Failed to update police station.' });
   }
 });
 
@@ -8190,18 +8446,21 @@ app.get('/line/scam/liff/api/police-stations', async (req, res) => {
     const query = normalizeOptionalString(req.query?.query || req.query?.q || '', 140);
     const latitude = normalizeGeoCoordinate(req.query?.lat, -90, 90);
     const longitude = normalizeGeoCoordinate(req.query?.lng, -180, 180);
-    const limitRaw = Number.parseInt(String(req.query?.limit || '80'), 10);
-    const limit = Number.isInteger(limitRaw) ? Math.min(120, Math.max(1, limitRaw)) : 80;
+    const pageRaw = Number.parseInt(String(req.query?.page || '1'), 10);
+    const page = Number.isInteger(pageRaw) ? Math.max(1, pageRaw) : 1;
+    const pageSizeRaw = Number.parseInt(String(req.query?.pageSize || req.query?.limit || '20'), 10);
+    const pageSize = Number.isInteger(pageSizeRaw) ? Math.min(100, Math.max(1, pageSizeRaw)) : 20;
     const forceRefresh = /^(?:1|true|yes)$/i.test(String(req.query?.refresh || '').trim());
 
-    const sourceResult = await loadLineScamPoliceStations({ forceRefresh });
+    const sourceResult = await loadLineScamPoliceStationsFromDb({ forceRefresh });
     const filteredStations = searchLineScamPoliceStations({
       stationsInput: sourceResult.stations,
       query,
       latitude,
       longitude,
-      limit,
+      limit: 0,
     });
+    const paginated = paginateLineScamPoliceStations(filteredStations, page, pageSize);
     const nearestDistanceKm =
       latitude !== null &&
       longitude !== null &&
@@ -8218,11 +8477,14 @@ app.get('/line/scam/liff/api/police-stations', async (req, res) => {
       usedGps: latitude !== null && longitude !== null,
       latitude,
       longitude,
-      total: filteredStations.length,
+      total: paginated.total,
+      page: paginated.page,
+      pageSize: paginated.pageSize,
+      totalPages: paginated.totalPages,
       source: sourceResult.source,
       fetchedAt,
       nearestDistanceKm,
-      stations: filteredStations,
+      stations: paginated.stations,
     });
   } catch (error) {
     const status = Number(error?.status || 0);

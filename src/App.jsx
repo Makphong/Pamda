@@ -6090,6 +6090,8 @@ function ProfileSettingsView({
   onCreateScamReport,
   onLoadLineScamBotConfig,
   onSaveLineScamBotConfig,
+  onLoadLineScamPoliceStations,
+  onUpdateLineScamPoliceStation,
   onLoadLineEscrowBotConfig,
   onSaveLineEscrowBotConfig,
 }) {
@@ -7671,6 +7673,8 @@ function ProfileSettingsView({
                 onCreateReport={onCreateScamReport}
                 onLoadLineScamBotConfig={onLoadLineScamBotConfig}
                 onSaveLineScamBotConfig={onSaveLineScamBotConfig}
+                onLoadLineScamPoliceStations={onLoadLineScamPoliceStations}
+                onUpdateLineScamPoliceStation={onUpdateLineScamPoliceStation}
                 onLoadLineEscrowBotConfig={onLoadLineEscrowBotConfig}
                 onSaveLineEscrowBotConfig={onSaveLineEscrowBotConfig}
               />
@@ -12987,6 +12991,67 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return { ok: false, message: error.message || 'Failed to save LINE scam bot config.' };
     }
   }, [isRootAdmin]);
+  const handleLoadLineScamPoliceStations = useCallback(async (optionsInput) => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'LINE Scam Bot Admin requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    const options =
+      optionsInput && typeof optionsInput === 'object' && !Array.isArray(optionsInput) ? optionsInput : {};
+    const query = String(options.query || '').trim();
+    const pageRaw = Number.parseInt(String(options.page || '1'), 10);
+    const page = Number.isInteger(pageRaw) ? Math.max(1, pageRaw) : 1;
+    const pageSizeRaw = Number.parseInt(String(options.pageSize || '5'), 10);
+    const pageSize = Number.isInteger(pageSizeRaw) ? Math.max(1, Math.min(50, pageSizeRaw)) : 5;
+    const refresh = options.refresh === true;
+    try {
+      const params = new URLSearchParams();
+      if (query) params.set('query', query);
+      params.set('page', String(page));
+      params.set('pageSize', String(pageSize));
+      if (refresh) params.set('refresh', '1');
+      const result = await requestCloudDataApi(`/admin/line-scam-bot/police-stations?${params.toString()}`);
+      return {
+        ok: true,
+        stations: Array.isArray(result?.stations) ? result.stations : [],
+        total: Number(result?.total || 0) || 0,
+        page: Number(result?.page || page) || page,
+        pageSize: Number(result?.pageSize || pageSize) || pageSize,
+        totalPages: Number(result?.totalPages || 1) || 1,
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load police stations.' };
+    }
+  }, [isRootAdmin]);
+  const handleUpdateLineScamPoliceStation = useCallback(async (stationIdInput, payloadInput) => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'LINE Scam Bot Admin requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    const stationId = String(stationIdInput || '').trim();
+    if (!stationId) {
+      return { ok: false, message: 'stationId is required.' };
+    }
+    const payload =
+      payloadInput && typeof payloadInput === 'object' && !Array.isArray(payloadInput) ? payloadInput : {};
+    try {
+      const result = await requestCloudDataApi(`/admin/line-scam-bot/police-stations/${encodeURIComponent(stationId)}`, {
+        method: 'PATCH',
+        body: payload,
+      });
+      return {
+        ok: true,
+        message: result?.message || 'Police station updated.',
+        station: result?.station && typeof result.station === 'object' ? result.station : null,
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to update police station.' };
+    }
+  }, [isRootAdmin]);
   const handleLoadLineEscrowBotConfig = useCallback(async () => {
     if (!AUTH_API_BASE_URL) {
       return { ok: false, message: 'LINE Escrow Bot Admin requires Cloud Auth API.' };
@@ -13092,6 +13157,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         onCreateScamReport={handleCreateScamReport}
         onLoadLineScamBotConfig={handleLoadLineScamBotConfig}
         onSaveLineScamBotConfig={handleSaveLineScamBotConfig}
+        onLoadLineScamPoliceStations={handleLoadLineScamPoliceStations}
+        onUpdateLineScamPoliceStation={handleUpdateLineScamPoliceStation}
         onLoadLineEscrowBotConfig={handleLoadLineEscrowBotConfig}
         onSaveLineEscrowBotConfig={handleSaveLineEscrowBotConfig}
       />

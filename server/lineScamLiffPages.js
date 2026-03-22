@@ -896,6 +896,12 @@ export const renderLineScamPoliceStationsPage = () =>
         <div id="police-status" class="status hidden"></div>
         <div id="police-summary" class="tiny" style="margin-top:10px;"></div>
         <div id="police-results" class="row" style="margin-top:10px;"></div>
+        <div id="police-pagination" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;">
+          <button id="police-page-first" class="btn upload" type="button">หน้าแรกสุด</button>
+          <button id="police-page-prev" class="btn upload" type="button">หน้าย้อนกลับ</button>
+          <button id="police-page-next" class="btn upload" type="button">หน้าถัดไป</button>
+          <span id="police-page-info" class="tiny" style="margin-top:0;">หน้า 1 / 1</span>
+        </div>
       </section>
     `,
     script: `
@@ -906,9 +912,15 @@ export const renderLineScamPoliceStationsPage = () =>
       const statusBox = document.getElementById('police-status');
       const summaryBox = document.getElementById('police-summary');
       const resultsBox = document.getElementById('police-results');
+      const pagerFirstBtn = document.getElementById('police-page-first');
+      const pagerPrevBtn = document.getElementById('police-page-prev');
+      const pagerNextBtn = document.getElementById('police-page-next');
+      const pagerInfo = document.getElementById('police-page-info');
 
       let selectedLat = null;
       let selectedLng = null;
+      let currentPage = 1;
+      let totalPages = 1;
 
       function escapeHtml(value) {
         return String(value || '').replace(/[&<>"']/g, function (char) {
@@ -935,6 +947,9 @@ export const renderLineScamPoliceStationsPage = () =>
       function setBusy(isBusy, source) {
         submitBtn.disabled = Boolean(isBusy);
         nearestBtn.disabled = Boolean(isBusy);
+        pagerFirstBtn.disabled = Boolean(isBusy);
+        pagerPrevBtn.disabled = Boolean(isBusy);
+        pagerNextBtn.disabled = Boolean(isBusy);
         if (!isBusy) {
           submitBtn.textContent = 'ค้นหา';
           nearestBtn.textContent = 'ใช้ GPS หาใกล้สุด';
@@ -947,6 +962,18 @@ export const renderLineScamPoliceStationsPage = () =>
         }
         submitBtn.textContent = 'กำลังค้นหา...';
         nearestBtn.textContent = 'ใช้ GPS หาใกล้สุด';
+      }
+
+      function updatePager() {
+        if (!pagerInfo) return;
+        const safeTotalPages = Math.max(1, Number(totalPages || 1));
+        const safeCurrentPage = Math.min(safeTotalPages, Math.max(1, Number(currentPage || 1)));
+        currentPage = safeCurrentPage;
+        totalPages = safeTotalPages;
+        pagerInfo.textContent = 'หน้า ' + safeCurrentPage + ' / ' + safeTotalPages;
+        pagerFirstBtn.disabled = safeCurrentPage <= 1;
+        pagerPrevBtn.disabled = safeCurrentPage <= 1;
+        pagerNextBtn.disabled = safeCurrentPage >= safeTotalPages;
       }
 
       function toTelUri(phoneInput) {
@@ -963,6 +990,11 @@ export const renderLineScamPoliceStationsPage = () =>
         const total = Number(payload && payload.total || 0);
         const source = String(payload && payload.source || '');
         const nearestDistanceKm = Number(payload && payload.nearestDistanceKm || 0);
+        const payloadPage = Number(payload && payload.page || 1);
+        const payloadTotalPages = Number(payload && payload.totalPages || 1);
+        currentPage = Number.isFinite(payloadPage) ? payloadPage : 1;
+        totalPages = Number.isFinite(payloadTotalPages) ? payloadTotalPages : 1;
+        updatePager();
 
         let summaryText = 'พบทั้งหมด ' + Number(total || stations.length).toLocaleString() + ' สถานี';
         if (usedGps && Number.isFinite(nearestDistanceKm) && nearestDistanceKm > 0) {
@@ -1029,13 +1061,16 @@ export const renderLineScamPoliceStationsPage = () =>
         const lat = Number.isFinite(Number(opts.lat)) ? Number(opts.lat) : null;
         const lng = Number.isFinite(Number(opts.lng)) ? Number(opts.lng) : null;
         const source = String(opts.source || '');
+        const pageRaw = Number.parseInt(String(opts.page || currentPage || 1), 10);
+        const page = Number.isInteger(pageRaw) ? Math.max(1, pageRaw) : 1;
         const params = new URLSearchParams();
         if (query) params.set('query', query);
         if (lat !== null && lng !== null) {
           params.set('lat', String(lat));
           params.set('lng', String(lng));
         }
-        params.set('limit', '80');
+        params.set('page', String(page));
+        params.set('pageSize', '20');
 
         hideStatus();
         setBusy(true, source === 'gps' ? 'gps' : 'search');
@@ -1061,10 +1096,13 @@ export const renderLineScamPoliceStationsPage = () =>
       form.addEventListener('submit', function (event) {
         event.preventDefault();
         const query = String(queryInput.value || '').trim();
+        currentPage = 1;
+        updatePager();
         loadStations({
           query: query,
           lat: selectedLat,
           lng: selectedLng,
+          page: 1,
           source: 'search'
         });
       });
@@ -1089,6 +1127,7 @@ export const renderLineScamPoliceStationsPage = () =>
               query: String(queryInput.value || '').trim(),
               lat: selectedLat,
               lng: selectedLng,
+              page: 1,
               source: 'gps'
             });
           },
@@ -1113,6 +1152,40 @@ export const renderLineScamPoliceStationsPage = () =>
         );
       });
 
-      loadStations({ query: '' });
+      pagerFirstBtn.addEventListener('click', function () {
+        if (currentPage <= 1) return;
+        loadStations({
+          query: String(queryInput.value || '').trim(),
+          lat: selectedLat,
+          lng: selectedLng,
+          page: 1,
+          source: 'search'
+        });
+      });
+
+      pagerPrevBtn.addEventListener('click', function () {
+        if (currentPage <= 1) return;
+        loadStations({
+          query: String(queryInput.value || '').trim(),
+          lat: selectedLat,
+          lng: selectedLng,
+          page: currentPage - 1,
+          source: 'search'
+        });
+      });
+
+      pagerNextBtn.addEventListener('click', function () {
+        if (currentPage >= totalPages) return;
+        loadStations({
+          query: String(queryInput.value || '').trim(),
+          lat: selectedLat,
+          lng: selectedLng,
+          page: currentPage + 1,
+          source: 'search'
+        });
+      });
+
+      updatePager();
+      loadStations({ query: '', page: 1 });
     `,
   });

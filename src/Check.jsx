@@ -94,6 +94,7 @@ const normalizeLineScamBotConfig = (configInput) => {
     liffScammerCheckUrl: String(liffUrlsRaw.scammerCheck || config.liffScammerCheckUrl || '').trim(),
     liffFakeNewsUrl: String(liffUrlsRaw.fakeNews || config.liffFakeNewsUrl || '').trim(),
     liffRiskAssessUrl: String(liffUrlsRaw.riskAssess || config.liffRiskAssessUrl || '').trim(),
+    liffPoliceStationsUrl: String(liffUrlsRaw.policeStations || config.liffPoliceStationsUrl || '').trim(),
     commandMap: {
       helpWhenScammed: String(commandMapRaw.helpWhenScammed || 'คำแนะนำเมื่อถูกโกง').trim(),
       checkScammer: String(commandMapRaw.checkScammer || 'ตรวจสอบมิจฉาชีพ').trim(),
@@ -115,6 +116,8 @@ export default function CheckPage({
   onCreateReport,
   onLoadLineScamBotConfig,
   onSaveLineScamBotConfig,
+  onLoadLineScamPoliceStations,
+  onUpdateLineScamPoliceStation,
   onLoadLineEscrowBotConfig,
   onSaveLineEscrowBotConfig,
   maxImageBytes = DEFAULT_MAX_IMAGE_BYTES,
@@ -131,6 +134,21 @@ export default function CheckPage({
   const [isLineConfigSaving, setIsLineConfigSaving] = useState(false);
   const [lineConfigResult, setLineConfigResult] = useState(null);
   const [lineConfig, setLineConfig] = useState(() => normalizeLineScamBotConfig({}));
+  const [policeStationQuery, setPoliceStationQuery] = useState('');
+  const [policeStations, setPoliceStations] = useState([]);
+  const [policeStationsPage, setPoliceStationsPage] = useState(1);
+  const [policeStationsTotalPages, setPoliceStationsTotalPages] = useState(1);
+  const [policeStationsTotal, setPoliceStationsTotal] = useState(0);
+  const [isPoliceStationsLoading, setIsPoliceStationsLoading] = useState(false);
+  const [policeStationsResult, setPoliceStationsResult] = useState(null);
+  const [editingPoliceStationId, setEditingPoliceStationId] = useState('');
+  const [policeStationEditForm, setPoliceStationEditForm] = useState({
+    name: '',
+    address: '',
+    phone: '',
+    mapUrl: '',
+  });
+  const [isPoliceStationSaving, setIsPoliceStationSaving] = useState(false);
   const [isLineEscrowModalOpen, setIsLineEscrowModalOpen] = useState(false);
   const [isEscrowConfigLoading, setIsEscrowConfigLoading] = useState(false);
   const [isEscrowConfigSaving, setIsEscrowConfigSaving] = useState(false);
@@ -182,6 +200,9 @@ export default function CheckPage({
   const canUseCloudApi = typeof onLoadReports === 'function' && typeof onCreateReport === 'function';
   const canManageLineScamBot =
     typeof onLoadLineScamBotConfig === 'function' && typeof onSaveLineScamBotConfig === 'function';
+  const canManageLineScamPoliceStations =
+    typeof onLoadLineScamPoliceStations === 'function' &&
+    typeof onUpdateLineScamPoliceStation === 'function';
   const canManageLineEscrowBot =
     typeof onLoadLineEscrowBotConfig === 'function' && typeof onSaveLineEscrowBotConfig === 'function';
 
@@ -270,9 +291,69 @@ export default function CheckPage({
     }
   };
 
+  const loadLineScamPoliceStationsPage = async ({ page = 1, query = policeStationQuery } = {}) => {
+    if (typeof onLoadLineScamPoliceStations !== 'function') return;
+    const safePage = Math.max(1, Number(page || 1) || 1);
+    setIsPoliceStationsLoading(true);
+    setPoliceStationsResult(null);
+    try {
+      const response = await Promise.resolve(
+        onLoadLineScamPoliceStations({
+          query: String(query || '').trim(),
+          page: safePage,
+          pageSize: 5,
+          refresh: true,
+        })
+      );
+      if (!response?.ok) {
+        setPoliceStations([]);
+        setPoliceStationsResult({
+          ok: false,
+          message: response?.message || 'Failed to load police stations.',
+        });
+        return;
+      }
+      const items = Array.isArray(response.stations)
+        ? response.stations.map((stationInput) => {
+            const station =
+              stationInput && typeof stationInput === 'object' && !Array.isArray(stationInput)
+                ? stationInput
+                : {};
+            return {
+              id: String(station.id || '').trim(),
+              name: String(station.name || '').trim(),
+              address: String(station.address || '').trim(),
+              phone: String(station.phone || '').trim(),
+              mapUrl: String(station.mapUrl || '').trim(),
+            };
+          })
+        : [];
+      setPoliceStations(items);
+      setPoliceStationsPage(Math.max(1, Number(response.page || safePage) || safePage));
+      setPoliceStationsTotalPages(Math.max(1, Number(response.totalPages || 1) || 1));
+      setPoliceStationsTotal(Math.max(0, Number(response.total || 0) || 0));
+      if (!items.some((station) => station.id === editingPoliceStationId)) {
+        setEditingPoliceStationId('');
+      }
+    } finally {
+      setIsPoliceStationsLoading(false);
+    }
+  };
+
   const openLineScamBotModal = () => {
     setIsLineBotModalOpen(true);
     void loadLineScamBotConfig();
+    if (typeof onLoadLineScamPoliceStations === 'function') {
+      setEditingPoliceStationId('');
+      setPoliceStationEditForm({
+        name: '',
+        address: '',
+        phone: '',
+        mapUrl: '',
+      });
+      setPoliceStationsPage(1);
+      void loadLineScamPoliceStationsPage({ page: 1, query: policeStationQuery });
+    }
   };
 
   const normalizeLineEscrowBotConfig = (configInput) => {
@@ -314,6 +395,67 @@ export default function CheckPage({
   const handleLineConfigInputChange = (event) => {
     const { name, value } = event.target;
     setLineConfig((prev) => ({ ...prev, [name]: String(value || '') }));
+  };
+
+  const handlePoliceStationSearchSubmit = (event) => {
+    event.preventDefault();
+    setPoliceStationsPage(1);
+    void loadLineScamPoliceStationsPage({ page: 1, query: policeStationQuery });
+  };
+
+  const handlePoliceStationSelectEdit = (stationInput) => {
+    const station =
+      stationInput && typeof stationInput === 'object' && !Array.isArray(stationInput)
+        ? stationInput
+        : {};
+    const stationId = String(station.id || '').trim();
+    if (!stationId) return;
+    setEditingPoliceStationId(stationId);
+    setPoliceStationEditForm({
+      name: String(station.name || '').trim(),
+      address: String(station.address || '').trim(),
+      phone: String(station.phone || '').trim(),
+      mapUrl: String(station.mapUrl || '').trim(),
+    });
+    setPoliceStationsResult(null);
+  };
+
+  const handlePoliceStationEditInputChange = (event) => {
+    const { name, value } = event.target;
+    setPoliceStationEditForm((prev) => ({ ...prev, [name]: String(value || '') }));
+  };
+
+  const handleSavePoliceStation = async (event) => {
+    event.preventDefault();
+    const stationId = String(editingPoliceStationId || '').trim();
+    if (!stationId || typeof onUpdateLineScamPoliceStation !== 'function') return;
+    setIsPoliceStationSaving(true);
+    setPoliceStationsResult(null);
+    try {
+      const response = await Promise.resolve(
+        onUpdateLineScamPoliceStation(stationId, {
+          name: String(policeStationEditForm.name || '').trim(),
+          address: String(policeStationEditForm.address || '').trim(),
+          phone: String(policeStationEditForm.phone || '').trim(),
+          mapUrl: String(policeStationEditForm.mapUrl || '').trim(),
+        })
+      );
+      if (!response?.ok) {
+        setPoliceStationsResult({
+          ok: false,
+          message: response?.message || 'Failed to update police station.',
+        });
+        return;
+      }
+      setPoliceStationsResult({
+        ok: true,
+        message: response?.message || 'Updated police station.',
+      });
+      setEditingPoliceStationId('');
+      void loadLineScamPoliceStationsPage({ page: policeStationsPage, query: policeStationQuery });
+    } finally {
+      setIsPoliceStationSaving(false);
+    }
   };
 
   const loadLineEscrowBotConfig = async () => {
@@ -394,6 +536,7 @@ export default function CheckPage({
           liffScammerCheckUrl: String(lineConfig.liffScammerCheckUrl || '').trim(),
           liffFakeNewsUrl: String(lineConfig.liffFakeNewsUrl || '').trim(),
           liffRiskAssessUrl: String(lineConfig.liffRiskAssessUrl || '').trim(),
+          liffPoliceStationsUrl: String(lineConfig.liffPoliceStationsUrl || '').trim(),
           richMenuId: String(lineConfig.richMenuId || '').trim(),
         })
       );
@@ -1003,10 +1146,10 @@ export default function CheckPage({
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-gray-200 p-4 space-y-3">
-                    <p className="text-sm font-semibold text-gray-800">LIFF URL Settings</p>
-                    <label className="block space-y-1">
-                      <span className="text-xs text-gray-600">LIFF URL: ตรวจสอบมิจฉาชีพ</span>
+	                  <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+	                    <p className="text-sm font-semibold text-gray-800">LIFF URL Settings</p>
+	                    <label className="block space-y-1">
+	                      <span className="text-xs text-gray-600">LIFF URL: ตรวจสอบมิจฉาชีพ</span>
                       <input
                         type="url"
                         name="liffScammerCheckUrl"
@@ -1027,21 +1170,32 @@ export default function CheckPage({
                         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
                       />
                     </label>
-                    <label className="block space-y-1">
-                      <span className="text-xs text-gray-600">LIFF URL: ประเมินความเสี่ยง</span>
-                      <input
-                        type="url"
-                        name="liffRiskAssessUrl"
-                        value={lineConfig.liffRiskAssessUrl}
-                        onChange={handleLineConfigInputChange}
-                        placeholder="https://..."
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
-                      />
-                    </label>
-                    <label className="block space-y-1">
-                      <span className="text-xs text-gray-600">Rich Menu ID (optional)</span>
-                      <input
-                        type="text"
+	                    <label className="block space-y-1">
+	                      <span className="text-xs text-gray-600">LIFF URL: ประเมินความเสี่ยง</span>
+	                      <input
+	                        type="url"
+	                        name="liffRiskAssessUrl"
+	                        value={lineConfig.liffRiskAssessUrl}
+	                        onChange={handleLineConfigInputChange}
+	                        placeholder="https://..."
+	                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+	                      />
+	                    </label>
+	                    <label className="block space-y-1">
+	                      <span className="text-xs text-gray-600">LIFF URL: แจ้งความสถานีตำรวจ</span>
+	                      <input
+	                        type="url"
+	                        name="liffPoliceStationsUrl"
+	                        value={lineConfig.liffPoliceStationsUrl}
+	                        onChange={handleLineConfigInputChange}
+	                        placeholder="https://..."
+	                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+	                      />
+	                    </label>
+	                    <label className="block space-y-1">
+	                      <span className="text-xs text-gray-600">Rich Menu ID (optional)</span>
+	                      <input
+	                        type="text"
                         name="richMenuId"
                         value={lineConfig.richMenuId}
                         onChange={handleLineConfigInputChange}
@@ -1051,17 +1205,18 @@ export default function CheckPage({
                     </label>
                   </div>
 
-                  <div className="rounded-xl border border-gray-200 p-4">
-                    <p className="text-sm font-semibold text-gray-800">LIFF Preview Links</p>
-                    <div className="mt-2 flex flex-col gap-2 text-sm">
-                      {[
-                        { id: 'scammer', label: 'เปิดหน้า ตรวจสอบมิจฉาชีพ', href: lineConfig.liffScammerCheckUrl },
-                        { id: 'fakeNews', label: 'เปิดหน้า ตรวจสอบข่าวปลอม', href: lineConfig.liffFakeNewsUrl },
-                        { id: 'risk', label: 'เปิดหน้า ประเมินความเสี่ยง', href: lineConfig.liffRiskAssessUrl },
-                      ].map((entry) => (
-                        <a
-                          key={entry.id}
-                          href={entry.href || '#'}
+	                  <div className="rounded-xl border border-gray-200 p-4">
+	                    <p className="text-sm font-semibold text-gray-800">LIFF Preview Links</p>
+	                    <div className="mt-2 flex flex-col gap-2 text-sm">
+	                      {[
+	                        { id: 'scammer', label: 'เปิดหน้า ตรวจสอบมิจฉาชีพ', href: lineConfig.liffScammerCheckUrl },
+	                        { id: 'fakeNews', label: 'เปิดหน้า ตรวจสอบข่าวปลอม', href: lineConfig.liffFakeNewsUrl },
+	                        { id: 'risk', label: 'เปิดหน้า ประเมินความเสี่ยง', href: lineConfig.liffRiskAssessUrl },
+	                        { id: 'police', label: 'เปิดหน้า แจ้งความสถานี', href: lineConfig.liffPoliceStationsUrl },
+	                      ].map((entry) => (
+	                        <a
+	                          key={entry.id}
+	                          href={entry.href || '#'}
                           target="_blank"
                           rel="noreferrer"
                           className={`inline-flex items-center gap-1 ${
@@ -1071,12 +1226,174 @@ export default function CheckPage({
                           <ExternalLink size={14} />
                           {entry.label}
                         </a>
-                      ))}
-                    </div>
-                  </div>
+	                      ))}
+	                    </div>
+	                  </div>
 
-                  {lineConfig.updatedAt && (
-                    <p className="text-[11px] text-gray-500">
+	                  <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+	                    <p className="text-sm font-semibold text-gray-800">Police Station Data</p>
+	                    {!canManageLineScamPoliceStations && (
+	                      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+	                        Police station admin requires Cloud Auth API and root-admin access.
+	                      </p>
+	                    )}
+	                    {canManageLineScamPoliceStations && (
+	                      <>
+	                        <form onSubmit={handlePoliceStationSearchSubmit} className="flex flex-col gap-2 sm:flex-row">
+	                          <input
+	                            type="text"
+	                            value={policeStationQuery}
+	                            onChange={(event) => setPoliceStationQuery(event.target.value)}
+	                            placeholder="Search station name..."
+	                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+	                          />
+	                          <button
+	                            type="submit"
+	                            disabled={isPoliceStationsLoading}
+	                            className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+	                          >
+	                            {isPoliceStationsLoading ? 'Loading...' : 'Search'}
+	                          </button>
+	                        </form>
+	                        <div className="rounded-lg border border-gray-200">
+	                          {policeStations.length === 0 ? (
+	                            <p className="px-3 py-2 text-xs text-gray-500">No police station data.</p>
+	                          ) : (
+	                            policeStations.map((station) => (
+	                              <div
+	                                key={station.id}
+	                                className="flex items-center justify-between gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0"
+	                              >
+	                                <p className="truncate text-sm text-gray-800">{station.name || '-'}</p>
+	                                <button
+	                                  type="button"
+	                                  onClick={() => handlePoliceStationSelectEdit(station)}
+	                                  className="text-xs font-semibold text-blue-700 hover:underline"
+	                                >
+	                                  Edit
+	                                </button>
+	                              </div>
+	                            ))
+	                          )}
+	                        </div>
+	                        <div className="flex flex-wrap items-center gap-2 text-xs">
+	                          <button
+	                            type="button"
+	                            onClick={() => void loadLineScamPoliceStationsPage({ page: 1, query: policeStationQuery })}
+	                            disabled={isPoliceStationsLoading || policeStationsPage <= 1}
+	                            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+	                          >
+	                            หน้าแรกสุด
+	                          </button>
+	                          <button
+	                            type="button"
+	                            onClick={() =>
+	                              void loadLineScamPoliceStationsPage({
+	                                page: Math.max(1, policeStationsPage - 1),
+	                                query: policeStationQuery,
+	                              })
+	                            }
+	                            disabled={isPoliceStationsLoading || policeStationsPage <= 1}
+	                            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+	                          >
+	                            หน้าย้อนกลับ
+	                          </button>
+	                          <button
+	                            type="button"
+	                            onClick={() =>
+	                              void loadLineScamPoliceStationsPage({
+	                                page: Math.min(policeStationsTotalPages, policeStationsPage + 1),
+	                                query: policeStationQuery,
+	                              })
+	                            }
+	                            disabled={isPoliceStationsLoading || policeStationsPage >= policeStationsTotalPages}
+	                            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+	                          >
+	                            หน้าถัดไป
+	                          </button>
+	                          <span className="text-gray-500">
+	                            Page {policeStationsPage}/{policeStationsTotalPages} | Total {policeStationsTotal}
+	                          </span>
+	                        </div>
+	                        {editingPoliceStationId && (
+	                          <form onSubmit={handleSavePoliceStation} className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3">
+	                            <p className="text-xs font-semibold text-blue-800">Edit police station</p>
+	                            <label className="block space-y-1">
+	                              <span className="text-xs text-blue-700">ชื่อสถานี</span>
+	                              <input
+	                                type="text"
+	                                name="name"
+	                                value={policeStationEditForm.name}
+	                                onChange={handlePoliceStationEditInputChange}
+	                                className="w-full rounded-lg border border-blue-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+	                                required
+	                              />
+	                            </label>
+	                            <label className="block space-y-1">
+	                              <span className="text-xs text-blue-700">ที่อยู่</span>
+	                              <input
+	                                type="text"
+	                                name="address"
+	                                value={policeStationEditForm.address}
+	                                onChange={handlePoliceStationEditInputChange}
+	                                className="w-full rounded-lg border border-blue-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+	                              />
+	                            </label>
+	                            <label className="block space-y-1">
+	                              <span className="text-xs text-blue-700">เบอร์โทร</span>
+	                              <input
+	                                type="text"
+	                                name="phone"
+	                                value={policeStationEditForm.phone}
+	                                onChange={handlePoliceStationEditInputChange}
+	                                className="w-full rounded-lg border border-blue-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+	                              />
+	                            </label>
+	                            <label className="block space-y-1">
+	                              <span className="text-xs text-blue-700">ลิงก์ Google Map</span>
+	                              <input
+	                                type="url"
+	                                name="mapUrl"
+	                                value={policeStationEditForm.mapUrl}
+	                                onChange={handlePoliceStationEditInputChange}
+	                                className="w-full rounded-lg border border-blue-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+	                              />
+	                            </label>
+	                            <div className="flex flex-wrap items-center gap-2">
+	                              <button
+	                                type="submit"
+	                                disabled={isPoliceStationSaving}
+	                                className="inline-flex items-center justify-center rounded-lg border border-transparent bg-blue-700 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
+	                              >
+	                                {isPoliceStationSaving ? 'Saving...' : 'Save station'}
+	                              </button>
+	                              <button
+	                                type="button"
+	                                onClick={() => setEditingPoliceStationId('')}
+	                                className="inline-flex items-center justify-center rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+	                              >
+	                                Cancel
+	                              </button>
+	                            </div>
+	                          </form>
+	                        )}
+	                        {policeStationsResult?.message && (
+	                          <p
+	                            className={`rounded-lg border px-3 py-2 text-xs ${
+	                              policeStationsResult.ok
+	                                ? 'border-green-200 bg-green-50 text-green-700'
+	                                : 'border-red-200 bg-red-50 text-red-600'
+	                            }`}
+	                          >
+	                            {policeStationsResult.message}
+	                          </p>
+	                        )}
+	                      </>
+	                    )}
+	                  </div>
+
+	                  {lineConfig.updatedAt && (
+	                    <p className="text-[11px] text-gray-500">
                       Last updated: {new Date(lineConfig.updatedAt).toLocaleString()}
                     </p>
                   )}
