@@ -418,11 +418,13 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
             <button id="deal-check-btn" class="btn ghost hidden" type="button" style="flex:1 1 0;">เช็คสถานะชำระเงิน</button>
             <button id="deal-cancel-btn" class="btn danger hidden" type="button" style="flex:1 1 0;">ยกเลิกดีล</button>
           </div>
-          <button id="deal-manual-paid-btn" class="btn warn hidden" type="button" style="width:100%;">ติ๊กว่าชำระเงินแล้ว (โหมดทดสอบ)</button>
         </div>
 
         <div id="deal-status" class="status hidden"></div>
         <div id="deal-result" class="result hidden"></div>
+        <div id="deal-manual-paid-wrap" class="hidden" style="margin-top:10px;">
+          <button id="deal-manual-paid-btn" class="btn warn" type="button" style="width:100%;">ติ๊กว่าชำระเงินแล้ว (โหมดทดสอบ)</button>
+        </div>
       </section>
     `,
     script: `
@@ -434,6 +436,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
       var createBtn = document.getElementById('deal-create-btn');
       var groupConfirmBtn = document.getElementById('deal-group-confirm-btn');
       var checkBtn = document.getElementById('deal-check-btn');
+      var manualPaidWrap = document.getElementById('deal-manual-paid-wrap');
       var manualPaidBtn = document.getElementById('deal-manual-paid-btn');
       var cancelBtn = document.getElementById('deal-cancel-btn');
       var statusBox = document.getElementById('deal-status');
@@ -597,8 +600,8 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         var awaitingPayment = isDealAwaitingPayment(deal);
         paymentActionsWrap.classList.toggle('hidden', !awaitingPayment);
         checkBtn.classList.toggle('hidden', !awaitingPayment);
-        manualPaidBtn.classList.toggle('hidden', !awaitingPayment);
         cancelBtn.classList.toggle('hidden', !awaitingPayment);
+        manualPaidWrap.classList.toggle('hidden', !awaitingPayment);
       }
 
       function renderDeal(deal) {
@@ -645,7 +648,6 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
             : '';
           processHtml =
             '<div class="section-block" style="margin-top:10px;">' +
-              '<p class="section-title" style="margin:0 0 6px;">ตอนนี้มีดีลค้างอยู่</p>' +
               '<p style="margin:0;font-size:0.82rem;color:#334155;">ขั้นตอนปัจจุบัน: ' + escapeHtml(processInfo.label || '-') + '</p>' +
               (processActionHtml ? '<div style="margin-top:10px;">' + processActionHtml + '</div>' : '') +
             '</div>';
@@ -792,15 +794,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           var active = await loadActivePaymentDeal(groupIdValue);
           if (active && active.deal) {
             renderDeal(active.deal);
-            showStatus(
-              statusBox,
-              active.processMessage ||
-                active.message ||
-                (active.processStage && active.processLabel
-                  ? 'ตอนนี้มีดีลค้างอยู่ และอยู่ขั้นตอน "' + active.processLabel + '"'
-                  : 'พบดีลค้างของกลุ่มนี้'),
-              'success'
-            );
+            hideStatus(statusBox);
             return;
           }
 
@@ -978,7 +972,11 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
               renderDeal(payload.deal);
             }
             var successMessage = String((payload && payload.message) || '').trim();
-            if (successMessage && successMessage !== 'Escrow deal created.') {
+            if (
+              successMessage &&
+              successMessage !== 'Escrow deal created.' &&
+              successMessage.indexOf('ตอนนี้มีดีลค้างอยู่') < 0
+            ) {
               showStatus(statusBox, successMessage, 'success');
             } else {
               hideStatus(statusBox);
