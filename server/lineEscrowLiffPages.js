@@ -683,7 +683,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           }
         } else if (payoutMethod === 'promptpay') {
           payload.sellerPromptpayNumber = normalizePromptpayNumber(promptpayInput.value);
-          if (!payload.sellerPromptpayNumber || !/^(?:\d{10}|\d{13}|\d{15})$/.test(payload.sellerPromptpayNumber)) {
+          if (!payload.sellerPromptpayNumber || !/^(?:\\d{10}|\\d{13}|\\d{15})$/.test(payload.sellerPromptpayNumber)) {
             throw new Error('เลข PromptPay ต้องเป็นตัวเลข 10, 13 หรือ 15 หลัก');
           }
           payload.sellerBankAccount = payload.sellerPromptpayNumber;
