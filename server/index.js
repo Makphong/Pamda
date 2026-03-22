@@ -3651,8 +3651,8 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all' 
     paddingAll: '10px',
     cornerRadius: '12px',
     borderWidth: '1px',
-    borderColor: '#bbf7d0',
-    backgroundColor: '#f0fdf4',
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f1f5f9',
     contents: [
       {
         type: 'box',
@@ -3680,7 +3680,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all' 
         text: stepText,
         size: 'sm',
         weight: 'bold',
-        color: '#14532d',
+        color: '#0f172a',
         wrap: true,
         flex: 1,
       },
@@ -3755,7 +3755,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all' 
             text: '\u0e02\u0e31\u0e49\u0e19\u0e15\u0e2d\u0e19\u0e43\u0e0a\u0e49\u0e07\u0e32\u0e19',
             size: 'xs',
             weight: 'bold',
-            color: '#166534',
+            color: '#475569',
           },
           buildStepCard('\u0e2a\u0e23\u0e49\u0e32\u0e07\u0e14\u0e35\u0e25', 1),
           buildStepCard('\u0e1c\u0e39\u0e49\u0e0b\u0e37\u0e49\u0e2d\u0e0a\u0e33\u0e23\u0e30\u0e40\u0e07\u0e34\u0e19', 2),
