@@ -1656,7 +1656,10 @@ const toScamReportSearchableText = (reportInput) => {
 };
 
 const normalizeGeoCoordinate = (valueInput, min, max) => {
-  const value = Number(valueInput);
+  if (valueInput === null || valueInput === undefined) return null;
+  const raw = typeof valueInput === 'number' ? String(valueInput) : String(valueInput || '').trim();
+  if (!raw) return null;
+  const value = Number(raw);
   if (!Number.isFinite(value)) return null;
   if (value < min || value > max) return null;
   return value;
@@ -2150,6 +2153,10 @@ const setLineScamLiffHtmlHeaders = (res) => {
     'Content-Security-Policy',
     "default-src 'self'; img-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self' https://line.me https://*.line.me"
   );
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
   // LIFF can be embedded by LINE domains, so avoid restrictive X-Frame-Options here.
   res.removeHeader('X-Frame-Options');
 };
@@ -8522,6 +8529,9 @@ app.get('/line/scam/liff/police-stations', (_req, res) => {
 
 app.get('/line/scam/liff/api/police-stations', async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
     const query = normalizeOptionalString(req.query?.query || req.query?.q || '', 140);
     const latitude = normalizeGeoCoordinate(req.query?.lat, -90, 90);
     const longitude = normalizeGeoCoordinate(req.query?.lng, -180, 180);

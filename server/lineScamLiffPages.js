@@ -1077,6 +1077,7 @@ export const renderLineScamPoliceStationsPage = () =>
         }
         params.set('page', String(page));
         params.set('pageSize', '20');
+        params.set('refresh', '1');
 
         hideStatus();
         setBusy(true, source === 'gps' ? 'gps' : 'search');
