@@ -3634,7 +3634,7 @@ const queryEscrowTrackingStatus = async ({
   };
 };
 
-const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all', groupId = '' } = {}) => {
+const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all' } = {}) => {
   const liffUrls =
     liffUrlsInput && typeof liffUrlsInput === 'object' && !Array.isArray(liffUrlsInput) ? liffUrlsInput : {};
   const dealUrl = normalizeOptionalHttpUrl(liffUrls.deal || '', 1000);
@@ -3642,56 +3642,92 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
   const buyerUrl = normalizeOptionalHttpUrl(liffUrls.buyer || '', 1000);
   const currentStage = normalizeOptionalString(stage || '', 40).toLowerCase() || 'all';
   const isStartStage = currentStage === 'start';
-  const safeGroupId = normalizeOptionalString(groupId || '', 120);
   const footerButtons = [];
-  if (isStartStage && safeGroupId) {
-    footerButtons.push({
-      type: 'button',
-      style: 'secondary',
-      color: '#e0e7ff',
-      action: {
-        type: 'clipboard',
-        label: 'คัดลอก Group ID',
-        clipboardText: safeGroupId,
+
+  const buildStepCard = (stepText, stepNumber) => ({
+    type: 'box',
+    layout: 'horizontal',
+    spacing: '10px',
+    paddingAll: '10px',
+    cornerRadius: '12px',
+    borderWidth: '1px',
+    borderColor: '#bbf7d0',
+    backgroundColor: '#f0fdf4',
+    contents: [
+      {
+        type: 'box',
+        layout: 'vertical',
+        width: '24px',
+        height: '24px',
+        flex: 0,
+        justifyContent: 'center',
+        alignItems: 'center',
+        cornerRadius: '100px',
+        backgroundColor: '#16a34a',
+        contents: [
+          {
+            type: 'text',
+            text: String(stepNumber),
+            size: 'xs',
+            weight: 'bold',
+            color: '#ffffff',
+            align: 'center',
+          },
+        ],
       },
-    });
-  }
+      {
+        type: 'text',
+        text: stepText,
+        size: 'sm',
+        weight: 'bold',
+        color: '#14532d',
+        wrap: true,
+        flex: 1,
+      },
+    ],
+  });
+
   if (dealUrl) {
     footerButtons.push({
       type: 'button',
       style: 'primary',
-      color: '#1d4ed8',
-      action: { type: 'uri', label: '1) ผู้ขายสร้างดีลและชำระเงิน', uri: dealUrl },
+      color: '#16a34a',
+      action: { type: 'uri', label: '\u0e40\u0e23\u0e34\u0e48\u0e21\u0e2a\u0e23\u0e49\u0e32\u0e07\u0e14\u0e34\u0e25', uri: dealUrl },
     });
   }
   if (!isStartStage && sellerUrl) {
     footerButtons.push({
       type: 'button',
       style: 'primary',
-      color: '#0f766e',
-      action: { type: 'uri', label: '2) ผู้ขายส่งเลขพัสดุ', uri: sellerUrl },
+      color: '#15803d',
+      action: { type: 'uri', label: '\u0e1c\u0e39\u0e49\u0e02\u0e32\u0e22\u0e2a\u0e48\u0e07\u0e1e\u0e31\u0e2a\u0e14\u0e38', uri: sellerUrl },
     });
   }
   if (!isStartStage && buyerUrl) {
     footerButtons.push({
       type: 'button',
       style: 'primary',
-      color: '#7c3aed',
-      action: { type: 'uri', label: '3) ผู้ซื้อเช็กและยืนยันรับของ', uri: buyerUrl },
+      color: '#047857',
+      action: {
+        type: 'uri',
+        label: '\u0e1c\u0e39\u0e49\u0e0b\u0e37\u0e49\u0e2d\u0e40\u0e0a\u0e47\u0e01\u0e41\u0e25\u0e30\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19\u0e23\u0e31\u0e1a\u0e02\u0e2d\u0e07',
+        uri: buyerUrl,
+      },
     });
   }
   if (footerButtons.length === 0) {
     footerButtons.push({
       type: 'text',
-      text: 'ยังไม่ได้ตั้งค่า LIFF URL กรุณาให้แอดมินตั้งค่าใน LINE Bot Admin',
+      text: '\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32 LIFF URL \u0e01\u0e23\u0e38\u0e13\u0e32\u0e43\u0e2b\u0e49\u0e41\u0e2d\u0e14\u0e21\u0e34\u0e19\u0e15\u0e31\u0e49\u0e07\u0e04\u0e48\u0e32\u0e43\u0e19 LINE Bot Admin',
       size: 'xs',
       color: '#991b1b',
       wrap: true,
     });
   }
+
   return {
     type: 'flex',
-    altText: 'เมนูบอทตัวกลางซื้อขาย',
+    altText: '\u0e40\u0e21\u0e19\u0e39\u0e1a\u0e2d\u0e17\u0e15\u0e31\u0e27\u0e01\u0e25\u0e32\u0e07\u0e0b\u0e37\u0e49\u0e2d\u0e02\u0e32\u0e22',
     contents: {
       type: 'bubble',
       body: {
@@ -3701,7 +3737,7 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
         contents: [
           {
             type: 'text',
-            text: 'LINE บอทตัวกลางซื้อขาย',
+            text: 'LINE \u0e1a\u0e2d\u0e17\u0e15\u0e31\u0e27\u0e01\u0e25\u0e32\u0e07\u0e0b\u0e37\u0e49\u0e2d\u0e02\u0e32\u0e22',
             weight: 'bold',
             size: 'lg',
             color: '#111827',
@@ -3709,27 +3745,21 @@ const buildLineEscrowMainMenuFlexMessage = ({ liffUrlsInput = {}, stage = 'all',
           },
           {
             type: 'text',
-            text: isStartStage
-              ? 'เริ่มที่ขั้นตอนนี้: ผู้ขายสร้างดีลและชำระเงินก่อน เมื่อชำระสำเร็จ ระบบจะส่งการ์ดขั้นตอนถัดไปอัตโนมัติ'
-              : 'ลำดับงาน: ผู้ขายสร้างดีลและชำระเงิน -> ผู้ขายส่งสินค้าและเลขพัสดุ -> ผู้ซื้อยืนยันรับของ (หรือครบเวลาอัตโนมัติ) -> ระบบโอนเงินให้ผู้รับเงิน',
+            text: '\u0e23\u0e30\u0e1a\u0e1a\u0e15\u0e31\u0e27\u0e0a\u0e48\u0e27\u0e22\u0e1b\u0e49\u0e2d\u0e07\u0e01\u0e31\u0e19\u0e01\u0e32\u0e23\u0e42\u0e01\u0e07\u0e40\u0e07\u0e34\u0e19\u0e08\u0e30\u0e16\u0e39\u0e01\u0e40\u0e01\u0e49\u0e1a\u0e44\u0e27\u0e49\u0e08\u0e19\u0e01\u0e27\u0e48\u0e32\u0e08\u0e30\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19\u0e2a\u0e34\u0e19\u0e04\u0e49\u0e32',
             size: 'sm',
             color: '#334155',
             wrap: true,
           },
           {
             type: 'text',
-            text: safeGroupId ? `รหัสกลุ่ม: ${safeGroupId}` : 'รหัสกลุ่ม: -',
+            text: '\u0e02\u0e31\u0e49\u0e19\u0e15\u0e2d\u0e19\u0e43\u0e0a\u0e49\u0e07\u0e32\u0e19',
             size: 'xs',
-            color: '#1d4ed8',
-            wrap: true,
+            weight: 'bold',
+            color: '#166534',
           },
-          {
-            type: 'text',
-            text: `ยืนยันอัตโนมัติหลังส่งถึง ${LINE_ESCROW_AUTO_RELEASE_HOURS} ชั่วโมง`,
-            size: 'xs',
-            color: '#6b7280',
-            wrap: true,
-          },
+          buildStepCard('\u0e2a\u0e23\u0e49\u0e32\u0e07\u0e14\u0e35\u0e25', 1),
+          buildStepCard('\u0e1c\u0e39\u0e49\u0e0b\u0e37\u0e49\u0e2d\u0e0a\u0e33\u0e23\u0e30\u0e40\u0e07\u0e34\u0e19', 2),
+          buildStepCard('\u0e23\u0e30\u0e1a\u0e1a\u0e40\u0e01\u0e47\u0e1a\u0e23\u0e31\u0e01\u0e29\u0e32\u0e40\u0e07\u0e34\u0e19', 3),
         ],
       },
       footer: {
