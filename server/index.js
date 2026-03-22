@@ -4004,14 +4004,28 @@ const sendEscrowPaidStepCardIfNeeded = async ({ req, dealInput, configInput = nu
   }
 };
 
-const isEscrowDealAwaitingPayment = (dealInput) => {
+const ESCROW_IN_PROGRESS_STATUSES = new Set([
+  'awaiting_payment',
+  'created',
+  'open',
+  'paid_waiting_shipment',
+  'shipped',
+  'delivered_waiting_confirmation',
+  'confirmed_release_pending',
+]);
+
+const isEscrowDealInProgress = (dealInput) => {
   const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
   const status = String(deal.status || '').trim().toLowerCase();
   const paymentStatus = String(deal.paymentStatus || '').trim().toLowerCase();
-  return status === 'awaiting_payment' && paymentStatus !== 'paid' && paymentStatus !== 'cancelled';
+  if (!status || status === 'cancelled' || status === 'released') return false;
+  if (status === 'awaiting_payment') {
+    return paymentStatus !== 'cancelled' && paymentStatus !== 'failed';
+  }
+  return ESCROW_IN_PROGRESS_STATUSES.has(status);
 };
 
-const loadLatestEscrowAwaitingPaymentDealByGroup = async (groupIdInput) => {
+const loadLatestEscrowInProgressDealByGroup = async (groupIdInput) => {
   const groupId = normalizeOptionalString(groupIdInput || '', 120);
   if (!groupId) return null;
   const snapshot = await lineEscrowDealRef.where('groupId', '==', groupId).get();
@@ -4021,7 +4035,7 @@ const loadLatestEscrowAwaitingPaymentDealByGroup = async (groupIdInput) => {
       ref: lineEscrowDealRef.doc(doc.id),
       deal: toEscrowDealResponse(doc.id, doc.data() || {}),
     }))
-    .filter((entry) => isEscrowDealAwaitingPayment(entry.deal));
+    .filter((entry) => isEscrowDealInProgress(entry.deal));
   if (!candidates.length) return null;
   candidates.sort((a, b) => {
     const aScore = Math.max(toEpochMs(a.deal.updatedAt), toEpochMs(a.deal.createdAt));
@@ -4064,6 +4078,59 @@ const buildEscrowDealQueryWithLiffUrls = (req, dealInput, configInput = {}) => {
     sellerLiffUrl: appendDealId(liffUrls.seller),
     buyerLiffUrl: appendDealId(liffUrls.buyer),
     dealLiffUrl: appendDealId(liffUrls.deal),
+  };
+};
+
+const resolveEscrowDealProcessInfo = (dealInput) => {
+  const deal = dealInput && typeof dealInput === 'object' && !Array.isArray(dealInput) ? dealInput : {};
+  const status = String(deal.status || '').trim().toLowerCase();
+  const paymentStatus = String(deal.paymentStatus || '').trim().toLowerCase();
+  const dealLiffUrl = normalizeOptionalHttpUrl(deal.dealLiffUrl || '', 1200);
+  const sellerLiffUrl = normalizeOptionalHttpUrl(deal.sellerLiffUrl || '', 1200);
+  const buyerLiffUrl = normalizeOptionalHttpUrl(deal.buyerLiffUrl || '', 1200);
+
+  if ((status === 'awaiting_payment' && paymentStatus !== 'paid') || status === 'created' || status === 'open') {
+    return {
+      stage: 'payment',
+      label: 'ผู้ซื้อชำระเงิน',
+      message: 'ตอนนี้มีดีลค้างอยู่ และอยู่ขั้นตอน "ผู้ซื้อชำระเงิน"',
+      actionUrl: dealLiffUrl,
+      actionLabel: 'ไปหน้า LIFF ชำระเงิน',
+    };
+  }
+  if (status === 'awaiting_payment' || status === 'paid_waiting_shipment') {
+    return {
+      stage: 'seller',
+      label: 'ผู้ขายส่งสินค้า',
+      message: 'ตอนนี้มีดีลค้างอยู่ และอยู่ขั้นตอน "ผู้ขายส่งสินค้า"',
+      actionUrl: sellerLiffUrl,
+      actionLabel: 'ไปหน้า LIFF ผู้ขาย',
+    };
+  }
+  if (status === 'shipped' || status === 'delivered_waiting_confirmation') {
+    return {
+      stage: 'buyer',
+      label: 'ผู้ซื้ออนุมัติรับสินค้า',
+      message: 'ตอนนี้มีดีลค้างอยู่ และอยู่ขั้นตอน "ผู้ซื้ออนุมัติรับสินค้า"',
+      actionUrl: buyerLiffUrl,
+      actionLabel: 'ไปหน้า LIFF ผู้ซื้อ',
+    };
+  }
+  if (status === 'confirmed_release_pending') {
+    return {
+      stage: 'payout',
+      label: 'ผู้ขายรับเงิน',
+      message: 'ตอนนี้มีดีลค้างอยู่ และอยู่ขั้นตอน "ผู้ขายรับเงิน"',
+      actionUrl: '',
+      actionLabel: '',
+    };
+  }
+  return {
+    stage: '',
+    label: '',
+    message: '',
+    actionUrl: '',
+    actionLabel: '',
   };
 };
 
@@ -8524,12 +8591,18 @@ app.post('/line/escrow/liff/api/deals/create', async (req, res) => {
       });
     }
     const sellerPayoutBankAccount = sellerPayoutMethod === 'promptpay' ? sellerPromptpayNumber : sellerBankAccount;
-    const activePaymentDeal = await loadLatestEscrowAwaitingPaymentDealByGroup(groupId);
-    if (activePaymentDeal) {
+    const activeInProgressDeal = await loadLatestEscrowInProgressDealByGroup(groupId);
+    if (activeInProgressDeal) {
       const config = await loadLineEscrowBotConfigRecord();
+      const activeDealWithUrls = buildEscrowDealQueryWithLiffUrls(req, activeInProgressDeal.deal, config);
+      const processInfo = resolveEscrowDealProcessInfo(activeDealWithUrls);
       return res.status(200).json({
-        message: 'พบดีลที่รอชำระอยู่แล้ว ระบบเปิดดีลเดิมให้',
-        deal: buildEscrowDealQueryWithLiffUrls(req, activePaymentDeal.deal, config),
+        message: processInfo.message || 'ตอนนี้มีดีลค้างอยู่ในระบบ',
+        processStage: processInfo.stage,
+        processLabel: processInfo.label,
+        actionUrl: processInfo.actionUrl,
+        actionLabel: processInfo.actionLabel,
+        deal: activeDealWithUrls,
       });
     }
 
@@ -8636,7 +8709,7 @@ app.get('/line/escrow/liff/api/deals/active-payment', async (req, res) => {
     if (!groupId) {
       return res.status(400).json({ message: 'groupId is required.' });
     }
-    const found = await loadLatestEscrowAwaitingPaymentDealByGroup(groupId);
+    const found = await loadLatestEscrowInProgressDealByGroup(groupId);
     if (!found) {
       return res.json({ deal: null });
     }
@@ -8657,14 +8730,17 @@ app.get('/line/escrow/liff/api/deals/active-payment', async (req, res) => {
         req,
         dealInput: deal,
       });
-      return res.json({
-        deal: null,
-        message: 'ดีลนี้ชำระเงินแล้ว ระบบส่งขั้นตอนถัดไปในกลุ่มเรียบร้อย',
-      });
     }
     const config = await loadLineEscrowBotConfigRecord();
+    const dealWithUrls = buildEscrowDealQueryWithLiffUrls(req, deal, config);
+    const processInfo = resolveEscrowDealProcessInfo(dealWithUrls);
     return res.json({
-      deal: buildEscrowDealQueryWithLiffUrls(req, deal, config),
+      deal: dealWithUrls,
+      processStage: processInfo.stage,
+      processLabel: processInfo.label,
+      processMessage: processInfo.message,
+      actionUrl: processInfo.actionUrl,
+      actionLabel: processInfo.actionLabel,
     });
   } catch (error) {
     const status = Number(error?.status || 0);

@@ -413,10 +413,12 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           </div>
         </form>
 
-        <div id="deal-payment-actions" class="hidden" style="display:flex; gap:10px; flex-wrap:wrap;">
-          <button id="deal-check-btn" class="btn ghost hidden" type="button">เช็คสถานะชำระเงิน</button>
-          <button id="deal-manual-paid-btn" class="btn warn hidden" type="button">ติ๊กว่าชำระเงินแล้ว (โหมดทดสอบ)</button>
-          <button id="deal-cancel-btn" class="btn danger hidden" type="button">ยกเลิกดีล</button>
+        <div id="deal-payment-actions" class="hidden" style="display:flex; flex-direction:column; gap:10px;">
+          <div style="display:flex; gap:10px; flex-wrap:nowrap;">
+            <button id="deal-check-btn" class="btn ghost hidden" type="button" style="flex:1 1 0;">เช็คสถานะชำระเงิน</button>
+            <button id="deal-cancel-btn" class="btn danger hidden" type="button" style="flex:1 1 0;">ยกเลิกดีล</button>
+          </div>
+          <button id="deal-manual-paid-btn" class="btn warn hidden" type="button" style="width:100%;">ติ๊กว่าชำระเงินแล้ว (โหมดทดสอบ)</button>
         </div>
 
         <div id="deal-status" class="status hidden"></div>
@@ -477,6 +479,65 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         var status = String(d.status || '').trim().toLowerCase();
         var paymentStatus = String(d.paymentStatus || '').trim().toLowerCase();
         return Boolean(d.id) && status === 'awaiting_payment' && paymentStatus !== 'paid' && paymentStatus !== 'cancelled';
+      }
+
+      function isDealInProgress(deal) {
+        var d = deal && typeof deal === 'object' ? deal : {};
+        var status = String(d.status || '').trim().toLowerCase();
+        if (!status) return false;
+        return [
+          'awaiting_payment',
+          'created',
+          'open',
+          'paid_waiting_shipment',
+          'shipped',
+          'delivered_waiting_confirmation',
+          'confirmed_release_pending',
+        ].indexOf(status) >= 0;
+      }
+
+      function resolveDealProcess(deal) {
+        var d = deal && typeof deal === 'object' ? deal : {};
+        var status = String(d.status || '').trim().toLowerCase();
+        var paymentStatus = String(d.paymentStatus || '').trim().toLowerCase();
+        if ((status === 'awaiting_payment' && paymentStatus !== 'paid') || status === 'created' || status === 'open') {
+          return {
+            stage: 'payment',
+            label: 'ผู้ซื้อชำระเงิน',
+            actionUrl: String(d.dealLiffUrl || '').trim(),
+            actionLabel: 'ไปหน้า LIFF ชำระเงิน'
+          };
+        }
+        if (status === 'awaiting_payment' || status === 'paid_waiting_shipment') {
+          return {
+            stage: 'seller',
+            label: 'ผู้ขายส่งสินค้า',
+            actionUrl: String(d.sellerLiffUrl || '').trim(),
+            actionLabel: 'ไปหน้า LIFF ผู้ขาย'
+          };
+        }
+        if (status === 'shipped' || status === 'delivered_waiting_confirmation') {
+          return {
+            stage: 'buyer',
+            label: 'ผู้ซื้ออนุมัติรับสินค้า',
+            actionUrl: String(d.buyerLiffUrl || '').trim(),
+            actionLabel: 'ไปหน้า LIFF ผู้ซื้อ'
+          };
+        }
+        if (status === 'confirmed_release_pending') {
+          return {
+            stage: 'payout',
+            label: 'ผู้ขายรับเงิน',
+            actionUrl: '',
+            actionLabel: ''
+          };
+        }
+        return {
+          stage: '',
+          label: '',
+          actionUrl: '',
+          actionLabel: ''
+        };
       }
 
       function setCreateFormVisible(visible) {
@@ -565,13 +626,30 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         bankAccountInput.value = String(d.sellerBankAccount || '').trim();
         promptpayInput.value = String(d.sellerPromptpayNumber || '').trim();
 
-        var qrHtml = d.paymentQrImageUrl
-          ? '<div class="qr"><div style="font-size:0.78rem;color:#334155;">สแกน QR นี้เพื่อชำระเงินเข้าระบบ</div><img alt="payment qr" src="' + escapeHtml(d.paymentQrImageUrl) + '" /></div>'
-          : '<p class="tiny">ยังไม่มี QR สำหรับดีลนี้</p>';
+        var processInfo = resolveDealProcess(d);
+        var qrHtml = '';
+        if (processInfo.stage === 'payment') {
+          qrHtml = d.paymentQrImageUrl
+            ? '<div class="qr"><div style="font-size:0.78rem;color:#334155;">สแกน QR นี้เพื่อชำระเงินเข้าระบบ</div><img alt="payment qr" src="' + escapeHtml(d.paymentQrImageUrl) + '" /></div>'
+            : '<p class="tiny">ยังไม่มี QR สำหรับดีลนี้</p>';
+        }
 
-        var links = '';
-        if (d.sellerLiffUrl) links += '<a href="' + escapeHtml(d.sellerLiffUrl) + '" target="_blank" rel="noreferrer">เปิดหน้า LIFF ผู้ขาย</a><br />';
-        if (d.buyerLiffUrl) links += '<a href="' + escapeHtml(d.buyerLiffUrl) + '" target="_blank" rel="noreferrer">เปิดหน้า LIFF ผู้ซื้อ</a>';
+        var processHtml = '';
+        if (processInfo.stage && processInfo.stage !== 'payment') {
+          var processActionHtml = processInfo.actionUrl
+            ? '<a class="btn secondary" href="' +
+                escapeHtml(processInfo.actionUrl) +
+                '" style="display:inline-block;text-decoration:none;">' +
+                escapeHtml(processInfo.actionLabel || 'ไปยัง LIFF ขั้นตอนนี้') +
+              '</a>'
+            : '';
+          processHtml =
+            '<div class="section-block" style="margin-top:10px;">' +
+              '<p class="section-title" style="margin:0 0 6px;">ตอนนี้มีดีลค้างอยู่</p>' +
+              '<p style="margin:0;font-size:0.82rem;color:#334155;">ขั้นตอนปัจจุบัน: ' + escapeHtml(processInfo.label || '-') + '</p>' +
+              (processActionHtml ? '<div style="margin-top:10px;">' + processActionHtml + '</div>' : '') +
+            '</div>';
+        }
 
         resultBox.innerHTML =
           '<h3>รายละเอียดดีล</h3>' +
@@ -587,11 +665,10 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
             '<div class="k">ช่องทางรับเงินผู้ขาย</div><div class="v">' + escapeHtml(getPayoutMethodLabel(payoutMethod)) + '</div>' +
           '</div>' +
           qrHtml +
-          (links ? '<div style="margin-top:10px;font-size:0.82rem;">' + links + '</div>' : '');
+          processHtml;
         resultBox.classList.remove('hidden');
 
-        var awaitingPayment = isDealAwaitingPayment(d);
-        setCreateFormVisible(!awaitingPayment);
+        setCreateFormVisible(!isDealInProgress(d));
         updateDealActionButtons(d);
       }
 
@@ -631,6 +708,11 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
         return {
           deal: payload && payload.deal ? payload.deal : null,
           message: String((payload && payload.message) || '').trim(),
+          processStage: String((payload && payload.processStage) || '').trim(),
+          processLabel: String((payload && payload.processLabel) || '').trim(),
+          processMessage: String((payload && payload.processMessage) || '').trim(),
+          actionUrl: String((payload && payload.actionUrl) || '').trim(),
+          actionLabel: String((payload && payload.actionLabel) || '').trim(),
         };
       }
 
@@ -710,7 +792,15 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           var active = await loadActivePaymentDeal(groupIdValue);
           if (active && active.deal) {
             renderDeal(active.deal);
-            showStatus(statusBox, 'พบดีลที่รอชำระของกลุ่มนี้ ระบบเปิด QR เดิมให้แล้ว', 'success');
+            showStatus(
+              statusBox,
+              active.processMessage ||
+                active.message ||
+                (active.processStage && active.processLabel
+                  ? 'ตอนนี้มีดีลค้างอยู่ และอยู่ขั้นตอน "' + active.processLabel + '"'
+                  : 'พบดีลค้างของกลุ่มนี้'),
+              'success'
+            );
             return;
           }
 
@@ -719,7 +809,7 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
           setCreateFormVisible(true);
           showStatus(
             statusBox,
-            active && active.message ? active.message : 'ยังไม่มีดีลที่รอชำระในกลุ่มนี้ กรุณากรอกข้อมูลเพื่อสร้างดีลใหม่',
+            active && active.message ? active.message : 'ยังไม่มีดีลค้างในกลุ่มนี้ กรุณากรอกข้อมูลเพื่อสร้างดีลใหม่',
             'success'
           );
         } catch (error) {
@@ -887,7 +977,12 @@ export const renderLineEscrowDealPage = ({ maxSlipImageBytes = 0 } = {}) =>
             if (payload && payload.deal) {
               renderDeal(payload.deal);
             }
-            showStatus(statusBox, (payload && payload.message) || 'สร้างดีลสำเร็จ', 'success');
+            var successMessage = String((payload && payload.message) || '').trim();
+            if (successMessage && successMessage !== 'Escrow deal created.') {
+              showStatus(statusBox, successMessage, 'success');
+            } else {
+              hideStatus(statusBox);
+            }
           } catch (error) {
             showStatus(statusBox, (error && error.message) || 'สร้างดีลไม่สำเร็จ', 'error');
           } finally {
@@ -1134,10 +1229,7 @@ export const renderLineEscrowSellerPage = ({ maxSlipImageBytes = 0, maxSlipImage
             '<div class="k">สถานะดีล</div><div class="v">' + escapeHtml(d.status || '-') + '</div>' +
             '<div class="k">เลขพัสดุ</div><div class="v">' + escapeHtml(d.trackingNumber || '-') + '</div>' +
             '<div class="k">สถานะขนส่ง</div><div class="v">' + escapeHtml(d.trackingStatusText || d.trackingStatus || '-') + '</div>' +
-          '</div>' +
-          (d.buyerLiffUrl
-            ? '<p class="tiny"><a href="' + escapeHtml(d.buyerLiffUrl) + '" target="_blank" rel="noreferrer">เปิดหน้า LIFF ผู้ซื้อเพื่อติดตาม/ยืนยันรับของ</a></p>'
-            : '');
+          '</div>';
         resultBox.classList.remove('hidden');
       }
 
