@@ -97,12 +97,63 @@ const normalizeGeoCoordinate = (valueInput, min, max) => {
   return Number(value.toFixed(7));
 };
 
+const isNearZeroGeoPair = (latitudeInput, longitudeInput) => {
+  const latitude = normalizeGeoCoordinate(latitudeInput, -90, 90);
+  const longitude = normalizeGeoCoordinate(longitudeInput, -180, 180);
+  if (latitude === null || longitude === null) return false;
+  return Math.abs(latitude) < 0.0000001 && Math.abs(longitude) < 0.0000001;
+};
+
 const normalizeMapUrl = (valueInput) => {
   const value = String(valueInput || '').trim();
   if (!value) return '';
   if (/^https?:\/\//i.test(value)) return value;
   if (/^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(value)) return `https://${value}`;
   return '';
+};
+
+const extractGeoPairFromMapUrl = (mapUrlInput) => {
+  const mapUrl = normalizeMapUrl(mapUrlInput || '');
+  if (!mapUrl) return { latitude: null, longitude: null };
+  const candidateTexts = [mapUrl];
+  try {
+    const decoded = decodeURIComponent(mapUrl);
+    if (decoded && decoded !== mapUrl) candidateTexts.push(decoded);
+  } catch {
+    // keep original text only
+  }
+  const regexPatterns = [
+    /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/i,
+    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/i,
+    /[?&](?:q|query|ll|sll|center|daddr|destination)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/i,
+    /[?&](?:q|query|ll|sll|center|daddr|destination)=[^&]*?(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/i,
+  ];
+  for (const text of candidateTexts) {
+    for (const regex of regexPatterns) {
+      const match = String(text || '').match(regex);
+      if (!match) continue;
+      const latitude = normalizeGeoCoordinate(match[1], -90, 90);
+      const longitude = normalizeGeoCoordinate(match[2], -180, 180);
+      if (latitude === null || longitude === null) continue;
+      if (isNearZeroGeoPair(latitude, longitude)) continue;
+      return { latitude, longitude };
+    }
+  }
+  return { latitude: null, longitude: null };
+};
+
+const resolveStationGeoPair = ({ latitudeInput, longitudeInput, mapUrlInput }) => {
+  let latitude = normalizeGeoCoordinate(latitudeInput, -90, 90);
+  let longitude = normalizeGeoCoordinate(longitudeInput, -180, 180);
+  const hasRawPair = latitude !== null && longitude !== null && !isNearZeroGeoPair(latitude, longitude);
+  if (!hasRawPair) {
+    const extracted = extractGeoPairFromMapUrl(mapUrlInput || '');
+    latitude = extracted.latitude;
+    longitude = extracted.longitude;
+  }
+  const isValidPair = latitude !== null && longitude !== null && !isNearZeroGeoPair(latitude, longitude);
+  if (!isValidPair) return { latitude: null, longitude: null };
+  return { latitude, longitude };
 };
 
 const getCell = (rowInput, index) => {
@@ -223,15 +274,21 @@ const run = async () => {
       skippedNoName += 1;
       continue;
     }
+    const mapUrl = normalizeMapUrl(getCell(row, mapUrlIndex));
+    const geoPair = resolveStationGeoPair({
+      latitudeInput: getCell(row, latitudeIndex),
+      longitudeInput: getCell(row, longitudeIndex),
+      mapUrlInput: mapUrl,
+    });
     const station = {
       name,
       address: getCell(row, addressIndex),
       phone: getCell(row, phoneIndex),
-      mapUrl: normalizeMapUrl(getCell(row, mapUrlIndex)),
+      mapUrl,
       province: getCell(row, provinceIndex),
       district: getCell(row, districtIndex),
-      latitude: normalizeGeoCoordinate(getCell(row, latitudeIndex), -90, 90),
-      longitude: normalizeGeoCoordinate(getCell(row, longitudeIndex), -180, 180),
+      latitude: geoPair.latitude,
+      longitude: geoPair.longitude,
     };
     const stationId = buildStationId(station);
     const existing = uniqueStations.get(stationId);

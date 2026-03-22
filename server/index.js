@@ -1956,6 +1956,75 @@ const searchLineScamPoliceStations = ({
   return safeLimit > 0 ? mappedRows.slice(0, safeLimit) : mappedRows;
 };
 
+const isNearZeroGeoPair = (latitudeInput, longitudeInput) => {
+  const latitude = normalizeGeoCoordinate(latitudeInput, -90, 90);
+  const longitude = normalizeGeoCoordinate(longitudeInput, -180, 180);
+  if (latitude === null || longitude === null) return false;
+  return Math.abs(latitude) < 0.0000001 && Math.abs(longitude) < 0.0000001;
+};
+
+const extractGeoPairFromMapUrl = (mapUrlInput) => {
+  const mapUrl = normalizeOptionalHttpUrl(mapUrlInput || '', 1200);
+  if (!mapUrl) {
+    return { latitude: null, longitude: null };
+  }
+  const candidateTexts = [mapUrl];
+  try {
+    const decoded = decodeURIComponent(mapUrl);
+    if (decoded && decoded !== mapUrl) {
+      candidateTexts.push(decoded);
+    }
+  } catch {
+    // keep original URL text only
+  }
+
+  const regexPatterns = [
+    /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/i,
+    /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/i,
+    /[?&](?:q|query|ll|sll|center|daddr|destination)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/i,
+    /[?&](?:q|query|ll|sll|center|daddr|destination)=[^&]*?(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/i,
+  ];
+
+  for (const text of candidateTexts) {
+    for (const regex of regexPatterns) {
+      const match = String(text || '').match(regex);
+      if (!match) continue;
+      const latitude = normalizeGeoCoordinate(match[1], -90, 90);
+      const longitude = normalizeGeoCoordinate(match[2], -180, 180);
+      if (latitude === null || longitude === null) continue;
+      if (isNearZeroGeoPair(latitude, longitude)) continue;
+      return {
+        latitude: Number(latitude.toFixed(7)),
+        longitude: Number(longitude.toFixed(7)),
+      };
+    }
+  }
+
+  return { latitude: null, longitude: null };
+};
+
+const resolveLineScamPoliceStationGeoPair = ({ latitudeInput, longitudeInput, mapUrlInput }) => {
+  let latitude = normalizeGeoCoordinate(latitudeInput, -90, 90);
+  let longitude = normalizeGeoCoordinate(longitudeInput, -180, 180);
+  const rawPairValid = latitude !== null && longitude !== null && !isNearZeroGeoPair(latitude, longitude);
+  if (!rawPairValid) {
+    const extracted = extractGeoPairFromMapUrl(mapUrlInput || '');
+    latitude = extracted.latitude;
+    longitude = extracted.longitude;
+  }
+  const finalPairValid = latitude !== null && longitude !== null && !isNearZeroGeoPair(latitude, longitude);
+  if (!finalPairValid) {
+    return {
+      latitude: null,
+      longitude: null,
+    };
+  }
+  return {
+    latitude: Number(latitude.toFixed(7)),
+    longitude: Number(longitude.toFixed(7)),
+  };
+};
+
 const normalizeLineScamPoliceStationRecord = (recordInput = {}) => {
   const record = recordInput && typeof recordInput === 'object' && !Array.isArray(recordInput) ? recordInput : {};
   const name = normalizeOptionalString(record.name || '', 180);
@@ -1963,10 +2032,13 @@ const normalizeLineScamPoliceStationRecord = (recordInput = {}) => {
   const phone = normalizeOptionalString(record.phone || '', 80);
   const province = normalizeOptionalString(record.province || '', 120);
   const district = normalizeOptionalString(record.district || '', 120);
-  const latitude = normalizeGeoCoordinate(record.latitude, -90, 90);
-  const longitude = normalizeGeoCoordinate(record.longitude, -180, 180);
   const mapUrlNormalized = normalizeOptionalHttpUrl(record.mapUrl || '', 1200);
   const mapUrl = mapUrlNormalized || '';
+  const geoPair = resolveLineScamPoliceStationGeoPair({
+    latitudeInput: record.latitude,
+    longitudeInput: record.longitude,
+    mapUrlInput: mapUrl,
+  });
   const source = normalizeOptionalString(record.source || 'cloud', 40).toLowerCase() || 'cloud';
   const searchableSource =
     normalizeOptionalString(record.searchable || '', 600) ||
@@ -1977,8 +2049,8 @@ const normalizeLineScamPoliceStationRecord = (recordInput = {}) => {
     phone,
     province,
     district,
-    latitude: latitude === null ? null : Number(latitude.toFixed(7)),
-    longitude: longitude === null ? null : Number(longitude.toFixed(7)),
+    latitude: geoPair.latitude,
+    longitude: geoPair.longitude,
     mapUrl,
     source,
     searchable: normalizeSearchToken(searchableSource),

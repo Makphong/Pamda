@@ -1021,17 +1021,35 @@ export const renderLineScamPoliceStationsPage = () =>
               : '-';
             const mapUrl = escapeHtml(station && station.mapUrl ? station.mapUrl : '#');
             const telUrl = toTelUri(station && station.phone ? station.phone : '');
+            const stationLatitude = Number(station && station.latitude);
+            const stationLongitude = Number(station && station.longitude);
+            const hasValidStationCoords =
+              Number.isFinite(stationLatitude) &&
+              Number.isFinite(stationLongitude) &&
+              !(Math.abs(stationLatitude) < 0.0000001 && Math.abs(stationLongitude) < 0.0000001);
+            const destinationFallback = String(
+              station && station.mapUrl
+                ? station.mapUrl
+                : [station && station.name ? station.name : '', station && station.address ? station.address : '']
+                    .filter(Boolean)
+                    .join(' ')
+            ).trim();
             const directionUrl =
-              selectedLat !== null &&
-              selectedLng !== null &&
-              Number.isFinite(Number(station && station.latitude)) &&
-              Number.isFinite(Number(station && station.longitude))
-                ? 'https://www.google.com/maps/dir/?api=1&origin=' +
-                  encodeURIComponent(String(selectedLat) + ',' + String(selectedLng)) +
-                  '&destination=' +
-                  encodeURIComponent(String(station.latitude) + ',' + String(station.longitude)) +
-                  '&travelmode=driving'
-                : '';
+              selectedLat === null || selectedLng === null
+                ? ''
+                : hasValidStationCoords
+                  ? 'https://www.google.com/maps/dir/?api=1&origin=' +
+                    encodeURIComponent(String(selectedLat) + ',' + String(selectedLng)) +
+                    '&destination=' +
+                    encodeURIComponent(String(stationLatitude) + ',' + String(stationLongitude)) +
+                    '&travelmode=driving'
+                  : destinationFallback
+                    ? 'https://www.google.com/maps/dir/?api=1&origin=' +
+                      encodeURIComponent(String(selectedLat) + ',' + String(selectedLng)) +
+                      '&destination=' +
+                      encodeURIComponent(destinationFallback) +
+                      '&travelmode=driving'
+                    : '';
             return (
               '<article class="card" style="margin-top:0;">' +
                 '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">' +
