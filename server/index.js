@@ -1897,6 +1897,11 @@ const searchLineScamPoliceStations = ({
   for (const stationInput of stations) {
     const station =
       stationInput && typeof stationInput === 'object' && !Array.isArray(stationInput) ? stationInput : {};
+    const resolvedGeoPair = resolveLineScamPoliceStationGeoPair({
+      latitudeInput: station.latitude,
+      longitudeInput: station.longitude,
+      mapUrlInput: station.mapUrl,
+    });
     const searchText = normalizeSearchToken(
       station.searchable ||
         [station.name, station.address, station.province, station.district, station.phone]
@@ -1918,13 +1923,15 @@ const searchLineScamPoliceStations = ({
     if (!matched) continue;
     const distanceKm =
       lat !== null && lng !== null
-        ? calculateDistanceKm(lat, lng, station.latitude, station.longitude)
+        ? calculateDistanceKm(lat, lng, resolvedGeoPair.latitude, resolvedGeoPair.longitude)
         : null;
     if (distanceKm !== null) {
       score += Math.max(0, 300 - distanceKm * 10);
     }
     rows.push({
       ...station,
+      latitude: resolvedGeoPair.latitude,
+      longitude: resolvedGeoPair.longitude,
       distanceKm: distanceKm !== null ? Number(distanceKm.toFixed(2)) : null,
       _score: score,
     });

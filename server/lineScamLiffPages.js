@@ -897,9 +897,9 @@ export const renderLineScamPoliceStationsPage = () =>
         <div id="police-summary" class="tiny" style="margin-top:10px;"></div>
         <div id="police-results" class="row" style="margin-top:10px;"></div>
         <div id="police-pagination" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;">
-          <button id="police-page-first" class="btn upload" type="button">หน้าแรกสุด</button>
-          <button id="police-page-prev" class="btn upload" type="button">หน้าย้อนกลับ</button>
-          <button id="police-page-next" class="btn upload" type="button">หน้าถัดไป</button>
+          <button id="police-page-first" class="btn upload" type="button" title="หน้าแรก" aria-label="หน้าแรก">&lt;&lt;</button>
+          <button id="police-page-prev" class="btn upload" type="button" title="ย้อนกลับ" aria-label="ย้อนกลับ">&lt;</button>
+          <button id="police-page-next" class="btn upload" type="button" title="ถัดไป" aria-label="ถัดไป">&gt;</button>
           <span id="police-page-info" class="tiny" style="margin-top:0;">หน้า 1 / 1</span>
         </div>
       </section>
@@ -986,24 +986,14 @@ export const renderLineScamPoliceStationsPage = () =>
 
       function renderResults(payload) {
         const stations = Array.isArray(payload && payload.stations) ? payload.stations : [];
-        const usedGps = Boolean(payload && payload.usedGps);
         const total = Number(payload && payload.total || 0);
-        const source = String(payload && payload.source || '');
-        const nearestDistanceKm = Number(payload && payload.nearestDistanceKm || 0);
         const payloadPage = Number(payload && payload.page || 1);
         const payloadTotalPages = Number(payload && payload.totalPages || 1);
         currentPage = Number.isFinite(payloadPage) ? payloadPage : 1;
         totalPages = Number.isFinite(payloadTotalPages) ? payloadTotalPages : 1;
         updatePager();
 
-        let summaryText = 'พบทั้งหมด ' + Number(total || stations.length).toLocaleString() + ' สถานี';
-        if (usedGps && Number.isFinite(nearestDistanceKm) && nearestDistanceKm > 0) {
-          summaryText += ' | ใกล้สุดประมาณ ' + nearestDistanceKm.toFixed(2) + ' กม.';
-        }
-        if (source) {
-          summaryText += ' | แหล่งข้อมูล: ' + source;
-        }
-        summaryBox.textContent = summaryText;
+        summaryBox.textContent = 'พบทั้งหมด ' + Number(total || stations.length).toLocaleString() + ' สถานี';
 
         if (!stations.length) {
           resultsBox.innerHTML = '<div class="card" style="margin-top:0;"><p class="tiny">ไม่พบสถานีที่ตรงคำค้นหา ลองค้นหาด้วยชื่อจังหวัดหรืออำเภอ</p></div>';
@@ -1028,11 +1018,9 @@ export const renderLineScamPoliceStationsPage = () =>
               Number.isFinite(stationLongitude) &&
               !(Math.abs(stationLatitude) < 0.0000001 && Math.abs(stationLongitude) < 0.0000001);
             const destinationFallback = String(
-              station && station.mapUrl
-                ? station.mapUrl
-                : [station && station.name ? station.name : '', station && station.address ? station.address : '']
-                    .filter(Boolean)
-                    .join(' ')
+              [station && station.name ? station.name : '', station && station.address ? station.address : '']
+                .filter(Boolean)
+                .join(' ')
             ).trim();
             const directionUrl =
               selectedLat === null || selectedLng === null
@@ -1101,7 +1089,7 @@ export const renderLineScamPoliceStationsPage = () =>
             throw new Error((payload && payload.message) || 'ไม่สามารถโหลดข้อมูลสถานีตำรวจได้');
           }
           renderResults(payload || {});
-          showStatus('โหลดข้อมูลสถานีตำรวจสำเร็จ', 'success');
+          hideStatus();
         } catch (error) {
           resultsBox.innerHTML = '';
           summaryBox.textContent = '';

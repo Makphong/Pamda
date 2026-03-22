@@ -1282,8 +1282,10 @@ export default function CheckPage({
 	                            onClick={() => void loadLineScamPoliceStationsPage({ page: 1, query: policeStationQuery })}
 	                            disabled={isPoliceStationsLoading || policeStationsPage <= 1}
 	                            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+	                            title="หน้าแรก"
+	                            aria-label="หน้าแรก"
 	                          >
-	                            หน้าแรกสุด
+	                            {'<<'}
 	                          </button>
 	                          <button
 	                            type="button"
@@ -1295,8 +1297,10 @@ export default function CheckPage({
 	                            }
 	                            disabled={isPoliceStationsLoading || policeStationsPage <= 1}
 	                            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+	                            title="ย้อนกลับ"
+	                            aria-label="ย้อนกลับ"
 	                          >
-	                            หน้าย้อนกลับ
+	                            {'<'}
 	                          </button>
 	                          <button
 	                            type="button"
@@ -1308,8 +1312,10 @@ export default function CheckPage({
 	                            }
 	                            disabled={isPoliceStationsLoading || policeStationsPage >= policeStationsTotalPages}
 	                            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+	                            title="ถัดไป"
+	                            aria-label="ถัดไป"
 	                          >
-	                            หน้าถัดไป
+	                            {'>'}
 	                          </button>
 	                          <span className="text-gray-500">
 	                            Page {policeStationsPage}/{policeStationsTotalPages} | Total {policeStationsTotal}
