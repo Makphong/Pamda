@@ -9,6 +9,7 @@ import { Firestore } from '@google-cloud/firestore';
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
+  renderLineScamFraudReportPage,
   renderLineScamFakeNewsPage,
   renderLineScamPoliceStationsPage,
   renderLineScamRiskAssessPage,
@@ -141,6 +142,9 @@ const FIRESTORE_LINE_SCAM_BOT_COLLECTION = String(
 const FIRESTORE_LINE_SCAM_POLICE_STATION_COLLECTION = String(
   process.env.FIRESTORE_LINE_SCAM_POLICE_STATION_COLLECTION || 'line_scam_police_stations'
 ).trim();
+const FIRESTORE_LINE_SCAM_REPORTER_USER_COLLECTION = String(
+  process.env.FIRESTORE_LINE_SCAM_REPORTER_USER_COLLECTION || 'line_scam_reporter_users'
+).trim();
 const FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION = String(
   process.env.FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION || 'line_scam_webhook_logs'
 ).trim();
@@ -232,9 +236,14 @@ const LINE_SCAM_LIFF_FAKE_NEWS_URL = String(process.env.LINE_SCAM_LIFF_FAKE_NEWS
 const LINE_SCAM_LIFF_RISK_ASSESS_URL = String(
   process.env.LINE_SCAM_LIFF_RISK_ASSESS_URL || ''
 ).trim();
+const LINE_SCAM_LIFF_FRAUD_REPORT_URL = String(process.env.LINE_SCAM_LIFF_FRAUD_REPORT_URL || '').trim();
 const LINE_SCAM_LIFF_POLICE_STATIONS_URL = String(
   process.env.LINE_SCAM_LIFF_POLICE_STATIONS_URL || ''
 ).trim();
+const LINE_SCAM_REPORTER_AUTH_TTL_MS = Math.max(
+  15 * 60 * 1000,
+  Number(process.env.LINE_SCAM_REPORTER_AUTH_TTL_MS || 60 * 60 * 1000)
+);
 const LINE_SCAM_POLICE_STATIONS_OVERPASS_URL = String(
   process.env.LINE_SCAM_POLICE_STATIONS_OVERPASS_URL || 'https://overpass-api.de/api/interpreter'
 ).trim();
@@ -422,6 +431,7 @@ const lineReminderLogRef = firestore.collection(FIRESTORE_LINE_REMINDER_LOG_COLL
 const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION);
 const lineScamBotRef = firestore.collection(FIRESTORE_LINE_SCAM_BOT_COLLECTION);
 const lineScamPoliceStationRef = firestore.collection(FIRESTORE_LINE_SCAM_POLICE_STATION_COLLECTION);
+const lineScamReporterUserRef = firestore.collection(FIRESTORE_LINE_SCAM_REPORTER_USER_COLLECTION);
 const lineScamWebhookLogRef = firestore.collection(FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION);
 const lineScamBotConfigDocRef = lineScamBotRef.doc('global');
 const lineEscrowBotRef = firestore.collection(FIRESTORE_LINE_ESCROW_BOT_COLLECTION);
@@ -1548,6 +1558,7 @@ const buildLineScamUnknownCommandText = () =>
     `- ${LINE_SCAM_RICH_MENU_COMMANDS.CHECK_SCAMMER}`,
     `- ${LINE_SCAM_RICH_MENU_COMMANDS.CHECK_FAKE_NEWS}`,
     `- ${LINE_SCAM_RICH_MENU_COMMANDS.ASSESS_RISK}`,
+    `- ${LINE_SCAM_RICH_MENU_COMMANDS.REPORT_FRAUD}`,
     `- ${LINE_SCAM_RICH_MENU_COMMANDS.HOW_TO_USE}`,
   ].join('\\n');
 
@@ -1595,6 +1606,19 @@ const buildLineScamCommandReplyMessages = ({ commandKey, liffUrls }) => {
         actionUrl: urls.riskAssess || '',
         accentColor: '#a16207',
         altText: 'ประเมินความเสี่ยง',
+      }),
+    ];
+  }
+  if (commandKey === 'report_fraud') {
+    return [
+      buildLineScamActionFlexMessage({
+        title: 'รายงานคนโกง',
+        bodyText:
+          'หากเคยถูกโกงหรือพบข้อมูลมิจฉาชีพ สามารถรายงานเข้าระบบได้ทันที ระบบจะบันทึกประวัติรายงานไว้ในบัญชีของคุณ',
+        actionLabel: 'เปิดหน้า รายงานคนโกง',
+        actionUrl: urls.fraudReport || '',
+        accentColor: '#991b1b',
+        altText: 'รายงานคนโกง',
       }),
     ];
   }
@@ -2151,7 +2175,7 @@ const paginateLineScamPoliceStations = (stationsInput, pageInput = 1, pageSizeIn
 const setLineScamLiffHtmlHeaders = (res) => {
   res.set(
     'Content-Security-Policy',
-    "default-src 'self'; img-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self' https://line.me https://*.line.me"
+    "default-src 'self'; img-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com; connect-src 'self' https://accounts.google.com https://www.googleapis.com; frame-src https://accounts.google.com; frame-ancestors 'self' https://line.me https://*.line.me"
   );
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
@@ -3148,6 +3172,7 @@ const LINE_SCAM_RICH_MENU_COMMANDS = Object.freeze({
   CHECK_SCAMMER: 'ตรวจสอบมิจฉาชีพ',
   CHECK_FAKE_NEWS: 'ตรวจสอบข่าวปลอม',
   ASSESS_RISK: 'ประเมินความเสี่ยง',
+  REPORT_FRAUD: 'รายงานคนโกง',
   HOW_TO_USE: 'เเนะนำวิธีการใช้งาน',
 });
 const LINE_SCAM_COMMAND_KEY_BY_TEXT = new Map([
@@ -3155,6 +3180,7 @@ const LINE_SCAM_COMMAND_KEY_BY_TEXT = new Map([
   [LINE_SCAM_RICH_MENU_COMMANDS.CHECK_SCAMMER, 'check_scammer'],
   [LINE_SCAM_RICH_MENU_COMMANDS.CHECK_FAKE_NEWS, 'check_fake_news'],
   [LINE_SCAM_RICH_MENU_COMMANDS.ASSESS_RISK, 'assess_risk'],
+  [LINE_SCAM_RICH_MENU_COMMANDS.REPORT_FRAUD, 'report_fraud'],
   [LINE_SCAM_RICH_MENU_COMMANDS.HOW_TO_USE, 'how_to_use'],
   ['คำแนะนำเมื่อถือถูกโกง', 'help_when_scammed'],
   ['คำแนะนำเมื่อโดนโกง', 'help_when_scammed'],
@@ -3168,12 +3194,16 @@ const LINE_SCAM_COMMAND_KEY_BY_TEXT = new Map([
   ['โกงคอลเซ็นเตอร์', 'help_call_center_scam'],
   ['โกงคอลเซนเตอร์', 'help_call_center_scam'],
   ['โกงคอลเวนเตอร์', 'help_call_center_scam'],
+  ['รายงานคนโกง', 'report_fraud'],
+  ['แจ้งรายงานคนโกง', 'report_fraud'],
+  ['แจ้งเบาะแสมิจฉาชีพ', 'report_fraud'],
   ['แนะนำวิธีการใช้งาน', 'how_to_use'],
 ]);
 const LINE_SCAM_LIFF_DEFAULT_PATHS = Object.freeze({
   scammerCheck: '/line/scam/liff/scammer-check',
   fakeNews: '/line/scam/liff/fake-news',
   riskAssess: '/line/scam/liff/risk-assess',
+  fraudReport: '/line/scam/liff/report-fraud',
   policeStations: '/line/scam/liff/police-stations',
 });
 
@@ -3219,6 +3249,7 @@ const normalizeLineScamBotConfigRecord = (recordInput) => {
     liffScammerCheckUrl: String(record.liffScammerCheckUrl || '').trim(),
     liffFakeNewsUrl: String(record.liffFakeNewsUrl || '').trim(),
     liffRiskAssessUrl: String(record.liffRiskAssessUrl || '').trim(),
+    liffFraudReportUrl: String(record.liffFraudReportUrl || '').trim(),
     liffPoliceStationsUrl: String(record.liffPoliceStationsUrl || '').trim(),
     richMenuId: String(record.richMenuId || '').trim(),
     updatedAt: String(record.updatedAt || '').trim() || null,
@@ -3233,10 +3264,12 @@ const resolveLineScamLiffUrls = (req, configInput = {}) => {
   const envScammerCheck = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_SCAMMER_CHECK_URL);
   const envFakeNews = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_FAKE_NEWS_URL);
   const envRiskAssess = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_RISK_ASSESS_URL);
+  const envFraudReport = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_FRAUD_REPORT_URL);
   const envPoliceStations = normalizeOptionalHttpUrl(LINE_SCAM_LIFF_POLICE_STATIONS_URL);
   const configuredScammerCheck = normalizeOptionalHttpUrl(config.liffScammerCheckUrl);
   const configuredFakeNews = normalizeOptionalHttpUrl(config.liffFakeNewsUrl);
   const configuredRiskAssess = normalizeOptionalHttpUrl(config.liffRiskAssessUrl);
+  const configuredFraudReport = normalizeOptionalHttpUrl(config.liffFraudReportUrl);
   const configuredPoliceStations = normalizeOptionalHttpUrl(config.liffPoliceStationsUrl);
   const buildDefaultUrl = (path) => {
     if (!requestOrigin) return '';
@@ -3253,6 +3286,10 @@ const resolveLineScamLiffUrls = (req, configInput = {}) => {
       configuredRiskAssess ||
       envRiskAssess ||
       buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.riskAssess),
+    fraudReport:
+      configuredFraudReport ||
+      envFraudReport ||
+      buildDefaultUrl(LINE_SCAM_LIFF_DEFAULT_PATHS.fraudReport),
     policeStations:
       configuredPoliceStations ||
       envPoliceStations ||
@@ -3273,6 +3310,7 @@ const toLineScamBotPublicConfig = (req, configInput = {}) => {
       checkScammer: LINE_SCAM_RICH_MENU_COMMANDS.CHECK_SCAMMER,
       checkFakeNews: LINE_SCAM_RICH_MENU_COMMANDS.CHECK_FAKE_NEWS,
       assessRisk: LINE_SCAM_RICH_MENU_COMMANDS.ASSESS_RISK,
+      reportFraud: LINE_SCAM_RICH_MENU_COMMANDS.REPORT_FRAUD,
       howToUse: LINE_SCAM_RICH_MENU_COMMANDS.HOW_TO_USE,
     },
     channelSecretConfigured: Boolean(LINE_SCAM_CHANNEL_SECRET),
@@ -6571,6 +6609,265 @@ const ensureAuthUserMatches = (req, res, targetUserIdInput) => {
   }
   return true;
 };
+
+const LINE_SCAM_REPORTER_TOKEN_SCOPE = 'line_scam_reporter';
+
+const normalizeLineScamReporterCitizenId = (valueInput) =>
+  String(valueInput || '')
+    .replace(/\D+/g, '')
+    .slice(0, 13);
+
+const normalizeLineScamReporterPhone = (valueInput) =>
+  String(valueInput || '')
+    .replace(/[^\d+]/g, '')
+    .slice(0, 20);
+
+const isValidLineScamReporterEmail = (valueInput) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sanitizeEmail(valueInput));
+
+const isValidLineScamReporterPhone = (valueInput) => {
+  const digits = String(valueInput || '').replace(/\D+/g, '');
+  return digits.length >= 9 && digits.length <= 15;
+};
+
+const splitLineScamReporterName = (fullNameInput) => {
+  const fullName = normalizeOptionalString(fullNameInput || '', 220);
+  if (!fullName) {
+    return {
+      firstName: '',
+      lastName: '',
+    };
+  }
+  const parts = fullName.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) {
+    return {
+      firstName: parts[0],
+      lastName: '',
+    };
+  }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' '),
+  };
+};
+
+const toLineScamReporterPublicProfile = (userInput) => {
+  const user = userInput && typeof userInput === 'object' && !Array.isArray(userInput) ? userInput : {};
+  return {
+    id: sanitizeUserId(user.id),
+    firstName: normalizeOptionalString(user.firstName || '', 120),
+    lastName: normalizeOptionalString(user.lastName || '', 120),
+    address: normalizeOptionalString(user.address || '', 400),
+    citizenId: normalizeLineScamReporterCitizenId(user.citizenId || ''),
+    phone: normalizeLineScamReporterPhone(user.phone || ''),
+    username: sanitizeUsername(user.username),
+    email: sanitizeEmail(user.email),
+    provider: normalizeOptionalString(user.provider || 'local', 40) || 'local',
+    googleLinked: user.googleLinked === true,
+    createdAt: normalizeOptionalString(user.createdAt || '', 80) || null,
+    updatedAt: normalizeOptionalString(user.updatedAt || '', 80) || null,
+    lastLoginAt: normalizeOptionalString(user.lastLoginAt || '', 80) || null,
+  };
+};
+
+const isLineScamReporterProfileComplete = (profileInput) => {
+  const profile =
+    profileInput && typeof profileInput === 'object' && !Array.isArray(profileInput)
+      ? profileInput
+      : {};
+  return Boolean(
+    profile.firstName &&
+      profile.lastName &&
+      profile.address &&
+      profile.citizenId &&
+      String(profile.citizenId).length === 13 &&
+      profile.phone &&
+      profile.username &&
+      profile.email
+  );
+};
+
+const validateLineScamReporterProfile = (profileInput) => {
+  const profile =
+    profileInput && typeof profileInput === 'object' && !Array.isArray(profileInput)
+      ? profileInput
+      : {};
+  if (!profile.firstName || !profile.lastName || !profile.address || !profile.username || !profile.email) {
+    return 'กรุณากรอกข้อมูลให้ครบถ้วน';
+  }
+  if (!isValidLineScamReporterEmail(profile.email)) {
+    return 'อีเมลไม่ถูกต้อง';
+  }
+  if (String(profile.username || '').length < 3) {
+    return 'ชื่อผู้ใช้ต้องมีอย่างน้อย 3 ตัวอักษร';
+  }
+  if (String(profile.citizenId || '').length !== 13) {
+    return 'เลขบัตรประชาชนต้องมี 13 หลัก';
+  }
+  if (!isValidLineScamReporterPhone(profile.phone)) {
+    return 'เบอร์โทรต้องมี 9-15 หลัก';
+  }
+  return '';
+};
+
+const normalizeLineScamReporterProfileInput = (bodyInput = {}) => {
+  const body = bodyInput && typeof bodyInput === 'object' && !Array.isArray(bodyInput) ? bodyInput : {};
+  return {
+    firstName: normalizeOptionalString(body.firstName || '', 120),
+    lastName: normalizeOptionalString(body.lastName || '', 120),
+    address: normalizeOptionalString(body.address || '', 400),
+    citizenId: normalizeLineScamReporterCitizenId(body.citizenId || ''),
+    phone: normalizeLineScamReporterPhone(body.phone || ''),
+    username: sanitizeUsername(body.username || ''),
+    email: sanitizeEmail(body.email || ''),
+    password: String(body.password || ''),
+  };
+};
+
+const toLineScamReporterAuthPayload = (userInput) => {
+  const profile = toLineScamReporterPublicProfile(userInput || {});
+  const token = createLineScamReporterAuthToken(profile);
+  const verified = verifyLineScamReporterAuthToken(token);
+  return {
+    token,
+    expiresAt: Number(verified?.exp || Date.now() + LINE_SCAM_REPORTER_AUTH_TTL_MS),
+    profile,
+    profileComplete: isLineScamReporterProfileComplete(profile),
+    authTtlMs: LINE_SCAM_REPORTER_AUTH_TTL_MS,
+  };
+};
+
+const getLineScamReporterUserByEmail = async (emailInput) => {
+  const email = sanitizeEmail(emailInput);
+  if (!email) return null;
+  const snapshot = await lineScamReporterUserRef.where('email', '==', email).limit(1).get();
+  if (snapshot.empty) return null;
+  const doc = snapshot.docs[0];
+  return { id: doc.id, ...(doc.data() || {}) };
+};
+
+const getLineScamReporterUserByUsername = async (usernameInput) => {
+  const username = sanitizeUsername(usernameInput);
+  if (!username) return null;
+  const snapshot = await lineScamReporterUserRef.where('username', '==', username).limit(1).get();
+  if (snapshot.empty) return null;
+  const doc = snapshot.docs[0];
+  return { id: doc.id, ...(doc.data() || {}) };
+};
+
+const getLineScamReporterUserByIdentifier = async (identifierInput) => {
+  const identifier = String(identifierInput || '').trim();
+  if (!identifier) return null;
+  if (identifier.includes('@')) {
+    return getLineScamReporterUserByEmail(identifier);
+  }
+  return getLineScamReporterUserByUsername(identifier);
+};
+
+const getLineScamReporterUserById = async (userIdInput) => {
+  const userId = sanitizeUserId(userIdInput);
+  if (!userId) return null;
+  const doc = await lineScamReporterUserRef.doc(userId).get();
+  if (!doc.exists) return null;
+  return { id: doc.id, ...(doc.data() || {}) };
+};
+
+const makeUniqueLineScamReporterUsername = async (preferredInput) => {
+  const base =
+    sanitizeUsername(preferredInput || '')
+      .replace(/[^a-z0-9._-]/g, '')
+      .slice(0, 40) || `reporter${Math.floor(Math.random() * 10000)}`;
+  let attempt = base;
+  let suffix = 1;
+  // keep probing until username is available
+  while (await getLineScamReporterUserByUsername(attempt)) {
+    attempt = `${base}${suffix}`;
+    suffix += 1;
+    if (suffix > 10000) {
+      attempt = `${base}${Date.now().toString(36).slice(-4)}`;
+      break;
+    }
+  }
+  return attempt;
+};
+
+const createLineScamReporterAuthToken = (userInput) => {
+  const profile = toLineScamReporterPublicProfile(userInput || {});
+  const nowMs = Date.now();
+  const payload = {
+    sub: sanitizeUserId(profile.id),
+    email: sanitizeEmail(profile.email),
+    username: sanitizeUsername(profile.username),
+    scope: LINE_SCAM_REPORTER_TOKEN_SCOPE,
+    iat: nowMs,
+    exp: nowMs + LINE_SCAM_REPORTER_AUTH_TTL_MS,
+  };
+  const payloadPart = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', EFFECTIVE_AUTH_TOKEN_SECRET)
+    .update(payloadPart)
+    .digest('base64url');
+  return `${payloadPart}.${signature}`;
+};
+
+const verifyLineScamReporterAuthToken = (tokenInput) => {
+  const token = sanitizeAuthToken(tokenInput);
+  if (!token || !token.includes('.')) return null;
+  const [payloadPartRaw, signatureRaw] = token.split('.');
+  const payloadPart = String(payloadPartRaw || '').trim();
+  const signature = String(signatureRaw || '').trim();
+  if (!payloadPart || !signature) return null;
+  const expectedSignature = crypto
+    .createHmac('sha256', EFFECTIVE_AUTH_TOKEN_SECRET)
+    .update(payloadPart)
+    .digest('base64url');
+  const expectedBuffer = Buffer.from(expectedSignature);
+  const incomingBuffer = Buffer.from(signature);
+  if (expectedBuffer.length !== incomingBuffer.length) return null;
+  if (!crypto.timingSafeEqual(expectedBuffer, incomingBuffer)) return null;
+
+  let payload = null;
+  try {
+    payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+  } catch {
+    payload = null;
+  }
+  if (!payload || typeof payload !== 'object') return null;
+  const sub = sanitizeUserId(payload.sub);
+  const email = sanitizeEmail(payload.email);
+  const username = sanitizeUsername(payload.username);
+  const scope = normalizeOptionalString(payload.scope || '', 60);
+  const exp = Number(payload.exp || 0);
+  if (
+    !sub ||
+    !email ||
+    !username ||
+    scope !== LINE_SCAM_REPORTER_TOKEN_SCOPE ||
+    !Number.isFinite(exp) ||
+    Date.now() > exp
+  ) {
+    return null;
+  }
+  return {
+    sub,
+    email,
+    username,
+    scope,
+    iat: Number(payload.iat || 0),
+    exp,
+  };
+};
+
+const requireLineScamReporterAuth = (req, res, next) => {
+  const token = getBearerToken(req);
+  const verified = verifyLineScamReporterAuthToken(token);
+  if (!verified) {
+    return res.status(401).json({ message: 'Please sign in again.' });
+  }
+  req.lineScamReporterAuth = verified;
+  return next();
+};
+
 const requireRootAdmin = async (req, res, next) => {
   try {
     if (!ROOT_ADMIN_EMAIL) {
@@ -6812,6 +7109,7 @@ app.get('/health', (_req, res) => {
     firestoreLineWebhookLogCollection: FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION,
     firestoreLineScamBotCollection: FIRESTORE_LINE_SCAM_BOT_COLLECTION,
     firestoreLineScamPoliceStationCollection: FIRESTORE_LINE_SCAM_POLICE_STATION_COLLECTION,
+    firestoreLineScamReporterUserCollection: FIRESTORE_LINE_SCAM_REPORTER_USER_COLLECTION,
     firestoreLineScamWebhookLogCollection: FIRESTORE_LINE_SCAM_WEBHOOK_LOG_COLLECTION,
     firestoreLineEscrowBotCollection: FIRESTORE_LINE_ESCROW_BOT_COLLECTION,
     firestoreLineEscrowWebhookLogCollection: FIRESTORE_LINE_ESCROW_WEBHOOK_LOG_COLLECTION,
@@ -8331,11 +8629,13 @@ app.put('/admin/line-scam-bot/config', requireAuth, requireRootAdmin, async (req
     const liffScammerCheckUrl = normalizeOptionalHttpUrl(req.body?.liffScammerCheckUrl || '', 1000);
     const liffFakeNewsUrl = normalizeOptionalHttpUrl(req.body?.liffFakeNewsUrl || '', 1000);
     const liffRiskAssessUrl = normalizeOptionalHttpUrl(req.body?.liffRiskAssessUrl || '', 1000);
+    const liffFraudReportUrl = normalizeOptionalHttpUrl(req.body?.liffFraudReportUrl || '', 1000);
     const liffPoliceStationsUrl = normalizeOptionalHttpUrl(req.body?.liffPoliceStationsUrl || '', 1000);
     if (
       liffScammerCheckUrl === null ||
       liffFakeNewsUrl === null ||
       liffRiskAssessUrl === null ||
+      liffFraudReportUrl === null ||
       liffPoliceStationsUrl === null
     ) {
       return res.status(400).json({
@@ -8349,6 +8649,7 @@ app.put('/admin/line-scam-bot/config', requireAuth, requireRootAdmin, async (req
         liffScammerCheckUrl: liffScammerCheckUrl || '',
         liffFakeNewsUrl: liffFakeNewsUrl || '',
         liffRiskAssessUrl: liffRiskAssessUrl || '',
+        liffFraudReportUrl: liffFraudReportUrl || '',
         liffPoliceStationsUrl: liffPoliceStationsUrl || '',
         richMenuId: richMenuId || '',
         updatedAt: nowIso,
@@ -8520,6 +8821,420 @@ app.get('/line/scam/liff/risk-assess', (_req, res) => {
         maxImageCount: SCAM_LIFF_IMAGE_MAX_COUNT,
       })
     );
+});
+
+app.get('/line/scam/liff/report-fraud', (_req, res) => {
+  setLineScamLiffHtmlHeaders(res);
+  return res
+    .status(200)
+    .type('html')
+    .send(
+      renderLineScamFraudReportPage({
+        maxImageBytes: SCAM_REPORT_IMAGE_MAX_BYTES,
+        authTtlMs: LINE_SCAM_REPORTER_AUTH_TTL_MS,
+        googleClientId: GOOGLE_CLIENT_ID,
+      })
+    );
+});
+
+app.post('/line/scam/liff/api/reporter/register', async (req, res) => {
+  try {
+    const profileInput = normalizeLineScamReporterProfileInput(req.body);
+    const profileError = validateLineScamReporterProfile(profileInput);
+    if (profileError) {
+      return res.status(400).json({ message: profileError });
+    }
+    if (String(profileInput.password || '').length < 6) {
+      return res.status(400).json({ message: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' });
+    }
+
+    const [existingByEmail, existingByUsername] = await Promise.all([
+      getLineScamReporterUserByEmail(profileInput.email),
+      getLineScamReporterUserByUsername(profileInput.username),
+    ]);
+    if (existingByEmail) {
+      return res.status(409).json({ message: 'อีเมลนี้ถูกใช้งานแล้ว' });
+    }
+    if (existingByUsername) {
+      return res.status(409).json({ message: 'ชื่อผู้ใช้นี้ถูกใช้งานแล้ว' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const userId = crypto.randomUUID();
+    const passwordHash = await bcrypt.hash(String(profileInput.password || ''), 10);
+    const record = {
+      firstName: profileInput.firstName,
+      lastName: profileInput.lastName,
+      address: profileInput.address,
+      citizenId: profileInput.citizenId,
+      phone: profileInput.phone,
+      username: profileInput.username,
+      email: profileInput.email,
+      passwordHash,
+      password: '',
+      provider: 'local',
+      googleLinked: false,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastLoginAt: nowIso,
+    };
+    await lineScamReporterUserRef.doc(userId).set(record, { merge: true });
+    return res.status(201).json({
+      message: 'ลงทะเบียนสำเร็จ',
+      ...toLineScamReporterAuthPayload({ id: userId, ...record }),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to register reporter account.' });
+  }
+});
+
+app.post('/line/scam/liff/api/reporter/login', async (req, res) => {
+  try {
+    const identifier = String(req.body?.identifier || req.body?.username || req.body?.email || '').trim();
+    const password = String(req.body?.password || '');
+    if (!identifier || !password) {
+      return res.status(400).json({ message: 'identifier and password are required.' });
+    }
+
+    const user = await getLineScamReporterUserByIdentifier(identifier);
+    if (!user) {
+      return res.status(401).json({ message: 'ชื่อผู้ใช้/อีเมล หรือรหัสผ่านไม่ถูกต้อง' });
+    }
+    const passwordHash = String(user.passwordHash || '').trim();
+    const legacyPassword = String(user.password || '');
+    if (!passwordHash && !legacyPassword) {
+      return res.status(400).json({ message: 'บัญชีนี้ใช้ Google sign-in กรุณาเข้าสู่ระบบด้วย Google' });
+    }
+
+    const isPasswordValid = passwordHash ? await bcrypt.compare(password, passwordHash) : legacyPassword === password;
+    if (!isPasswordValid) {
+      return res.status(401).json({ message: 'ชื่อผู้ใช้/อีเมล หรือรหัสผ่านไม่ถูกต้อง' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const loginPatch = {
+      lastLoginAt: nowIso,
+      updatedAt: nowIso,
+    };
+    if (!passwordHash && legacyPassword) {
+      loginPatch.passwordHash = await bcrypt.hash(password, 10);
+      loginPatch.password = '';
+    }
+    await lineScamReporterUserRef.doc(user.id).set(loginPatch, { merge: true });
+    const merged = {
+      ...user,
+      ...loginPatch,
+      passwordHash: loginPatch.passwordHash || passwordHash,
+      password: '',
+    };
+    return res.json({
+      message: 'เข้าสู่ระบบสำเร็จ',
+      ...toLineScamReporterAuthPayload({ id: user.id, ...merged }),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to login reporter account.' });
+  }
+});
+
+app.post('/line/scam/liff/api/reporter/google', async (req, res) => {
+  try {
+    const idToken = String(req.body?.idToken || '').trim();
+    const accessToken = String(req.body?.accessToken || '').trim();
+    if (!idToken && !accessToken) {
+      return res.status(400).json({ message: 'idToken or accessToken is required.' });
+    }
+
+    let email = '';
+    let name = '';
+    let emailVerified = false;
+
+    if (idToken) {
+      if (!oauthClient || !GOOGLE_CLIENT_ID) {
+        return res.status(503).json({
+          message: 'Google OAuth is not configured. Set GOOGLE_CLIENT_ID or GOOGLE_OAUTH_JSON_PATH.',
+        });
+      }
+      const ticket = await oauthClient.verifyIdToken({
+        idToken,
+        audience: GOOGLE_CLIENT_ID,
+      });
+      const payload = ticket.getPayload();
+      email = sanitizeEmail(payload?.email);
+      name = String(payload?.name || '').trim();
+      emailVerified = payload?.email_verified === true || payload?.email_verified === 'true';
+    } else {
+      const profileResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!profileResponse.ok) {
+        return res.status(401).json({ message: 'Invalid Google access token.' });
+      }
+      const profile = await profileResponse.json();
+      email = sanitizeEmail(profile?.email);
+      name = String(profile?.name || '').trim();
+      emailVerified = profile?.email_verified === true || profile?.email_verified === 'true';
+    }
+
+    if (!email || !emailVerified) {
+      return res.status(401).json({ message: 'Google account email is not verified.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const nameParts = splitLineScamReporterName(name);
+    let user = await getLineScamReporterUserByEmail(email);
+
+    if (!user) {
+      const preferredUsername = sanitizeUsername(email.split('@')[0] || 'reporter');
+      const uniqueUsername = await makeUniqueLineScamReporterUsername(preferredUsername);
+      const userId = crypto.randomUUID();
+      const newUser = {
+        firstName: nameParts.firstName,
+        lastName: nameParts.lastName,
+        address: '',
+        citizenId: '',
+        phone: '',
+        username: uniqueUsername,
+        email,
+        passwordHash: '',
+        password: '',
+        provider: 'google',
+        googleLinked: true,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        lastLoginAt: nowIso,
+      };
+      await lineScamReporterUserRef.doc(userId).set(newUser, { merge: true });
+      user = { id: userId, ...newUser };
+    } else {
+      const profilePatch = {
+        updatedAt: nowIso,
+        lastLoginAt: nowIso,
+        googleLinked: true,
+      };
+      if (String(user.provider || '').trim().toLowerCase() === 'local') {
+        profilePatch.provider = 'local_google';
+      } else if (!String(user.provider || '').trim()) {
+        profilePatch.provider = 'google';
+      }
+      if (!String(user.firstName || '').trim() && nameParts.firstName) {
+        profilePatch.firstName = nameParts.firstName;
+      }
+      if (!String(user.lastName || '').trim() && nameParts.lastName) {
+        profilePatch.lastName = nameParts.lastName;
+      }
+      await lineScamReporterUserRef.doc(user.id).set(profilePatch, { merge: true });
+      user = { ...user, ...profilePatch };
+    }
+
+    return res.json({
+      message: 'Google sign-in successful.',
+      ...toLineScamReporterAuthPayload({ id: user.id, ...user }),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to sign in with Google.' });
+  }
+});
+
+app.get('/line/scam/liff/api/reporter/me', requireLineScamReporterAuth, async (req, res) => {
+  try {
+    const user = await getLineScamReporterUserById(req.lineScamReporterAuth?.sub);
+    if (!user) {
+      return res.status(404).json({ message: 'Reporter account not found.' });
+    }
+    const profile = toLineScamReporterPublicProfile(user);
+    return res.json({
+      profile,
+      profileComplete: isLineScamReporterProfileComplete(profile),
+      expiresAt: Number(req.lineScamReporterAuth?.exp || 0),
+      authTtlMs: LINE_SCAM_REPORTER_AUTH_TTL_MS,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load reporter profile.' });
+  }
+});
+
+app.put('/line/scam/liff/api/reporter/profile', requireLineScamReporterAuth, async (req, res) => {
+  try {
+    const userId = sanitizeUserId(req.lineScamReporterAuth?.sub);
+    if (!userId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const user = await getLineScamReporterUserById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Reporter account not found.' });
+    }
+
+    const profileInput = normalizeLineScamReporterProfileInput(req.body);
+    const mergedProfile = {
+      firstName: profileInput.firstName || normalizeOptionalString(user.firstName || '', 120),
+      lastName: profileInput.lastName || normalizeOptionalString(user.lastName || '', 120),
+      address: profileInput.address || normalizeOptionalString(user.address || '', 400),
+      citizenId: profileInput.citizenId || normalizeLineScamReporterCitizenId(user.citizenId || ''),
+      phone: profileInput.phone || normalizeLineScamReporterPhone(user.phone || ''),
+      username: profileInput.username || sanitizeUsername(user.username),
+      email: sanitizeEmail(user.email),
+    };
+    const profileError = validateLineScamReporterProfile(mergedProfile);
+    if (profileError) {
+      return res.status(400).json({ message: profileError });
+    }
+
+    const nextUsername = sanitizeUsername(mergedProfile.username);
+    if (nextUsername !== sanitizeUsername(user.username)) {
+      const usernameConflict = await getLineScamReporterUserByUsername(nextUsername);
+      if (usernameConflict && usernameConflict.id !== userId) {
+        return res.status(409).json({ message: 'ชื่อผู้ใช้นี้ถูกใช้งานแล้ว' });
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const patch = {
+      firstName: mergedProfile.firstName,
+      lastName: mergedProfile.lastName,
+      address: mergedProfile.address,
+      citizenId: mergedProfile.citizenId,
+      phone: mergedProfile.phone,
+      username: nextUsername,
+      updatedAt: nowIso,
+    };
+    await lineScamReporterUserRef.doc(userId).set(patch, { merge: true });
+    const updated = {
+      ...user,
+      ...patch,
+    };
+    const profile = toLineScamReporterPublicProfile({ id: userId, ...updated });
+    return res.json({
+      message: 'บันทึกข้อมูลยืนยันตัวตนสำเร็จ',
+      profile,
+      profileComplete: isLineScamReporterProfileComplete(profile),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to save reporter profile.' });
+  }
+});
+
+app.post('/line/scam/liff/api/reporter/logout', (_req, res) => {
+  return res.json({ message: 'Logged out.' });
+});
+
+app.get('/line/scam/liff/api/reporter/reports', requireLineScamReporterAuth, async (req, res) => {
+  try {
+    const reporterId = sanitizeUserId(req.lineScamReporterAuth?.sub);
+    if (!reporterId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const limitRaw = Number.parseInt(String(req.query?.limit || '200'), 10);
+    const limit = Number.isInteger(limitRaw) ? Math.min(500, Math.max(1, limitRaw)) : 200;
+    const snapshot = await scamReportRef.where('createdById', '==', reporterId).limit(limit).get();
+    const reports = snapshot.docs
+      .map((doc) => toScamReportResponse(doc.id, doc.data() || {}))
+      .sort((left, right) => toEpochMs(right.createdAt) - toEpochMs(left.createdAt));
+    return res.json({
+      reports,
+      total: reports.length,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load reporter history.' });
+  }
+});
+
+app.post('/line/scam/liff/api/reporter/reports', requireLineScamReporterAuth, async (req, res) => {
+  try {
+    const reporterId = sanitizeUserId(req.lineScamReporterAuth?.sub);
+    if (!reporterId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const reporter = await getLineScamReporterUserById(reporterId);
+    if (!reporter) {
+      return res.status(404).json({ message: 'Reporter account not found.' });
+    }
+    const reporterProfile = toLineScamReporterPublicProfile(reporter);
+    if (!isLineScamReporterProfileComplete(reporterProfile)) {
+      return res.status(403).json({ message: 'กรุณากรอกข้อมูลยืนยันตัวตนให้ครบก่อนรายงานคนโกง' });
+    }
+
+    const sellerAlias = String(req.body?.sellerAlias || '')
+      .trim()
+      .slice(0, 220);
+    const firstName = String(req.body?.firstName || '')
+      .trim()
+      .slice(0, 120);
+    const lastName = String(req.body?.lastName || '')
+      .trim()
+      .slice(0, 120);
+    const citizenId = String(req.body?.citizenId || '')
+      .trim()
+      .slice(0, 30);
+    const phone = String(req.body?.phone || '')
+      .trim()
+      .slice(0, 40);
+    const bankAccount = String(req.body?.bankAccount || '')
+      .trim()
+      .slice(0, 80);
+    const bankName = String(req.body?.bankName || '')
+      .trim()
+      .slice(0, 140);
+    const product = String(req.body?.product || '')
+      .trim()
+      .slice(0, 220);
+    const amount = normalizeScamReportAmount(req.body?.amount);
+    const transferDate = normalizeScamReportTransferDate(req.body?.transferDate);
+    const pageUrl = String(req.body?.pageUrl || '')
+      .trim()
+      .slice(0, 500);
+    const province = String(req.body?.province || '')
+      .trim()
+      .slice(0, 140);
+    const evidenceImageRaw = req.body?.evidenceImage;
+    const evidenceImage = evidenceImageRaw ? normalizeScamReportEvidenceImage(evidenceImageRaw) : null;
+    if (evidenceImageRaw && !evidenceImage) {
+      return res.status(400).json({
+        message: `Invalid evidence image. Only image/* data URL is allowed. Max ${SCAM_REPORT_IMAGE_MAX_BYTES} bytes.`,
+      });
+    }
+    if (!sellerAlias || !firstName || !lastName || !bankAccount || !bankName || !product || !transferDate || amount <= 0) {
+      return res.status(400).json({
+        message:
+          'sellerAlias, firstName, lastName, bankAccount, bankName, product, transferDate and amount are required.',
+      });
+    }
+
+    const reportId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
+    const record = {
+      sellerAlias,
+      firstName,
+      lastName,
+      citizenId,
+      phone,
+      bankAccount,
+      bankName,
+      product,
+      amount,
+      transferDate,
+      pageUrl,
+      province,
+      evidenceImage,
+      createdById: reporterId,
+      createdByUsername: sanitizeUsername(reporter.username),
+      createdByEmail: sanitizeEmail(reporter.email),
+      reporterId,
+      reporterUsername: sanitizeUsername(reporter.username),
+      reporterEmail: sanitizeEmail(reporter.email),
+      source: 'line_scam_liff_reporter',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    await scamReportRef.doc(reportId).set(record, { merge: true });
+    return res.status(201).json({
+      message: 'Scam report submitted successfully.',
+      report: toScamReportResponse(reportId, record),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to submit scam report.' });
+  }
 });
 
 app.get('/line/scam/liff/police-stations', (_req, res) => {

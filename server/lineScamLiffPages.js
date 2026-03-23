@@ -1196,3 +1196,568 @@ export const renderLineScamPoliceStationsPage = () =>
       loadStations({ query: '', page: 1 });
     `,
   });
+
+export const renderLineScamFraudReportPage = ({
+  maxImageBytes = 0,
+  authTtlMs = 60 * 60 * 1000,
+  googleClientId = '',
+} = {}) =>
+  buildShell({
+    title: 'รายงานคนโกง',
+    subtitle: 'ลงทะเบียนยืนยันตัวตนก่อนใช้งาน',
+    description: 'เมื่อเข้าสู่ระบบแล้วสามารถส่งรายงานและดูประวัติรายงานของตนเองได้',
+    bodyHtml: `
+      <section class="card">
+        <div id="auth-status" class="status hidden"></div>
+        <div id="auth-summary" class="tiny">ยังไม่ได้เข้าสู่ระบบ</div>
+        <div id="auth-gate" style="margin-top:10px;">
+          <div style="display:flex;gap:8px;">
+            <button id="tab-login" type="button" class="btn upload">เข้าสู่ระบบ</button>
+            <button id="tab-register" type="button" class="btn upload">ลงทะเบียน</button>
+          </div>
+          <form id="login-form" style="margin-top:10px;" class="row">
+            <div><label for="login-identifier">ชื่อผู้ใช้หรืออีเมล</label><input id="login-identifier" type="text" required /></div>
+            <div><label for="login-password">รหัสผ่าน</label><input id="login-password" type="password" required /></div>
+            <div><button id="login-submit" class="btn primary" type="submit">เข้าสู่ระบบ</button></div>
+          </form>
+          <form id="register-form" style="margin-top:10px;" class="row hidden">
+            <div class="row two">
+              <div><label for="reg-first-name">ชื่อจริง</label><input id="reg-first-name" type="text" required /></div>
+              <div><label for="reg-last-name">นามสกุล</label><input id="reg-last-name" type="text" required /></div>
+            </div>
+            <div><label for="reg-address">ที่อยู่</label><textarea id="reg-address"></textarea></div>
+            <div class="row two">
+              <div><label for="reg-citizen-id">บัตรประชาชน</label><input id="reg-citizen-id" type="text" required /></div>
+              <div><label for="reg-phone">เบอร์โทร</label><input id="reg-phone" type="text" required /></div>
+            </div>
+            <div class="row two">
+              <div><label for="reg-username">ชื่อผู้ใช้</label><input id="reg-username" type="text" required /></div>
+              <div><label for="reg-email">อีเมล</label><input id="reg-email" type="text" required /></div>
+            </div>
+            <div><label for="reg-password">รหัสผ่าน</label><input id="reg-password" type="password" required /></div>
+            <div><button id="register-submit" class="btn primary" type="submit">ลงทะเบียน</button></div>
+          </form>
+          <div style="margin-top:10px;border-top:1px dashed #dbe4f0;padding-top:10px;">
+            <p class="tiny">หรือเข้าสู่ระบบด้วย Google</p>
+            <div id="google-signin-box"></div>
+            <button id="google-prompt-btn" type="button" class="btn upload hidden" style="margin-top:8px;">Google Sign-In</button>
+            <p id="google-hint" class="tiny hidden"></p>
+          </div>
+        </div>
+        <div id="auth-ready" class="hidden" style="margin-top:10px;">
+          <div class="status success">เข้าสู่ระบบแล้ว <span id="session-expire-text" class="tiny"></span></div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button id="refresh-profile-btn" type="button" class="btn upload">รีเฟรช</button>
+            <button id="logout-btn" type="button" class="btn upload">ออกจากระบบ</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="verify-card" class="card hidden">
+        <h3 style="margin:0;">ยืนยันตัวตนเพิ่มเติม</h3>
+        <p class="tiny">กรอกข้อมูลให้ครบก่อนส่งรายงาน</p>
+        <form id="verify-form" class="row" style="margin-top:10px;">
+          <div class="row two">
+            <div><label for="verify-first-name">ชื่อจริง</label><input id="verify-first-name" type="text" required /></div>
+            <div><label for="verify-last-name">นามสกุล</label><input id="verify-last-name" type="text" required /></div>
+          </div>
+          <div><label for="verify-address">ที่อยู่</label><textarea id="verify-address"></textarea></div>
+          <div class="row two">
+            <div><label for="verify-citizen-id">บัตรประชาชน</label><input id="verify-citizen-id" type="text" required /></div>
+            <div><label for="verify-phone">เบอร์โทร</label><input id="verify-phone" type="text" required /></div>
+          </div>
+          <div class="row two">
+            <div><label for="verify-username">ชื่อผู้ใช้</label><input id="verify-username" type="text" required /></div>
+            <div><label for="verify-email">อีเมล</label><input id="verify-email" type="text" disabled /></div>
+          </div>
+          <div><button id="verify-submit" class="btn primary" type="submit">บันทึกข้อมูล</button></div>
+        </form>
+        <div id="verify-status" class="status hidden"></div>
+      </section>
+
+      <section id="report-card" class="card hidden">
+        <h3 style="margin:0;">แบบฟอร์มรายงานคนโกง</h3>
+        <form id="report-form" class="row" style="margin-top:10px;">
+          <div><label for="report-seller-alias">ชื่อร้าน/ชื่อบัญชี</label><input id="report-seller-alias" type="text" required /></div>
+          <div class="row two">
+            <div><label for="report-first-name">ชื่อจริงคนโกง</label><input id="report-first-name" type="text" required /></div>
+            <div><label for="report-last-name">นามสกุลคนโกง</label><input id="report-last-name" type="text" required /></div>
+          </div>
+          <div class="row two">
+            <div><label for="report-citizen-id">บัตรประชาชน (ถ้ามี)</label><input id="report-citizen-id" type="text" /></div>
+            <div><label for="report-phone">เบอร์โทร (ถ้ามี)</label><input id="report-phone" type="text" /></div>
+          </div>
+          <div class="row two">
+            <div><label for="report-bank-account">เลขบัญชี</label><input id="report-bank-account" type="text" required /></div>
+            <div><label for="report-bank-name">ธนาคาร</label><input id="report-bank-name" type="text" required /></div>
+          </div>
+          <div><label for="report-product">สินค้า/บริการ</label><input id="report-product" type="text" required /></div>
+          <div class="row two">
+            <div><label for="report-amount">ยอดเงินโอน (บาท)</label><input id="report-amount" type="text" required /></div>
+            <div><label for="report-transfer-date">วันที่โอน</label><input id="report-transfer-date" type="date" required /></div>
+          </div>
+          <div class="row two">
+            <div><label for="report-page-url">ลิงก์เพจ/โพสต์</label><input id="report-page-url" type="text" /></div>
+            <div><label for="report-province">จังหวัด</label><input id="report-province" type="text" /></div>
+          </div>
+          <div>
+            <label>หลักฐานรูปภาพ (ไม่บังคับ)</label>
+            <label for="report-evidence-input" class="btn upload" style="display:inline-flex;align-items:center;justify-content:center;">อัปโหลดรูป</label>
+            <input id="report-evidence-input" type="file" accept="image/*" class="hidden" />
+            <div id="report-evidence-preview" class="preview">ยังไม่ได้เลือกรูป</div>
+            <p class="tiny">สูงสุด ${Math.max(0, Number(maxImageBytes || 0)).toLocaleString()} bytes</p>
+          </div>
+          <div><button id="report-submit" class="btn primary" type="submit">ส่งรายงาน</button></div>
+        </form>
+        <div id="report-status" class="status hidden"></div>
+      </section>
+
+      <section id="history-card" class="card hidden">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <h3 style="margin:0;">ประวัติการรายงานของฉัน</h3>
+          <button id="history-refresh-btn" class="btn upload" type="button">รีเฟรช</button>
+        </div>
+        <p id="history-summary" class="tiny">ยังไม่มีรายการ</p>
+        <div id="history-status" class="status hidden"></div>
+        <div id="history-list" style="display:grid;gap:8px;margin-top:8px;"></div>
+      </section>
+    `,
+    script: `
+      const AUTH_TOKEN_KEY = 'line_scam_reporter_auth_token';
+      const AUTH_EXPIRES_KEY = 'line_scam_reporter_auth_expires_at';
+      const maxImageBytes = ${Math.max(0, Number(maxImageBytes || 0))};
+      const fallbackTtl = ${Math.max(60 * 1000, Number(authTtlMs || 60 * 60 * 1000))};
+      const googleClientId = ${JSON.stringify(String(googleClientId || ''))};
+
+      const authStatus = document.getElementById('auth-status');
+      const authSummary = document.getElementById('auth-summary');
+      const authGate = document.getElementById('auth-gate');
+      const authReady = document.getElementById('auth-ready');
+      const sessionExpireText = document.getElementById('session-expire-text');
+      const tabLogin = document.getElementById('tab-login');
+      const tabRegister = document.getElementById('tab-register');
+      const loginForm = document.getElementById('login-form');
+      const registerForm = document.getElementById('register-form');
+      const loginSubmit = document.getElementById('login-submit');
+      const registerSubmit = document.getElementById('register-submit');
+      const refreshProfileBtn = document.getElementById('refresh-profile-btn');
+      const logoutBtn = document.getElementById('logout-btn');
+
+      const verifyCard = document.getElementById('verify-card');
+      const verifyForm = document.getElementById('verify-form');
+      const verifySubmit = document.getElementById('verify-submit');
+      const verifyStatus = document.getElementById('verify-status');
+
+      const reportCard = document.getElementById('report-card');
+      const reportForm = document.getElementById('report-form');
+      const reportSubmit = document.getElementById('report-submit');
+      const reportStatus = document.getElementById('report-status');
+      const reportEvidenceInput = document.getElementById('report-evidence-input');
+      const reportEvidencePreview = document.getElementById('report-evidence-preview');
+
+      const historyCard = document.getElementById('history-card');
+      const historySummary = document.getElementById('history-summary');
+      const historyStatus = document.getElementById('history-status');
+      const historyList = document.getElementById('history-list');
+      const historyRefreshBtn = document.getElementById('history-refresh-btn');
+
+      const googleSigninBox = document.getElementById('google-signin-box');
+      const googlePromptBtn = document.getElementById('google-prompt-btn');
+      const googleHint = document.getElementById('google-hint');
+
+      let authToken = '';
+      let expiresAt = 0;
+      let timer = null;
+      let profile = null;
+      let evidenceImage = null;
+
+      function escapeHtml(value) {
+        return String(value || '').replace(/[&<>"']/g, function (char) {
+          if (char === '&') return '&amp;';
+          if (char === '<') return '&lt;';
+          if (char === '>') return '&gt;';
+          if (char === '"') return '&quot;';
+          return '&#39;';
+        });
+      }
+      function showBox(box, message, type) {
+        if (!box) return;
+        box.classList.remove('hidden', 'error', 'success');
+        box.textContent = message || '';
+        if (type === 'error') box.classList.add('error');
+        if (type === 'success') box.classList.add('success');
+      }
+      function hideBox(box) {
+        if (!box) return;
+        box.classList.add('hidden');
+        box.textContent = '';
+        box.classList.remove('error', 'success');
+      }
+      function setBusy(btn, busy, busyText, idleText) {
+        if (!btn) return;
+        btn.disabled = Boolean(busy);
+        btn.textContent = busy ? busyText : idleText;
+      }
+      function getProfileComplete(p) {
+        const x = p && typeof p === 'object' ? p : {};
+        return Boolean(
+          String(x.firstName || '').trim() &&
+          String(x.lastName || '').trim() &&
+          String(x.address || '').trim() &&
+          String(x.citizenId || '').trim().length === 13 &&
+          String(x.phone || '').trim() &&
+          String(x.username || '').trim() &&
+          String(x.email || '').trim()
+        );
+      }
+      function authHeaders() {
+        return { 'Content-Type': 'application/json', Authorization: 'Bearer ' + String(authToken || '') };
+      }
+      async function parseJson(response) {
+        const payload = await response.json().catch(function () { return null; });
+        if (!response.ok) throw new Error((payload && payload.message) || 'Request failed');
+        return payload || {};
+      }
+      function saveAuth(token, exp) {
+        authToken = String(token || '').trim();
+        expiresAt = Number(exp || 0);
+        if (authToken) localStorage.setItem(AUTH_TOKEN_KEY, authToken); else localStorage.removeItem(AUTH_TOKEN_KEY);
+        if (expiresAt > 0) localStorage.setItem(AUTH_EXPIRES_KEY, String(expiresAt)); else localStorage.removeItem(AUTH_EXPIRES_KEY);
+        scheduleAutoLogout();
+      }
+      function clearAuth() {
+        saveAuth('', 0);
+        profile = null;
+      }
+      function scheduleAutoLogout() {
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (!authToken || !expiresAt || expiresAt <= Date.now()) {
+          if (sessionExpireText) sessionExpireText.textContent = '';
+          return;
+        }
+        const leftMs = Math.max(1000, expiresAt - Date.now());
+        const leftMin = Math.ceil(leftMs / 60000);
+        sessionExpireText.textContent = 'หมดเวลาใน ' + leftMin + ' นาที';
+        timer = setTimeout(function () {
+          clearAuth();
+          updateUi();
+          showBox(authStatus, 'หมดเวลาใช้งาน กรุณาเข้าสู่ระบบใหม่', 'error');
+        }, leftMs);
+      }
+      function switchTab(name) {
+        const isLogin = name === 'login';
+        loginForm.classList.toggle('hidden', !isLogin);
+        registerForm.classList.toggle('hidden', isLogin);
+      }
+      function fillVerifyForm(p) {
+        const x = p && typeof p === 'object' ? p : {};
+        document.getElementById('verify-first-name').value = String(x.firstName || '');
+        document.getElementById('verify-last-name').value = String(x.lastName || '');
+        document.getElementById('verify-address').value = String(x.address || '');
+        document.getElementById('verify-citizen-id').value = String(x.citizenId || '');
+        document.getElementById('verify-phone').value = String(x.phone || '');
+        document.getElementById('verify-username').value = String(x.username || '');
+        document.getElementById('verify-email').value = String(x.email || '');
+      }
+      function updateUi() {
+        const loggedIn = Boolean(authToken && profile);
+        authGate.classList.toggle('hidden', loggedIn);
+        authReady.classList.toggle('hidden', !loggedIn);
+        if (!loggedIn) {
+          verifyCard.classList.add('hidden');
+          reportCard.classList.add('hidden');
+          historyCard.classList.add('hidden');
+          authSummary.textContent = 'ยังไม่ได้เข้าสู่ระบบ';
+          return;
+        }
+        authSummary.textContent = 'ผู้ใช้: ' + String(profile.username || '-') + ' (' + String(profile.email || '-') + ')';
+        const complete = getProfileComplete(profile);
+        verifyCard.classList.toggle('hidden', complete);
+        reportCard.classList.toggle('hidden', !complete);
+        historyCard.classList.remove('hidden');
+        fillVerifyForm(profile);
+      }
+      async function loadMe() {
+        if (!authToken) return;
+        const response = await fetch('/line/scam/liff/api/reporter/me', { method: 'GET', headers: authHeaders() });
+        const payload = await parseJson(response);
+        profile = payload.profile || null;
+        saveAuth(authToken, Number(payload.expiresAt || (Date.now() + fallbackTtl)));
+      }
+      function renderHistory(reports) {
+        const rows = Array.isArray(reports) ? reports : [];
+        historySummary.textContent = 'ทั้งหมด ' + rows.length + ' รายการ';
+        if (!rows.length) {
+          historyList.innerHTML = '<div class="tiny">ยังไม่มีประวัติ</div>';
+          return;
+        }
+        historyList.innerHTML = rows.map(function (row, idx) {
+          const title = String(row && row.sellerAlias || '-');
+          const amount = Number(row && row.amount || 0).toLocaleString();
+          const date = String(row && row.createdAt || '-');
+          return '<article style="border:1px solid #dbe4f0;border-radius:10px;padding:10px;background:#f8fbff;">'
+            + '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;"><strong>' + escapeHtml(String(idx + 1) + '. ' + title) + '</strong><span class="tiny">' + escapeHtml(date) + '</span></div>'
+            + '<div class="tiny">สินค้า: ' + escapeHtml(String(row && row.product || '-')) + '</div>'
+            + '<div class="tiny">ยอดโอน: ' + escapeHtml(amount) + ' บาท</div>'
+            + '</article>';
+        }).join('');
+      }
+      async function loadHistory() {
+        if (!authToken) return;
+        hideBox(historyStatus);
+        historyRefreshBtn.disabled = true;
+        try {
+          const response = await fetch('/line/scam/liff/api/reporter/reports?limit=300', { method: 'GET', headers: authHeaders() });
+          const payload = await parseJson(response);
+          renderHistory(payload.reports || []);
+        } catch (error) {
+          renderHistory([]);
+          showBox(historyStatus, error && error.message ? error.message : 'โหลดประวัติไม่สำเร็จ', 'error');
+        } finally {
+          historyRefreshBtn.disabled = false;
+        }
+      }
+      async function refreshAll(showSuccess) {
+        hideBox(authStatus);
+        try {
+          if (!authToken) { profile = null; updateUi(); return; }
+          await loadMe();
+          updateUi();
+          await loadHistory();
+          if (showSuccess) showBox(authStatus, 'เข้าสู่ระบบสำเร็จ', 'success');
+          if (profile && !getProfileComplete(profile)) showBox(authStatus, 'กรุณากรอกข้อมูลยืนยันตัวตนให้ครบ', 'error');
+        } catch (error) {
+          clearAuth();
+          updateUi();
+          showBox(authStatus, error && error.message ? error.message : 'กรุณาเข้าสู่ระบบใหม่', 'error');
+        }
+      }
+      async function readFileAsDataUrl(file) {
+        return await new Promise(function (resolve, reject) {
+          const reader = new FileReader();
+          reader.onload = function () { resolve(String(reader.result || '')); };
+          reader.onerror = function () { reject(new Error('ไม่สามารถอ่านไฟล์รูปได้')); };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      loginForm.addEventListener('submit', async function (event) {
+        event.preventDefault();
+        hideBox(authStatus);
+        const identifier = String(document.getElementById('login-identifier').value || '').trim();
+        const password = String(document.getElementById('login-password').value || '');
+        if (!identifier || !password) return showBox(authStatus, 'กรอกข้อมูลเข้าสู่ระบบให้ครบ', 'error');
+        setBusy(loginSubmit, true, 'กำลังเข้าสู่ระบบ...', 'เข้าสู่ระบบ');
+        try {
+          const response = await fetch('/line/scam/liff/api/reporter/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier: identifier, password: password }),
+          });
+          const payload = await parseJson(response);
+          saveAuth(String(payload.token || ''), Number(payload.expiresAt || (Date.now() + fallbackTtl)));
+          await refreshAll(true);
+        } catch (error) {
+          showBox(authStatus, error && error.message ? error.message : 'เข้าสู่ระบบไม่สำเร็จ', 'error');
+        } finally {
+          setBusy(loginSubmit, false, 'กำลังเข้าสู่ระบบ...', 'เข้าสู่ระบบ');
+        }
+      });
+
+      registerForm.addEventListener('submit', async function (event) {
+        event.preventDefault();
+        hideBox(authStatus);
+        const body = {
+          firstName: String(document.getElementById('reg-first-name').value || '').trim(),
+          lastName: String(document.getElementById('reg-last-name').value || '').trim(),
+          address: String(document.getElementById('reg-address').value || '').trim(),
+          citizenId: String(document.getElementById('reg-citizen-id').value || '').trim(),
+          phone: String(document.getElementById('reg-phone').value || '').trim(),
+          username: String(document.getElementById('reg-username').value || '').trim(),
+          email: String(document.getElementById('reg-email').value || '').trim(),
+          password: String(document.getElementById('reg-password').value || ''),
+        };
+        setBusy(registerSubmit, true, 'กำลังลงทะเบียน...', 'ลงทะเบียน');
+        try {
+          const response = await fetch('/line/scam/liff/api/reporter/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const payload = await parseJson(response);
+          saveAuth(String(payload.token || ''), Number(payload.expiresAt || (Date.now() + fallbackTtl)));
+          await refreshAll(true);
+        } catch (error) {
+          showBox(authStatus, error && error.message ? error.message : 'ลงทะเบียนไม่สำเร็จ', 'error');
+        } finally {
+          setBusy(registerSubmit, false, 'กำลังลงทะเบียน...', 'ลงทะเบียน');
+        }
+      });
+
+      verifyForm.addEventListener('submit', async function (event) {
+        event.preventDefault();
+        hideBox(verifyStatus);
+        setBusy(verifySubmit, true, 'กำลังบันทึก...', 'บันทึกข้อมูล');
+        try {
+          const response = await fetch('/line/scam/liff/api/reporter/profile', {
+            method: 'PUT',
+            headers: authHeaders(),
+            body: JSON.stringify({
+              firstName: String(document.getElementById('verify-first-name').value || '').trim(),
+              lastName: String(document.getElementById('verify-last-name').value || '').trim(),
+              address: String(document.getElementById('verify-address').value || '').trim(),
+              citizenId: String(document.getElementById('verify-citizen-id').value || '').trim(),
+              phone: String(document.getElementById('verify-phone').value || '').trim(),
+              username: String(document.getElementById('verify-username').value || '').trim(),
+            }),
+          });
+          const payload = await parseJson(response);
+          profile = payload.profile || profile;
+          updateUi();
+          showBox(verifyStatus, payload.message || 'บันทึกข้อมูลสำเร็จ', 'success');
+          hideBox(authStatus);
+        } catch (error) {
+          showBox(verifyStatus, error && error.message ? error.message : 'บันทึกข้อมูลไม่สำเร็จ', 'error');
+        } finally {
+          setBusy(verifySubmit, false, 'กำลังบันทึก...', 'บันทึกข้อมูล');
+        }
+      });
+
+      reportForm.addEventListener('submit', async function (event) {
+        event.preventDefault();
+        hideBox(reportStatus);
+        setBusy(reportSubmit, true, 'กำลังส่งรายงาน...', 'ส่งรายงาน');
+        try {
+          const amount = Number(String(document.getElementById('report-amount').value || '0').replace(/,/g, ''));
+          const response = await fetch('/line/scam/liff/api/reporter/reports', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({
+              sellerAlias: String(document.getElementById('report-seller-alias').value || '').trim(),
+              firstName: String(document.getElementById('report-first-name').value || '').trim(),
+              lastName: String(document.getElementById('report-last-name').value || '').trim(),
+              citizenId: String(document.getElementById('report-citizen-id').value || '').trim(),
+              phone: String(document.getElementById('report-phone').value || '').trim(),
+              bankAccount: String(document.getElementById('report-bank-account').value || '').trim(),
+              bankName: String(document.getElementById('report-bank-name').value || '').trim(),
+              product: String(document.getElementById('report-product').value || '').trim(),
+              amount: Number.isFinite(amount) ? amount : 0,
+              transferDate: String(document.getElementById('report-transfer-date').value || '').trim(),
+              pageUrl: String(document.getElementById('report-page-url').value || '').trim(),
+              province: String(document.getElementById('report-province').value || '').trim(),
+              evidenceImage: evidenceImage,
+            }),
+          });
+          const payload = await parseJson(response);
+          reportForm.reset();
+          evidenceImage = null;
+          reportEvidencePreview.textContent = 'ยังไม่ได้เลือกรูป';
+          showBox(reportStatus, payload.message || 'ส่งรายงานสำเร็จ', 'success');
+          await loadHistory();
+        } catch (error) {
+          showBox(reportStatus, error && error.message ? error.message : 'ส่งรายงานไม่สำเร็จ', 'error');
+        } finally {
+          setBusy(reportSubmit, false, 'กำลังส่งรายงาน...', 'ส่งรายงาน');
+        }
+      });
+
+      reportEvidenceInput.addEventListener('change', async function (event) {
+        hideBox(reportStatus);
+        const file = event.target && event.target.files ? event.target.files[0] : null;
+        if (!file) return;
+        try {
+          if (!String(file.type || '').toLowerCase().startsWith('image/')) throw new Error('รองรับเฉพาะไฟล์รูปภาพ');
+          if (maxImageBytes > 0 && Number(file.size || 0) > maxImageBytes) throw new Error('ขนาดรูปเกินกำหนด');
+          const dataUrl = await readFileAsDataUrl(file);
+          evidenceImage = {
+            id: 'evidence-' + Date.now(),
+            name: String(file.name || 'evidence-image').slice(0, 180),
+            mimeType: String(file.type || 'image/*').toLowerCase(),
+            size: Number(file.size || 0),
+            dataUrl: dataUrl,
+          };
+          reportEvidencePreview.innerHTML = '<img alt="evidence" src="' + escapeHtml(dataUrl) + '" />';
+        } catch (error) {
+          evidenceImage = null;
+          reportEvidencePreview.textContent = 'ยังไม่ได้เลือกรูป';
+          showBox(reportStatus, error && error.message ? error.message : 'อัปโหลดรูปไม่สำเร็จ', 'error');
+        } finally {
+          if (event.target) event.target.value = '';
+        }
+      });
+
+      historyRefreshBtn.addEventListener('click', function () { loadHistory(); });
+      refreshProfileBtn.addEventListener('click', function () { refreshAll(false); });
+      logoutBtn.addEventListener('click', async function () {
+        clearAuth();
+        updateUi();
+        hideBox(verifyStatus);
+        hideBox(reportStatus);
+        await fetch('/line/scam/liff/api/reporter/logout', { method: 'POST' }).catch(function () {});
+      });
+      tabLogin.addEventListener('click', function () { switchTab('login'); });
+      tabRegister.addEventListener('click', function () { switchTab('register'); });
+
+      function initGoogleSignIn() {
+        if (!googleClientId) {
+          googleHint.classList.remove('hidden');
+          googleHint.textContent = 'Google Sign-In ยังไม่ถูกตั้งค่าที่เซิร์ฟเวอร์';
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = 'https://accounts.google.com/gsi/client';
+        script.async = true;
+        script.defer = true;
+        script.onload = function () {
+          if (!window.google || !window.google.accounts || !window.google.accounts.id) {
+            googleHint.classList.remove('hidden');
+            googleHint.textContent = 'โหลด Google Sign-In ไม่สำเร็จ';
+            return;
+          }
+          window.google.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: async function (response) {
+              try {
+                const credential = String(response && response.credential || '').trim();
+                if (!credential) throw new Error('ไม่พบ credential จาก Google');
+                const authResponse = await fetch('/line/scam/liff/api/reporter/google', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ idToken: credential }),
+                });
+                const payload = await parseJson(authResponse);
+                saveAuth(String(payload.token || ''), Number(payload.expiresAt || (Date.now() + fallbackTtl)));
+                await refreshAll(true);
+              } catch (error) {
+                showBox(authStatus, error && error.message ? error.message : 'Google sign-in ไม่สำเร็จ', 'error');
+              }
+            },
+          });
+          window.google.accounts.id.renderButton(googleSigninBox, {
+            type: 'standard',
+            theme: 'outline',
+            text: 'signin_with',
+            shape: 'pill',
+            size: 'large',
+            width: 260,
+          });
+          googlePromptBtn.classList.remove('hidden');
+          googlePromptBtn.addEventListener('click', function () {
+            window.google.accounts.id.prompt();
+          });
+        };
+        script.onerror = function () {
+          googleHint.classList.remove('hidden');
+          googleHint.textContent = 'ไม่สามารถโหลด Google script ได้';
+        };
+        document.head.appendChild(script);
+      }
+
+      switchTab('login');
+      initGoogleSignIn();
+      authToken = String(localStorage.getItem(AUTH_TOKEN_KEY) || '').trim();
+      expiresAt = Number(localStorage.getItem(AUTH_EXPIRES_KEY) || 0);
+      if (!authToken || (expiresAt > 0 && expiresAt <= Date.now())) clearAuth();
+      refreshAll(false);
+    `,
+  });

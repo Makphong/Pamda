@@ -94,12 +94,14 @@ const normalizeLineScamBotConfig = (configInput) => {
     liffScammerCheckUrl: String(liffUrlsRaw.scammerCheck || config.liffScammerCheckUrl || '').trim(),
     liffFakeNewsUrl: String(liffUrlsRaw.fakeNews || config.liffFakeNewsUrl || '').trim(),
     liffRiskAssessUrl: String(liffUrlsRaw.riskAssess || config.liffRiskAssessUrl || '').trim(),
+    liffFraudReportUrl: String(liffUrlsRaw.fraudReport || config.liffFraudReportUrl || '').trim(),
     liffPoliceStationsUrl: String(liffUrlsRaw.policeStations || config.liffPoliceStationsUrl || '').trim(),
     commandMap: {
       helpWhenScammed: String(commandMapRaw.helpWhenScammed || 'คำแนะนำเมื่อถูกโกง').trim(),
       checkScammer: String(commandMapRaw.checkScammer || 'ตรวจสอบมิจฉาชีพ').trim(),
       checkFakeNews: String(commandMapRaw.checkFakeNews || 'ตรวจสอบข่าวปลอม').trim(),
       assessRisk: String(commandMapRaw.assessRisk || 'ประเมินความเสี่ยง').trim(),
+      reportFraud: String(commandMapRaw.reportFraud || 'รายงานคนโกง').trim(),
       howToUse: String(commandMapRaw.howToUse || 'เเนะนำวิธีการใช้งาน').trim(),
     },
     channelSecretConfigured: config.channelSecretConfigured === true,
@@ -536,6 +538,7 @@ export default function CheckPage({
           liffScammerCheckUrl: String(lineConfig.liffScammerCheckUrl || '').trim(),
           liffFakeNewsUrl: String(lineConfig.liffFakeNewsUrl || '').trim(),
           liffRiskAssessUrl: String(lineConfig.liffRiskAssessUrl || '').trim(),
+          liffFraudReportUrl: String(lineConfig.liffFraudReportUrl || '').trim(),
           liffPoliceStationsUrl: String(lineConfig.liffPoliceStationsUrl || '').trim(),
           richMenuId: String(lineConfig.richMenuId || '').trim(),
         })
@@ -1140,6 +1143,9 @@ export default function CheckPage({
                       <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
                         ประเมินความเสี่ยง <span className="font-semibold">"{lineConfig.commandMap.assessRisk}"</span>
                       </div>
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        รายงานคนโกง <span className="font-semibold">"{lineConfig.commandMap.reportFraud}"</span>
+                      </div>
                       <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 sm:col-span-2">
                         วิธีใช้ <span className="font-semibold">"{lineConfig.commandMap.howToUse}"</span>
                       </div>
@@ -1182,6 +1188,17 @@ export default function CheckPage({
 	                      />
 	                    </label>
 	                    <label className="block space-y-1">
+	                      <span className="text-xs text-gray-600">LIFF URL: รายงานคนโกง</span>
+	                      <input
+	                        type="url"
+	                        name="liffFraudReportUrl"
+	                        value={lineConfig.liffFraudReportUrl}
+	                        onChange={handleLineConfigInputChange}
+	                        placeholder="https://..."
+	                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500"
+	                      />
+	                    </label>
+	                    <label className="block space-y-1">
 	                      <span className="text-xs text-gray-600">LIFF URL: แจ้งความสถานีตำรวจ</span>
 	                      <input
 	                        type="url"
@@ -1212,6 +1229,7 @@ export default function CheckPage({
 	                        { id: 'scammer', label: 'เปิดหน้า ตรวจสอบมิจฉาชีพ', href: lineConfig.liffScammerCheckUrl },
 	                        { id: 'fakeNews', label: 'เปิดหน้า ตรวจสอบข่าวปลอม', href: lineConfig.liffFakeNewsUrl },
 	                        { id: 'risk', label: 'เปิดหน้า ประเมินความเสี่ยง', href: lineConfig.liffRiskAssessUrl },
+	                        { id: 'fraudReport', label: 'เปิดหน้า รายงานคนโกง', href: lineConfig.liffFraudReportUrl },
 	                        { id: 'police', label: 'เปิดหน้า แจ้งความสถานี', href: lineConfig.liffPoliceStationsUrl },
 	                      ].map((entry) => (
 	                        <a
