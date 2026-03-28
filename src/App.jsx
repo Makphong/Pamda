@@ -1959,6 +1959,10 @@ const normalizeProjectResourceRows = (rowsInput) =>
         linkType: normalizeProjectResourceLinkType(row.linkType),
         linkName: normalizeProjectResourceLabel(row.linkName, { fallback: '', maxLength: 180 }),
         linkUrl: normalizeProjectResourceLinkUrl(row.linkUrl),
+        linkDescription: normalizeProjectResourceLabel(row.linkDescription, {
+          fallback: '',
+          maxLength: 280,
+        }),
       };
     })
     .filter(Boolean);
@@ -9451,6 +9455,34 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const mobileCalendarEvents = selectedMobileProject
     ? events.filter((event) => event.projectId === selectedMobileProject.id)
     : mergeViewEvents;
+  const splitViewEventsByProjectId = useMemo(() => {
+    const visibleProjectIds = visibleProjects
+      .map((project) => String(project?.id || '').trim())
+      .filter(Boolean);
+    const visibleProjectIdSet = new Set(visibleProjectIds);
+    const mapped = {};
+    visibleProjectIds.forEach((projectId) => {
+      mapped[projectId] = [];
+    });
+
+    (Array.isArray(events) ? events : []).forEach((eventItem) => {
+      const ownerProjectId = String(eventItem?.projectId || '').trim();
+      if (!ownerProjectId) return;
+      if (!visibleProjectIdSet.has(ownerProjectId)) return;
+      const shouldShowInAllProjectCalendars = eventItem?.showInAllProjectCalendars === true;
+      if (shouldShowInAllProjectCalendars) {
+        visibleProjectIds.forEach((projectId) => {
+          mapped[projectId]?.push(eventItem);
+        });
+        return;
+      }
+      if (Array.isArray(mapped[ownerProjectId])) {
+        mapped[ownerProjectId].push(eventItem);
+      }
+    });
+
+    return mapped;
+  }, [events, visibleProjects]);
   const filteredMergeTaskProjectOptions = useMemo(() => {
     const searchTerm = String(mergeTaskPickerSearch || '').trim().toLowerCase();
     if (!searchTerm) return calendarTaskProjectOptions;
@@ -13846,7 +13878,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
                               month={month} 
                               projects={[project]} 
                               allProjects={projects}
-                              events={events.filter(e => e.projectId === project.id)}
+                              events={splitViewEventsByProjectId[String(project.id || '').trim()] || []}
                               showEventTime={false}
                               onDayClick={(dateStr) => handleDayClick(dateStr, project.id)}
                               onAddTaskClick={(dateStr) => {
@@ -19589,6 +19621,9 @@ function ProjectDashboard({
   const [projectResourceRows, setProjectResourceRows] = useState(() =>
     normalizeProjectResourceRows(project.projectResourceRows)
   );
+  const [showProjectResourceAddMenu, setShowProjectResourceAddMenu] = useState(false);
+  const [isProjectResourceEditMode, setIsProjectResourceEditMode] = useState(false);
+  const projectResourceToolbarRef = useRef(null);
   const [isOrgEditMode, setIsOrgEditMode] = useState(false);
   const [optionsPopupType, setOptionsPopupType] = useState(null); // 'position' | 'department' | null
   const [newOptionValue, setNewOptionValue] = useState('');
@@ -19693,6 +19728,27 @@ function ProjectDashboard({
     const nextResourceRows = normalizeProjectResourceRows(project.projectResourceRows);
     setProjectResourceRows((prev) => (isJsonEqual(prev, nextResourceRows) ? prev : nextResourceRows));
   }, [project.id, project.projectResourceRows]);
+  useEffect(() => {
+    if (!showProjectResourceAddMenu) return undefined;
+    const handlePointerDown = (event) => {
+      const toolbarElement = projectResourceToolbarRef.current;
+      if (!(toolbarElement instanceof HTMLElement)) return;
+      const targetNode = event?.target;
+      if (targetNode instanceof Node && toolbarElement.contains(targetNode)) return;
+      setShowProjectResourceAddMenu(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [showProjectResourceAddMenu]);
+  useEffect(() => {
+    if (activeTab === 'resources') return;
+    setShowProjectResourceAddMenu(false);
+    setIsProjectResourceEditMode(false);
+  }, [activeTab]);
 
   useEffect(() => {
     const nextNotesPreferences = resolveAccountScopedNotesPreferences(project.notesPreferences, {
@@ -19842,9 +19898,28 @@ function ProjectDashboard({
         linkType: DEFAULT_PROJECT_RESOURCE_LINK_TYPE,
         linkName: '',
         linkUrl: '',
+        linkDescription: '',
       },
     ]);
   }, [persistProjectResourceRows]);
+  const handleToggleProjectResourceAddMenu = useCallback(() => {
+    setShowProjectResourceAddMenu((prev) => !prev);
+  }, []);
+  const handleSelectProjectResourceAddType = useCallback(
+    (rowType) => {
+      setShowProjectResourceAddMenu(false);
+      if (rowType === PROJECT_RESOURCE_ROW_TYPES.HEADER) {
+        void handleAddProjectResourceHeaderRow();
+        return;
+      }
+      handleAddProjectResourceLinkRow();
+    },
+    [handleAddProjectResourceHeaderRow, handleAddProjectResourceLinkRow]
+  );
+  const handleToggleProjectResourceEditMode = useCallback(() => {
+    setShowProjectResourceAddMenu(false);
+    setIsProjectResourceEditMode((prev) => !prev);
+  }, []);
   const handleEditProjectResourceHeaderRow = useCallback(
     async (rowId, currentTitle = '') => {
       const nextTitleInput = await popup.prompt({
@@ -19879,7 +19954,7 @@ function ProjectDashboard({
       if (!row) return;
       const linkForm = await popup.promptForm({
         title: row.linkUrl ? 'Edit link' : 'Add link',
-        message: 'กำหนดชนิดลิงก์, ชื่อ Link และ URL',
+        message: 'กำหนดชนิดลิงก์, ชื่อ Link, URL และรายละเอียด',
         fields: [
           {
             id: 'linkType',
@@ -19902,6 +19977,13 @@ function ProjectDashboard({
             defaultValue: String(row.linkUrl || ''),
             type: 'url',
           },
+          {
+            id: 'linkDescription',
+            label: 'รายละเอียด',
+            placeholder: 'เช่น รายละเอียดการใช้งานลิงก์นี้',
+            defaultValue: String(row.linkDescription || ''),
+            type: 'text',
+          },
         ],
       });
       if (linkForm === null) return;
@@ -19918,6 +20000,10 @@ function ProjectDashboard({
         return;
       }
       const nextLinkType = normalizeProjectResourceLinkType(linkForm?.linkType);
+      const nextLinkDescription = normalizeProjectResourceLabel(linkForm?.linkDescription, {
+        fallback: '',
+        maxLength: 280,
+      });
       persistProjectResourceRows((prevRows) =>
         prevRows.map((item) =>
           item.id === row.id
@@ -19927,6 +20013,7 @@ function ProjectDashboard({
                 linkType: nextLinkType,
                 linkName: nextLinkName,
                 linkUrl: nextLinkUrl,
+                linkDescription: nextLinkDescription,
               }
             : item
         )
@@ -22557,6 +22644,56 @@ function ProjectDashboard({
                   </button>
                 </div>
               )}
+              {activeTab === 'resources' && (
+                <div className="w-full md:w-auto flex items-center gap-2 md:justify-end shrink-0">
+                  <div className="relative" ref={projectResourceToolbarRef}>
+                    <button
+                      type="button"
+                      onClick={handleToggleProjectResourceAddMenu}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                      title="เพิ่มแถว"
+                      aria-label="เพิ่มแถว"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                    {showProjectResourceAddMenu && (
+                      <div className="absolute right-0 top-full z-20 mt-2 w-44 rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSelectProjectResourceAddType(PROJECT_RESOURCE_ROW_TYPES.HEADER)
+                          }
+                          className="flex w-full items-center rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          เพิ่มแถวหัวข้อ
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleSelectProjectResourceAddType(PROJECT_RESOURCE_ROW_TYPES.LINK)
+                          }
+                          className="flex w-full items-center rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          เพิ่มแถวลิงก์
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleProjectResourceEditMode}
+                    className={`inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors ${
+                      isProjectResourceEditMode
+                        ? 'border-blue-300 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 bg-white text-gray-400 hover:bg-gray-100 hover:text-gray-500'
+                    }`}
+                    title={isProjectResourceEditMode ? 'ปิดโหมดแก้ไข' : 'เปิดโหมดแก้ไข'}
+                    aria-label={isProjectResourceEditMode ? 'ปิดโหมดแก้ไข' : 'เปิดโหมดแก้ไข'}
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Content Mockups Based on Active Tab */}
@@ -22820,33 +22957,6 @@ function ProjectDashboard({
 
             {activeTab === 'resources' && (
               <div className="space-y-4 md:space-y-6">
-                <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 md:p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-700">Project Resource</p>
-                    <p className="text-xs md:text-sm text-gray-500">
-                      รวมลิงก์สำคัญของโปรเจกต์ในตารางเดียว
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleAddProjectResourceHeaderRow}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
-                    >
-                      <Plus className="w-4 h-4" />
-                      เพิ่มแถวหัวข้อ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleAddProjectResourceLinkRow}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
-                    >
-                      <Plus className="w-4 h-4" />
-                      เพิ่มแถวลิงก์
-                    </button>
-                  </div>
-                </div>
-
                 <section className="rounded-xl border border-gray-200 bg-white overflow-hidden">
                   {projectResourceRows.length === 0 ? (
                     <div className="px-6 py-14 text-center">
@@ -22860,49 +22970,48 @@ function ProjectDashboard({
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[680px] table-fixed">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="w-[210px] px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-gray-500 border-r border-gray-200">
-                              Type
-                            </th>
-                            <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-gray-500">
-                              Link
-                            </th>
-                          </tr>
-                        </thead>
+                      <table className="w-full min-w-[920px] table-fixed">
                         <tbody>
                           {projectResourceRows.map((row) => {
                             if (row.type === PROJECT_RESOURCE_ROW_TYPES.HEADER) {
                               return (
                                 <tr key={row.id} className="border-t border-gray-200 bg-slate-50">
-                                  <td colSpan={2} className="px-4 py-3">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <p className="truncate text-sm md:text-base font-semibold text-gray-800">
+                                  <td
+                                    colSpan={isProjectResourceEditMode ? 4 : 3}
+                                    className="px-4 py-3"
+                                  >
+                                    <div className="relative flex items-center justify-center">
+                                      <p
+                                        className={`w-full truncate px-2 text-center text-sm md:text-base font-semibold text-gray-800 ${
+                                          isProjectResourceEditMode ? 'pr-20' : ''
+                                        }`}
+                                      >
                                         {row.title || 'หัวข้อ'}
                                       </p>
-                                      <div className="flex items-center gap-1.5 shrink-0">
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            handleEditProjectResourceHeaderRow(row.id, row.title)
-                                          }
-                                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-100"
-                                          title="แก้ไขหัวข้อ"
-                                          aria-label="แก้ไขหัวข้อ"
-                                        >
-                                          <Edit2 className="w-3.5 h-3.5" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleDeleteProjectResourceRow(row.id)}
-                                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
-                                          title="ลบแถว"
-                                          aria-label="ลบแถว"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
-                                      </div>
+                                      {isProjectResourceEditMode && (
+                                        <div className="absolute right-0 top-1/2 flex -translate-y-1/2 items-center gap-1.5 shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleEditProjectResourceHeaderRow(row.id, row.title)
+                                            }
+                                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-100"
+                                            title="แก้ไขหัวข้อ"
+                                            aria-label="แก้ไขหัวข้อ"
+                                          >
+                                            <Edit2 className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteProjectResourceRow(row.id)}
+                                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                                            title="ลบแถว"
+                                            aria-label="ลบแถว"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
@@ -22912,34 +23021,51 @@ function ProjectDashboard({
                             const hasLink = Boolean(row.linkName && row.linkUrl);
                             return (
                               <tr key={row.id} className="border-t border-gray-100">
-                                <td className="w-[210px] px-4 py-3 align-top border-r border-gray-100">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleEditProjectResourceLinkRow(row)}
-                                    className="inline-flex items-center rounded-full border border-gray-300 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
-                                    title="แก้ไขชนิดลิงก์"
-                                  >
-                                    {row.linkType || DEFAULT_PROJECT_RESOURCE_LINK_TYPE}
-                                  </button>
+                                <td className="w-[200px] px-4 py-3 align-top border-r border-gray-100">
+                                  {isProjectResourceEditMode ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEditProjectResourceLinkRow(row)}
+                                      className="inline-flex items-center rounded-full border border-gray-300 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                                      title="แก้ไขชนิดลิงก์"
+                                    >
+                                      {row.linkType || DEFAULT_PROJECT_RESOURCE_LINK_TYPE}
+                                    </button>
+                                  ) : (
+                                    <span className="inline-flex items-center rounded-full border border-gray-300 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
+                                      {row.linkType || DEFAULT_PROJECT_RESOURCE_LINK_TYPE}
+                                    </span>
+                                  )}
                                 </td>
-                                <td className="px-4 py-3">
-                                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                                    <div className="min-w-0">
-                                      {hasLink ? (
-                                        <a
-                                          href={row.linkUrl}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-800 hover:underline break-all"
-                                        >
-                                          {row.linkName}
-                                          <ArrowRight className="w-3.5 h-3.5 shrink-0" />
-                                        </a>
-                                      ) : (
-                                        <p className="text-sm text-gray-400">ยังไม่มีลิงก์ในแถวนี้</p>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-1.5 shrink-0">
+                                <td className="w-[300px] px-4 py-3 align-top border-r border-gray-100">
+                                  <div className="min-w-0">
+                                    {hasLink ? (
+                                      <a
+                                        href={row.linkUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-800 hover:underline break-all"
+                                      >
+                                        {row.linkName}
+                                        <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                                      </a>
+                                    ) : (
+                                      <p className="text-sm text-gray-400">ยังไม่มีลิงก์ในแถวนี้</p>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 align-top border-r border-gray-100">
+                                  {row.linkDescription ? (
+                                    <p className="text-sm text-gray-600 whitespace-pre-wrap break-words">
+                                      {row.linkDescription}
+                                    </p>
+                                  ) : (
+                                    <p className="text-sm text-gray-400">ยังไม่มีรายละเอียด</p>
+                                  )}
+                                </td>
+                                {isProjectResourceEditMode && (
+                                  <td className="w-[150px] px-4 py-3 align-top">
+                                    <div className="flex items-center gap-1.5">
                                       <button
                                         type="button"
                                         onClick={() => handleEditProjectResourceLinkRow(row)}
@@ -22957,8 +23083,8 @@ function ProjectDashboard({
                                         <Trash2 className="w-3.5 h-3.5" />
                                       </button>
                                     </div>
-                                  </div>
-                                </td>
+                                  </td>
+                                )}
                               </tr>
                             );
                           })}
@@ -40650,6 +40776,9 @@ function EventModal({
     return Boolean(start || end);
   });
   const [description, setDescription] = useState(event?.description || '');
+  const [showInAllProjectCalendars, setShowInAllProjectCalendars] = useState(
+    event?.showInAllProjectCalendars === true
+  );
   const selectedProject = projects.find((project) => project.id === projectId) || projects[0] || null;
   const selectedProjectColor = PROJECT_COLORS[selectedProject?.colorIndex ?? 0] || PROJECT_COLORS[0];
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -40732,6 +40861,7 @@ function EventModal({
           endTime: hasTime ? endTime : '23:59',
           description,
           showTime: hasTime,
+          showInAllProjectCalendars: showInAllProjectCalendars === true,
           googleCalendarOptions: addToGoogleCalendar
             ? {
                 enabled: true,
@@ -40873,6 +41003,22 @@ function EventModal({
           <div className="flex items-start gap-3 text-gray-600 mt-1">
             <LinkIcon className="w-5 h-5 mt-2 shrink-0" />
             <div className="flex-1 rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2.5 space-y-2">
+              <label className="inline-flex items-start gap-2 text-sm text-gray-700 select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showInAllProjectCalendars}
+                  onChange={(e) => setShowInAllProjectCalendars(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span>
+                  <span className="font-medium">Show in all Project Calendars</span>
+                  <br />
+                  <span className="text-xs text-gray-500">
+                    แสดงในหน้า 4 Calendar ทุกโปรเจกต์เท่านั้น (หน้า Merge view ไม่เปลี่ยน)
+                  </span>
+                </span>
+              </label>
+              <div className="h-px bg-gray-200" />
               <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none cursor-pointer">
                 <input
                   type="checkbox"
