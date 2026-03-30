@@ -1654,7 +1654,7 @@ const AUTH_USER_KEY = 'pm_calendar_auth_user';
 const AUTH_USERS_KEY = 'pm_calendar_users';
 const LEGAL_DOC_ORDER = ['terms', 'privacy'];
 const LEGAL_DOC_LINKS = {
-  terms: '/terms',
+  terms: '/privacy',
   privacy: '/privacy',
 };
 const LEGAL_DOCS = {
@@ -5635,6 +5635,13 @@ export default function App() {
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(safeUser));
   };
 
+  const pathname = String(typeof window !== 'undefined' ? window.location.pathname : '').trim().toLowerCase();
+  const isStandalonePrivacyPath = pathname === '/privacy' || pathname === '/privacy/';
+
+  if (isStandalonePrivacyPath) {
+    return <LegalPrivacyTermsPage />;
+  }
+
   return (
     <PopupProvider>
       {!currentUser ? (
@@ -5647,6 +5654,143 @@ export default function App() {
         />
       )}
     </PopupProvider>
+  );
+}
+
+function LegalPrivacyTermsPage() {
+  const termsSections = [
+    {
+      heading: '1) การยอมรับข้อกำหนด',
+      text: 'การเข้าใช้งานเว็บไซต์และบริการ PM Calendar ถือว่าคุณยอมรับข้อกำหนดการใช้งานและนโยบายความเป็นส่วนตัวฉบับนี้ทั้งหมด',
+    },
+    {
+      heading: '2) การมีสิทธิ์ใช้งานบัญชี',
+      text: 'ผู้ใช้ต้องให้ข้อมูลที่ถูกต้อง เป็นปัจจุบัน และต้องไม่ปลอมแปลงตัวตนหรือใช้บัญชีผู้อื่นโดยไม่ได้รับอนุญาต',
+    },
+    {
+      heading: '3) ความปลอดภัยของบัญชี',
+      text: 'คุณต้องรักษารหัสผ่านและข้อมูลการเข้าถึงบัญชีด้วยตนเอง และรับผิดชอบกิจกรรมที่เกิดขึ้นภายใต้บัญชีของคุณ',
+    },
+    {
+      heading: '4) การใช้งานที่อนุญาต',
+      text: 'คุณสามารถใช้ระบบเพื่อจัดการโครงการ งาน ปฏิทิน เอกสาร และการทำงานร่วมกันตามวัตถุประสงค์ของบริการ',
+    },
+    {
+      heading: '5) การใช้งานที่ห้าม',
+      text: 'ห้ามโจมตีระบบ สแปม ใช้มัลแวร์ เข้าถึงข้อมูลโดยไม่ได้รับสิทธิ์ หรือกระทำการที่ผิดกฎหมายและกระทบผู้ใช้อื่น',
+    },
+    {
+      heading: '6) ข้อมูลและเนื้อหาของผู้ใช้',
+      text: 'สิทธิ์ในข้อมูลที่คุณสร้างยังเป็นของคุณ แต่คุณอนุญาตให้ระบบประมวลผล จัดเก็บ สำรอง และแสดงผลเท่าที่จำเป็นต่อการให้บริการ',
+    },
+    {
+      heading: '7) บริการภายนอก',
+      text: 'บางฟีเจอร์เชื่อมกับบริการภายนอก เช่น Google Calendar ซึ่งอยู่ภายใต้เงื่อนไขของผู้ให้บริการนั้นเพิ่มเติม',
+    },
+    {
+      heading: '8) ความพร้อมใช้งานของระบบ',
+      text: 'เราอาจมีช่วงบำรุงรักษา ปรับปรุง หรือจำกัดบางฟีเจอร์ชั่วคราวเพื่อความปลอดภัย ความเสถียร และประสิทธิภาพของระบบ',
+    },
+    {
+      heading: '9) การระงับหรือยกเลิกการใช้งาน',
+      text: 'เราอาจระงับบัญชีหรือการเข้าถึงเมื่อพบการใช้งานผิดเงื่อนไข ผิดกฎหมาย หรือเสี่ยงต่อความปลอดภัยของระบบ',
+    },
+    {
+      heading: '10) การจำกัดความรับผิด',
+      text: 'บริการจัดให้ตามสภาพที่เป็นอยู่ เราไม่รับประกันว่าปราศจากข้อผิดพลาด 100% และไม่รับผิดชอบความเสียหายทางอ้อมตามขอบเขตกฎหมาย',
+    },
+  ];
+
+  const privacySections = [
+    {
+      heading: '1) ประเภทข้อมูลที่เก็บ',
+      text: 'เราอาจเก็บข้อมูลบัญชี (เช่น อีเมล ชื่อผู้ใช้), ข้อมูลการใช้งานระบบ, ข้อมูลเทคนิค (เช่น device, browser, log) และข้อมูลจากการเชื่อมต่อบริการที่คุณอนุญาต',
+    },
+    {
+      heading: '2) วัตถุประสงค์การใช้ข้อมูล',
+      text: 'ข้อมูลถูกใช้เพื่อให้บริการหลัก ยืนยันตัวตน ป้องกันการทุจริต ปรับปรุงประสิทธิภาพ และติดต่อผู้ใช้ในกรณีจำเป็น',
+    },
+    {
+      heading: '3) ข้อมูลจาก Google',
+      text: 'เมื่อคุณเชื่อม Google เราเข้าถึงเฉพาะข้อมูลตามสิทธิ์ (scope) ที่คุณอนุญาต และใช้เพื่อฟีเจอร์ที่เกี่ยวข้องเท่านั้น',
+    },
+    {
+      heading: '4) การเปิดเผยข้อมูล',
+      text: 'เราไม่ขายข้อมูลส่วนบุคคล และจะเปิดเผยเท่าที่จำเป็นต่อการให้บริการ การปฏิบัติตามกฎหมาย หรือการคุ้มครองสิทธิ์และความปลอดภัย',
+    },
+    {
+      heading: '5) ผู้ให้บริการที่เกี่ยวข้อง',
+      text: 'ข้อมูลบางส่วนอาจถูกประมวลผลผ่านผู้ให้บริการโครงสร้างพื้นฐาน เช่น Cloud provider หรือระบบอีเมล เพื่อให้บริการทำงานได้อย่างถูกต้อง',
+    },
+    {
+      heading: '6) การเก็บรักษาข้อมูล',
+      text: 'เราเก็บข้อมูลตามระยะเวลาที่จำเป็นต่อวัตถุประสงค์ของบริการ ข้อกำหนดทางกฎหมาย และการแก้ปัญหาความปลอดภัย',
+    },
+    {
+      heading: '7) มาตรการความปลอดภัย',
+      text: 'เรามีมาตรการเชิงเทคนิคและเชิงองค์กรเพื่อลดความเสี่ยงจากการเข้าถึง ใช้งาน หรือเปิดเผยข้อมูลโดยไม่ได้รับอนุญาต',
+    },
+    {
+      heading: '8) สิทธิ์ของเจ้าของข้อมูล',
+      text: 'คุณสามารถขอเข้าถึง แก้ไข ลบ หรือยกเลิกการเชื่อมต่อบริการภายนอกได้ตามกระบวนการที่ระบบรองรับ',
+    },
+    {
+      heading: '9) คุกกี้และเทคโนโลยีที่คล้ายกัน',
+      text: 'ระบบอาจใช้คุกกี้หรือกลไกคล้ายกันเพื่อการล็อกอิน ความปลอดภัย การจดจำการตั้งค่า และการยกระดับประสบการณ์ใช้งาน',
+    },
+    {
+      heading: '10) การเปลี่ยนแปลงนโยบาย',
+      text: 'เราอาจปรับปรุงเอกสารนี้เป็นระยะ โดยจะแสดงฉบับล่าสุดบนหน้านี้ พร้อมวันที่อัปเดต',
+    },
+    {
+      heading: '11) การติดต่อ',
+      text: 'หากมีคำถามเกี่ยวกับข้อกำหนดหรือนโยบายความเป็นส่วนตัว กรุณาติดต่อที่อีเมล main.thatphong@gmail.com',
+    },
+  ];
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-cyan-50 px-4 py-8">
+      <main className="max-w-4xl mx-auto">
+        <article className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 md:p-7 space-y-7">
+          <header className="space-y-3">
+            <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1 text-xs font-medium">
+              <FileText className="w-3.5 h-3.5" />
+              Public Legal Page
+            </div>
+            <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Terms of Service & Privacy Policy</h1>
+            <p className="text-sm text-gray-500">อัปเดตล่าสุด: 30 มีนาคม 2026</p>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              หน้านี้เป็นหน้าแยกสำหรับอ่านข้อกำหนดและนโยบายความเป็นส่วนตัวแบบละเอียด โดยสามารถเข้าถึงได้โดยไม่ต้องล็อกอินผ่าน URL
+              <span className="font-medium"> https://www.pamda.space/privacy</span>
+            </p>
+          </header>
+
+          <section id="terms" className="space-y-3">
+            <h2 className="text-xl font-semibold text-gray-900">ส่วนที่ 1: Terms of Service</h2>
+            <div className="space-y-3">
+              {termsSections.map((section) => (
+                <div key={`terms-${section.heading}`} className="rounded-xl border border-gray-200 bg-gray-50/70 p-4">
+                  <p className="font-semibold text-gray-900">{section.heading}</p>
+                  <p className="text-sm text-gray-700 leading-relaxed mt-1">{section.text}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section id="privacy" className="space-y-3">
+            <h2 className="text-xl font-semibold text-gray-900">ส่วนที่ 2: Privacy Policy</h2>
+            <div className="space-y-3">
+              {privacySections.map((section) => (
+                <div key={`privacy-${section.heading}`} className="rounded-xl border border-gray-200 bg-gray-50/70 p-4">
+                  <p className="font-semibold text-gray-900">{section.heading}</p>
+                  <p className="text-sm text-gray-700 leading-relaxed mt-1">{section.text}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        </article>
+      </main>
+    </div>
   );
 }
 
@@ -7302,36 +7446,17 @@ function ProfileSettingsView({
                   </div>
                 </div>
 
-                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-blue-600" />
-                    <h3 className="text-lg font-semibold text-gray-800">Terms & Privacy</h3>
-                  </div>
-                  <p className="text-sm text-gray-600">
-                    You can review legal documents anytime without logging out.
-                  </p>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <a
-                      href={LEGAL_DOC_LINKS.privacy}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-sm font-medium hover:bg-blue-100"
-                      title="Open Privacy Policy"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      Privacy Policy
-                    </a>
-                    <a
-                      href={LEGAL_DOC_LINKS.terms}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50"
-                      title="Open Terms of Service"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      Terms of Service
-                    </a>
-                  </div>
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+                  <a
+                    href={LEGAL_DOC_LINKS.privacy}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100"
+                    title="Open Terms & Privacy page"
+                  >
+                    <FileText className="w-4 h-4" />
+                    Terms & Privacy
+                  </a>
                 </div>
 
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
