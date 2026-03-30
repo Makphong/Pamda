@@ -23222,13 +23222,13 @@ function ProjectDashboard({
                               event.stopPropagation();
                               void handleOpenProjectMilestoneEditor(milestoneIndex);
                             }}
-                            className="relative min-w-[180px] flex-1 border-y border-r py-3 text-left first:rounded-l-xl first:border-l last:rounded-r-xl"
+                            className="relative min-w-[180px] flex-1 border-y border-r py-2 text-left first:rounded-l-xl first:border-l last:rounded-r-xl"
                             style={{
                               zIndex: segmentStackOrder,
                               backgroundColor: segmentBackgroundColor,
                               borderColor: segmentOutlineColor,
                               paddingLeft: milestoneIndex === 0 ? '1rem' : '3.4rem',
-                              paddingRight: '2.75rem',
+                              paddingRight: '2.45rem',
                             }}
                           >
                             <p
@@ -23238,15 +23238,15 @@ function ProjectDashboard({
                               Stage {milestoneIndex + 1}
                             </p>
                             <p
-                              className="relative z-[2] mt-1 text-sm font-semibold leading-tight"
+                              className="relative z-[2] mt-0.5 text-sm font-semibold leading-tight"
                               style={{ color: stageTitleColor }}
                             >
                               {milestoneLabel}
                             </p>
-                            <span className="pointer-events-none absolute right-[-20px] top-1/2 z-[1] -translate-y-1/2">
-                              <span className="relative block h-11 w-11">
+                            <span className="pointer-events-none absolute right-[-18px] top-1/2 z-[1] -translate-y-1/2">
+                              <span className="relative block h-10 w-10">
                                 <span
-                                  className="absolute inset-0 rounded-full border-[8px] bg-white"
+                                  className="absolute inset-0 rounded-full border-[7px] bg-white"
                                   style={{ borderColor: connectorFillColor }}
                                 />
                                 <span
