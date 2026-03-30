@@ -17,14 +17,14 @@ RUN npm run build
 FROM node:20-alpine AS runner
 
 WORKDIR /app
-RUN npm install -g serve
 
 COPY --from=builder /app/dist ./dist
 COPY docker/entrypoint.sh /entrypoint.sh
+COPY docker/static-server.mjs /app/static-server.mjs
 RUN chmod +x /entrypoint.sh
 
 ENV PORT=8080
 EXPOSE 8080
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["serve", "-s", "dist", "-l", "8080"]
+CMD ["node", "/app/static-server.mjs"]
