@@ -1652,6 +1652,67 @@ const getProjectColorHexByIndex = (index) =>
 const generateId = () => Math.random().toString(36).substr(2, 9);
 const AUTH_USER_KEY = 'pm_calendar_auth_user';
 const AUTH_USERS_KEY = 'pm_calendar_users';
+const LEGAL_DOC_ORDER = ['terms', 'privacy'];
+const LEGAL_DOC_LINKS = {
+  terms: '/terms',
+  privacy: '/privacy',
+};
+const LEGAL_DOCS = {
+  terms: {
+    title: 'Terms of Service',
+    summary:
+      'These terms describe the rules for using PM Calendar, including account responsibility, acceptable use, and service limitations.',
+    sections: [
+      {
+        heading: '1) Account Responsibility',
+        text: 'You are responsible for keeping your account credentials secure and for all activity under your account.',
+      },
+      {
+        heading: '2) Acceptable Use',
+        text: 'You agree not to misuse the service, attempt unauthorized access, or perform actions that can harm the system or other users.',
+      },
+      {
+        heading: '3) Third-party Integrations',
+        text: 'Some features integrate with third-party services such as Google Calendar. Their use is also subject to those providers terms.',
+      },
+      {
+        heading: '4) Service Availability',
+        text: 'We may update, improve, or temporarily suspend parts of the service for maintenance, reliability, or security reasons.',
+      },
+      {
+        heading: '5) Limitation of Liability',
+        text: 'The service is provided as is. To the maximum extent permitted by law, we are not liable for indirect or consequential damages.',
+      },
+    ],
+  },
+  privacy: {
+    title: 'Privacy Policy',
+    summary:
+      'This policy explains what information PM Calendar collects, how it is used, and how we protect your data.',
+    sections: [
+      {
+        heading: '1) Data We Collect',
+        text: 'We may collect account information, project/task data, technical logs, and integration data that you explicitly authorize.',
+      },
+      {
+        heading: '2) How We Use Data',
+        text: 'We use data to provide core features, secure your account, improve product quality, and support legitimate service operations.',
+      },
+      {
+        heading: '3) Google Data Usage',
+        text: 'If you connect Google services, we use Google data only for the approved features and scopes that you grant.',
+      },
+      {
+        heading: '4) Sharing and Disclosure',
+        text: 'We do not sell personal data. Data is shared only when required to deliver the service or comply with legal obligations.',
+      },
+      {
+        heading: '5) Retention and Security',
+        text: 'We retain data only as needed and apply technical and organizational safeguards to protect your information.',
+      },
+    ],
+  },
+};
 const ACCOUNT_DB_PREFIX = 'pm_calendar_db_';
 const ACCOUNT_DB_SAVE_QUEUE_BY_USER = new Map();
 const ACCOUNT_DB_VERSION_BY_USER = new Map();
@@ -5590,6 +5651,7 @@ export default function App() {
 }
 
 function AuthScreen({ onAuthSuccess }) {
+  const popup = usePopup();
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -5598,14 +5660,16 @@ function AuthScreen({ onAuthSuccess }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [isOtpSent, setIsOtpSent] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [isLegalModalOpen, setIsLegalModalOpen] = useState(false);
+  const [activeLegalDoc, setActiveLegalDoc] = useState('terms');
   const googleButtonRef = useRef(null);
   const googleTokenClientRef = useRef(null);
+  const legalScrollContainerRef = useRef(null);
 
   const resetForm = () => {
     setUsername('');
@@ -5615,17 +5679,39 @@ function AuthScreen({ onAuthSuccess }) {
     setConfirmPassword('');
     setOtpCode('');
     setIsOtpSent(false);
-    setRememberMe(true);
     setAcceptTerms(false);
     setIsSubmitting(false);
     setIsSendingOtp(false);
     setError('');
     setSuccess('');
+    setIsLegalModalOpen(false);
+    setActiveLegalDoc('terms');
   };
 
   const switchMode = (loginMode) => {
     setIsLoginMode(loginMode);
     resetForm();
+  };
+
+  const showConfirmPasswordMismatch =
+    !isLoginMode && Boolean(confirmPassword) && Boolean(password) && password !== confirmPassword;
+  const activeLegalDocument = LEGAL_DOCS[activeLegalDoc] || LEGAL_DOCS.terms;
+
+  const openLegalModal = (docKey = 'terms') => {
+    const normalizedDoc = LEGAL_DOCS[docKey] ? docKey : 'terms';
+    setError('');
+    setSuccess('');
+    setActiveLegalDoc(normalizedDoc);
+    setIsLegalModalOpen(true);
+    requestAnimationFrame(() => {
+      if (legalScrollContainerRef.current) {
+        legalScrollContainerRef.current.scrollTop = 0;
+      }
+    });
+  };
+
+  const closeLegalModal = () => {
+    setIsLegalModalOpen(false);
   };
 
   const syncUserToLocalCache = (user, passwordOverride = null) => {
@@ -5654,17 +5740,30 @@ function AuthScreen({ onAuthSuccess }) {
     }
   };
 
-  const authenticateWithGoogle = async (payload) => {
+  const authenticateWithGoogle = async (payload, authMode = isLoginMode ? 'login' : 'register') => {
     setIsSubmitting(true);
     setError('');
     setSuccess('');
 
     try {
-      const result = await postAuthApi('/auth/google', payload);
+      const result = await postAuthApi('/auth/google', {
+        ...payload,
+        mode: authMode,
+      });
       const authenticatedUser = composeAuthUserWithToken(result.user, result.token);
       syncUserToLocalCache(authenticatedUser);
       onAuthSuccess(authenticatedUser);
     } catch (err) {
+      const errorCode = String(err?.payload?.code || '').trim().toUpperCase();
+      if (authMode === 'login' && Number(err?.status || 0) === 404 && errorCode === 'ACCOUNT_NOT_FOUND') {
+        switchMode(false);
+        setSuccess('No account found for this Google email. Please register first.');
+        void popup.alert({
+          title: 'Please Register First',
+          message: 'No PM Calendar account was found for this Google email. Please complete registration first.',
+        });
+        return;
+      }
       setError(err.message || 'Google sign-in failed.');
     } finally {
       setIsSubmitting(false);
@@ -5678,12 +5777,21 @@ function AuthScreen({ onAuthSuccess }) {
       return;
     }
 
-    await authenticateWithGoogle({ idToken });
+    await authenticateWithGoogle({ idToken }, isLoginMode ? 'login' : 'register');
   };
 
   const handleGoogleButtonClick = () => {
     setError('');
     setSuccess('');
+
+    if (!isLoginMode && !acceptTerms) {
+      void popup.alert({
+        title: 'Please Accept Terms First',
+        message: 'Please read Terms of Service and Privacy Policy, then tick I accept before registering with Google.',
+      });
+      openLegalModal('terms');
+      return;
+    }
 
     const googleClientConfigError = getGoogleClientConfigError(GOOGLE_CLIENT_ID);
     if (googleClientConfigError) {
@@ -5740,7 +5848,7 @@ function AuthScreen({ onAuthSuccess }) {
               return;
             }
 
-            void authenticateWithGoogle({ accessToken });
+            void authenticateWithGoogle({ accessToken }, isLoginMode ? 'login' : 'register');
           },
           error_callback: (errorResponse) => {
             setError(
@@ -5932,7 +6040,12 @@ function AuthScreen({ onAuthSuccess }) {
             <button
               type="button"
               onClick={handleGoogleButtonClick}
-              className="w-full h-11 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-medium flex items-center justify-center gap-2 transition-colors"
+              disabled={isSubmitting}
+              className={`w-full h-11 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium flex items-center justify-center gap-2 transition-colors ${
+                isSubmitting
+                  ? 'opacity-60 cursor-not-allowed'
+                  : 'hover:bg-gray-50'
+              }`}
             >
               <svg className="w-4 h-4" viewBox="0 0 18 18" aria-hidden="true">
                 <path
@@ -5979,15 +6092,6 @@ function AuthScreen({ onAuthSuccess }) {
                   placeholder="Password"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
-                <label className="inline-flex items-center gap-2 text-sm text-gray-600">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={(e) => setRememberMe(e.target.checked)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  Remember me
-                </label>
               </>
             ) : (
               <>
@@ -6019,6 +6123,9 @@ function AuthScreen({ onAuthSuccess }) {
                   placeholder="Confirm password"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
+                {showConfirmPasswordMismatch && (
+                  <p className="text-xs text-red-600 -mt-1">Confirm password does not match Password.</p>
+                )}
                 <div className="grid grid-cols-[1fr,auto] gap-2">
                   <input
                     type="text"
@@ -6036,15 +6143,35 @@ function AuthScreen({ onAuthSuccess }) {
                     {isSendingOtp ? 'Sending...' : isOtpSent ? 'Resend OTP' : 'Send OTP'}
                   </button>
                 </div>
-                <label className="inline-flex items-center gap-2 text-sm text-gray-600">
-                  <input
-                    type="checkbox"
-                    checked={acceptTerms}
-                    onChange={(e) => setAcceptTerms(e.target.checked)}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  I accept Terms of Service and Privacy Policy.
-                </label>
+                <div className="space-y-1">
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={acceptTerms}
+                      onChange={(e) => setAcceptTerms(e.target.checked)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span>
+                      I accept{' '}
+                      <button
+                        type="button"
+                        onClick={() => openLegalModal('terms')}
+                        className="text-blue-700 hover:text-blue-900 underline font-medium"
+                      >
+                        Terms of Service
+                      </button>{' '}
+                      and{' '}
+                      <button
+                        type="button"
+                        onClick={() => openLegalModal('privacy')}
+                        className="text-blue-700 hover:text-blue-900 underline font-medium"
+                      >
+                        Privacy Policy
+                      </button>
+                      .
+                    </span>
+                  </label>
+                </div>
               </>
             )}
 
@@ -6071,6 +6198,68 @@ function AuthScreen({ onAuthSuccess }) {
           </form>
         </div>
       </div>
+
+      {isLegalModalOpen && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={closeLegalModal} />
+          <div className="relative w-full max-w-2xl max-h-[90vh] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-800">Terms & Privacy</h3>
+              <button
+                type="button"
+                onClick={closeLegalModal}
+                className="h-8 w-8 rounded-full border border-gray-200 hover:bg-gray-100 inline-flex items-center justify-center"
+                aria-label="Close legal modal"
+              >
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="px-5 pt-4">
+              <div className="grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1">
+                {LEGAL_DOC_ORDER.map((docKey) => (
+                  <button
+                    key={`legal-tab-${docKey}`}
+                    type="button"
+                    onClick={() => {
+                      setActiveLegalDoc(docKey);
+                      requestAnimationFrame(() => {
+                        if (legalScrollContainerRef.current) {
+                          legalScrollContainerRef.current.scrollTop = 0;
+                        }
+                      });
+                    }}
+                    className={`py-2 rounded-md text-sm font-medium transition-colors ${
+                      activeLegalDoc === docKey
+                        ? 'bg-white text-blue-600 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {LEGAL_DOCS[docKey].title}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div
+              ref={legalScrollContainerRef}
+              className="mx-5 mt-4 mb-3 p-4 border border-gray-200 rounded-xl bg-gray-50 overflow-y-auto h-[42vh] text-sm text-gray-700"
+            >
+              <h4 className="text-base font-semibold text-gray-800 mb-1">{activeLegalDocument.title}</h4>
+              <p className="text-gray-600 mb-4">{activeLegalDocument.summary}</p>
+              <div className="space-y-4">
+                {activeLegalDocument.sections.map((section, index) => (
+                  <div key={`${activeLegalDoc}-section-${index}`} className="space-y-1">
+                    <p className="font-semibold text-gray-800">{section.heading}</p>
+                    <p className="text-gray-700 leading-relaxed">{section.text}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -7110,6 +7299,38 @@ function ProfileSettingsView({
                         {currentUser.email || '-'}
                       </p>
                     </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-blue-600" />
+                    <h3 className="text-lg font-semibold text-gray-800">Terms & Privacy</h3>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    You can review legal documents anytime without logging out.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={LEGAL_DOC_LINKS.privacy}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-sm font-medium hover:bg-blue-100"
+                      title="Open Privacy Policy"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      Privacy Policy
+                    </a>
+                    <a
+                      href={LEGAL_DOC_LINKS.terms}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm font-medium hover:bg-gray-50"
+                      title="Open Terms of Service"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      Terms of Service
+                    </a>
                   </div>
                 </div>
 
@@ -12610,6 +12831,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       const result = await postAuthApi('/auth/google', {
         ...(normalizedAccessToken ? { accessToken: normalizedAccessToken } : {}),
         ...(normalizedIdToken ? { idToken: normalizedIdToken } : {}),
+        mode: 'login',
       });
       const verifiedUser = normalizeAuthUser(result.user);
       const currentEmail = String(currentUser.email || '').trim().toLowerCase();

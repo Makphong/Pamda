@@ -3850,6 +3850,12 @@ app.post('/auth/google', async (req, res) => {
   try {
     const idToken = String(req.body?.idToken || '').trim();
     const accessToken = String(req.body?.accessToken || '').trim();
+    const requestedMode = String(req.body?.mode || 'register').trim().toLowerCase();
+    const authMode = requestedMode || 'register';
+    if (authMode !== 'login' && authMode !== 'register') {
+      return res.status(400).json({ message: 'Invalid Google auth mode. Use "login" or "register".' });
+    }
+
     if (!idToken && !accessToken) {
       return res.status(400).json({ message: 'idToken or accessToken is required.' });
     }
@@ -3901,6 +3907,12 @@ app.post('/auth/google', async (req, res) => {
     let user = await getUserByEmail(email);
 
     if (!user) {
+      if (authMode === 'login') {
+        return res.status(404).json({
+          message: 'No PM Calendar account found for this Google email. Please register first.',
+          code: 'ACCOUNT_NOT_FOUND',
+        });
+      }
       const preferredUsername = sanitizeUsername(name || email.split('@')[0]);
       const uniqueUsername = await makeUniqueUsername(preferredUsername);
       const userId = crypto.randomUUID();
@@ -3930,7 +3942,7 @@ app.post('/auth/google', async (req, res) => {
 
     const publicUser = toPublicUser(user);
     return res.json({
-      message: 'Google sign-in successful.',
+      message: authMode === 'login' ? 'Google login successful.' : 'Google sign-in successful.',
       user: publicUser,
       token: createAuthToken(publicUser),
     });
