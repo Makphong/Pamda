@@ -31,6 +31,7 @@ import {
   Filter,
   Wrench,
   Link as LinkIcon,
+  MapPin,
   Target,
   Activity,
   ChevronLeft,
@@ -2028,13 +2029,13 @@ const normalizeProjectResourceRows = (rowsInput) =>
     })
     .filter(Boolean);
 const DEFAULT_PROJECT_MILESTONES = ['Kickoff', 'Planning', 'Execution', 'Launch'];
+const PROJECT_MILESTONE_VISIBLE_COUNT = 4;
 const PROJECT_MILESTONE_TRACK_COLORS = ['#fa7e5c', '#f8b032', '#42be8d', '#1aa6dd', '#b271da', '#fb8f65'];
 const normalizeProjectMilestones = (value) => {
   const source = Array.isArray(value) ? value : [];
   const normalized = source
     .map((item) => normalizeProjectResourceLabel(item, { fallback: '', maxLength: 80 }))
-    .filter(Boolean)
-    .slice(0, 16);
+    .filter(Boolean);
   return normalized.length > 0 ? normalized : [...DEFAULT_PROJECT_MILESTONES];
 };
 const normalizeProjectMilestoneProgressIndex = (value, milestoneCountInput) => {
@@ -2289,6 +2290,23 @@ const formatDateDayMonthYear = (value) => {
   if (!matched) return raw;
   const [, year, month, day] = matched;
   return `${day}/${month}/${year}`;
+};
+const normalizeMapLocationText = (valueInput, maxLength = 180) =>
+  String(valueInput || '')
+    .replace(/\r/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+const buildGoogleMapsSearchUrl = (locationInput) => {
+  const query = normalizeMapLocationText(locationInput);
+  if (!query) return '';
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+};
+const openGoogleMapsSearch = (locationInput) => {
+  const href = buildGoogleMapsSearchUrl(locationInput);
+  if (!href || typeof window === 'undefined' || typeof window.open !== 'function') return false;
+  window.open(href, '_blank', 'noopener,noreferrer');
+  return true;
 };
 const formatActivityDateWindow = ({ startDate, startTime, endDate, endTime, showTime = true }) => {
   const safeStartDate = String(startDate || '').trim();
@@ -11762,6 +11780,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       recordType: 'task',
       title: '',
       description: '',
+      location: '',
       status: 'To Do',
       startDate: '',
       startTime: '',
@@ -22710,6 +22729,7 @@ function ProjectDashboard({
       recordType: 'task',
       title: '',
       description: '',
+      location: '',
       status: 'To Do',
       startDate: '',
       startTime: '',
@@ -22738,6 +22758,7 @@ function ProjectDashboard({
       recordType: 'task',
       title: '',
       description: '',
+      location: '',
       status: 'To Do',
       startDate: '',
       startTime: '',
@@ -22965,6 +22986,25 @@ function ProjectDashboard({
       ),
     [project?.milestoneProgressIndex, projectMilestones.length]
   );
+  const projectMilestoneWindowStartIndex = useMemo(() => {
+    if (projectMilestoneProgressIndex >= PROJECT_MILESTONE_VISIBLE_COUNT - 1) {
+      return Math.max(0, projectMilestoneProgressIndex);
+    }
+    return 0;
+  }, [projectMilestoneProgressIndex]);
+  const visibleProjectMilestones = useMemo(
+    () =>
+      projectMilestones
+        .slice(
+          projectMilestoneWindowStartIndex,
+          projectMilestoneWindowStartIndex + PROJECT_MILESTONE_VISIBLE_COUNT
+        )
+        .map((milestoneLabel, visibleIndex) => ({
+          milestoneLabel,
+          milestoneIndex: projectMilestoneWindowStartIndex + visibleIndex,
+        })),
+    [projectMilestones, projectMilestoneWindowStartIndex]
+  );
   const handleOpenProjectMilestoneEditor = useCallback(
     async (preferredStageIndexInput = null) => {
       const preferredStageIndex = Number.parseInt(String(preferredStageIndexInput ?? ''), 10);
@@ -22974,7 +23014,7 @@ function ProjectDashboard({
       const milestoneForm = await popup.promptForm({
         title: 'Edit Milestones',
         message:
-          'ใส่ชื่อ Stage โดยคั่นด้วย comma และระบุ Stage ปัจจุบัน (0 = ยังไม่เริ่ม, 1 = Stage แรก)',
+          `ใส่ชื่อ Stage โดยคั่นด้วย comma (จำนวนได้ไม่จำกัด, บนบอร์ดแสดงครั้งละ ${PROJECT_MILESTONE_VISIBLE_COUNT} Stage) และระบุ Stage ปัจจุบัน (0 = ยังไม่เริ่ม, 1 = Stage แรก)`,
         fields: [
           {
             id: 'stages',
@@ -23199,38 +23239,38 @@ function ProjectDashboard({
                 {/* Main Content (Left) */}
                 <div className="order-2 lg:order-1 flex-1 space-y-4 md:space-y-6">
 
-                  <div className="overflow-x-auto pb-1">
-                    <div className="inline-flex min-w-[760px] items-stretch pr-10 md:pr-12">
-                      {projectMilestones.map((milestoneLabel, milestoneIndex) => {
-                        const isReached = milestoneIndex <= projectMilestoneProgressIndex;
-                        const stageColor =
-                          PROJECT_MILESTONE_TRACK_COLORS[
-                            milestoneIndex % PROJECT_MILESTONE_TRACK_COLORS.length
-                          ];
-                        const segmentBackgroundColor = isReached ? stageColor : '#e5e7eb';
-                        const segmentOutlineColor = isReached ? stageColor : '#d1d5db';
-                        const connectorFillColor = segmentBackgroundColor;
-                        const connectorArcColor = segmentOutlineColor;
-                        const segmentStackOrder = projectMilestones.length - milestoneIndex + 1;
-                        const stageLabelColor = isReached ? 'rgba(255,255,255,0.9)' : '#374151';
-                        const stageTitleColor = isReached ? '#ffffff' : '#0f172a';
-                        return (
-                          <button
-                            key={`project-milestone-${milestoneIndex}`}
+	                  <div className="overflow-x-auto pb-1">
+	                    <div className="inline-flex min-w-[760px] items-stretch pr-10 md:pr-12">
+	                      {visibleProjectMilestones.map(({ milestoneLabel, milestoneIndex }, visibleMilestoneIndex) => {
+	                        const isReached = milestoneIndex <= projectMilestoneProgressIndex;
+	                        const stageColor =
+	                          PROJECT_MILESTONE_TRACK_COLORS[
+	                            milestoneIndex % PROJECT_MILESTONE_TRACK_COLORS.length
+	                          ];
+	                        const segmentBackgroundColor = isReached ? stageColor : '#f3f4f6';
+	                        const segmentOutlineColor = isReached ? stageColor : '#e5e7eb';
+	                        const connectorFillColor = segmentBackgroundColor;
+	                        const connectorArcColor = segmentOutlineColor;
+	                        const segmentStackOrder = visibleProjectMilestones.length - visibleMilestoneIndex + 1;
+	                        const stageLabelColor = isReached ? 'rgba(255,255,255,0.9)' : '#374151';
+	                        const stageTitleColor = isReached ? '#ffffff' : '#0f172a';
+	                        return (
+	                          <button
+	                            key={`project-milestone-${milestoneIndex}`}
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
                               void handleOpenProjectMilestoneEditor(milestoneIndex);
                             }}
                             className="relative min-w-[180px] flex-1 border-y border-r py-2 text-left first:rounded-l-xl first:border-l last:rounded-r-xl"
-                            style={{
-                              zIndex: segmentStackOrder,
-                              backgroundColor: segmentBackgroundColor,
-                              borderColor: segmentOutlineColor,
-                              paddingLeft: milestoneIndex === 0 ? '1rem' : '3.4rem',
-                              paddingRight: '2.45rem',
-                            }}
-                          >
+	                            style={{
+	                              zIndex: segmentStackOrder,
+	                              backgroundColor: segmentBackgroundColor,
+	                              borderColor: segmentOutlineColor,
+	                              paddingLeft: visibleMilestoneIndex === 0 ? '1rem' : '3.4rem',
+	                              paddingRight: '2.45rem',
+	                            }}
+	                          >
                             <p
                               className="relative z-[2] text-[11px] font-semibold uppercase tracking-wide"
                               style={{ color: stageLabelColor }}
@@ -26088,11 +26128,14 @@ function TaskDetailPane({
   const [hasStartTime, setHasStartTime] = useState(false);
   const [endTime, setEndTime] = useState('');
   const [description, setDescription] = useState('');
+  const [location, setLocation] = useState('');
+  const [isLocationEditorOpen, setIsLocationEditorOpen] = useState(false);
   const [linkedTaskEventKey, setLinkedTaskEventKey] = useState('');
   const [taskTodos, setTaskTodos] = useState([]);
   const [newTodoText, setNewTodoText] = useState('');
   const [isTaskTodoComposerOpen, setIsTaskTodoComposerOpen] = useState(false);
   const taskTodoInputRef = useRef(null);
+  const taskLocationInputRef = useRef(null);
   const attachmentFileInputRef = useRef(null);
   const [newCommentText, setNewCommentText] = useState('');
   const [replyTargetCommentId, setReplyTargetCommentId] = useState('');
@@ -26262,6 +26305,8 @@ function TaskDetailPane({
     [task?.comments]
   );
   const isExistingTask = Boolean(String(task?.id || '').trim());
+  const normalizedTaskLocation = normalizeMapLocationText(location);
+  const hasTaskLocation = Boolean(normalizedTaskLocation);
   const currentTaskId = String(task?.id || '').trim();
   const parentTaskId = getTaskParentId(task);
   const parentTaskTitle = String(task?.parentTaskTitle || '').trim();
@@ -27102,6 +27147,7 @@ function TaskDetailPane({
         setStartTime(hasTaskStartTime ? taskStartTime : '');
         setEndTime(String(task.endTime || '').trim());
         setDescription(task.description || '');
+        setLocation(normalizeMapLocationText(task.location));
         const mappedTaskEventSource = String(task.taskOfEventSource || '').trim().toLowerCase();
         const mappedTaskEventId = String(task.taskOfEventId || '').trim();
         setLinkedTaskEventKey(
@@ -27112,6 +27158,7 @@ function TaskDetailPane({
         setTaskTodos(normalizeTaskTodoEntries(task.taskTodos));
         setIsTaskTodoComposerOpen(false);
         setTaskAttachments(normalizeTaskAttachmentEntries(task.attachments));
+        setIsLocationEditorOpen(false);
       } else {
         setIsEditing(true);
         const now = new Date();
@@ -27132,10 +27179,12 @@ function TaskDetailPane({
         setStartTime('');
         setEndTime('');
         setDescription('');
+        setLocation('');
         setLinkedTaskEventKey('');
         setTaskTodos([]);
         setIsTaskTodoComposerOpen(false);
         setTaskAttachments([]);
+        setIsLocationEditorOpen(false);
       }
       setIsAssigneePickerOpen(false);
     }
@@ -27153,6 +27202,8 @@ function TaskDetailPane({
       setAttachmentUploadIssues([]);
       setIsUploadingAttachment(false);
       setHasShownTaskCommentNotifyWarning(false);
+      setLocation('');
+      setIsLocationEditorOpen(false);
       return;
     }
     setNewTodoText('');
@@ -27174,12 +27225,44 @@ function TaskDetailPane({
     return () => window.cancelAnimationFrame(rafId);
   }, [isTaskTodoComposerOpen]);
   useEffect(() => {
+    if (!isOpen || !isLocationEditorOpen || isEditing) return;
+    const rafId = window.requestAnimationFrame(() => {
+      taskLocationInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [isOpen, isLocationEditorOpen, isEditing]);
+  useEffect(() => {
     if (!isOpen) return;
     const linkedDepartment = resolveDepartmentForAssignees(assigneeIds, department);
     if (linkedDepartment !== department) {
       setDepartment(linkedDepartment);
     }
   }, [assigneeIds, teamMembers, isOpen, department]);
+  const handleOpenTaskLocationOnMap = () => {
+    if (!hasTaskLocation) return;
+    openGoogleMapsSearch(normalizedTaskLocation);
+  };
+  const handleTaskLocationKeyDown = (eventInput) => {
+    if (!hasTaskLocation) return;
+    if (eventInput.key === 'Enter' || eventInput.key === ' ') {
+      eventInput.preventDefault();
+      openGoogleMapsSearch(normalizedTaskLocation);
+    }
+  };
+  const handleSaveTaskLocationQuickEdit = () => {
+    const nextLocation = normalizeMapLocationText(location);
+    setLocation(nextLocation);
+    setIsLocationEditorOpen(false);
+    if (isExistingTask) {
+      patchCurrentTask({
+        location: nextLocation,
+      });
+    }
+  };
+  const handleCancelTaskLocationQuickEdit = () => {
+    setLocation(normalizeMapLocationText(task?.location));
+    setIsLocationEditorOpen(false);
+  };
 
   // Handle Save
   const handleSave = (e) => {
@@ -27212,6 +27295,7 @@ function TaskDetailPane({
       hasExplicitStartDate: Boolean(hasStartDate && String(startDate || '').trim()),
       hasExplicitStartTime: Boolean(hasStartTime && String(startTime || '').trim()),
       description,
+      location: normalizedTaskLocation,
       taskTodos: normalizeTaskTodoEntries(taskTodos),
       attachments: normalizeTaskAttachmentEntries(taskAttachments),
       taskOfEventSource: String(selectedTaskEventOption?.source || '').trim(),
@@ -27365,8 +27449,7 @@ function TaskDetailPane({
 	                      })}
                     </div>
                   )}
-                  <p className="text-[11px] text-gray-400">You can select multiple assignees.</p>
-                </div>
+	                </div>
 
                 <div className="text-gray-500 flex items-center gap-2"><Clock className="w-4 h-4" /> Start</div>
                 <div className="grid grid-cols-2 gap-2">
@@ -27443,6 +27526,19 @@ function TaskDetailPane({
                   <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500 w-28" />
                 </div>
 
+                <div className="text-gray-500 flex items-center gap-2"><MapPin className="w-4 h-4" /> สถานที่</div>
+                <div className="space-y-1.5">
+                  <input
+                    ref={taskLocationInputRef}
+                    type="text"
+                    value={location}
+                    onChange={(eventInput) => setLocation(eventInput.target.value)}
+                    placeholder="กรอกสถานที่..."
+                    maxLength={180}
+                    className="w-full border-gray-300 rounded-lg p-2 bg-gray-50 border outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+	                </div>
+
                 <div className="text-gray-500 flex items-center gap-2">
                   <LinkIcon className="w-4 h-4" /> Task ของ Event ใด
                 </div>
@@ -27500,8 +27596,7 @@ function TaskDetailPane({
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-gray-400 mt-1">Linked from selected assignees</p>
-                </div>
+	                </div>
               </div>
 
 		              <div className="mt-2 border-t pt-5 border-gray-100">
@@ -27575,6 +27670,72 @@ function TaskDetailPane({
                   {endTime ? (
                     <span className="text-gray-500 text-xs bg-gray-100 px-1.5 py-0.5 rounded">{endTime}</span>
                   ) : null}
+                </div>
+
+                <div className="text-gray-500">สถานที่</div>
+                <div>
+	                  {isLocationEditorOpen ? (
+	                    <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-2.5">
+	                      <div className="flex items-center gap-2">
+	                        <input
+	                          ref={taskLocationInputRef}
+	                          type="text"
+	                          value={location}
+	                          onChange={(eventInput) => setLocation(eventInput.target.value)}
+	                          placeholder="กรอกสถานที่..."
+	                          maxLength={180}
+	                          className="min-w-0 flex-1 border-gray-300 rounded-md p-2 bg-white text-sm focus:ring-blue-500 focus:border-blue-500"
+	                        />
+	                        <button
+	                          type="button"
+	                          onClick={handleCancelTaskLocationQuickEdit}
+	                          className="px-2.5 py-1.5 text-xs rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 shrink-0"
+	                        >
+	                          ยกเลิก
+	                        </button>
+	                        <button
+	                          type="button"
+	                          onClick={handleSaveTaskLocationQuickEdit}
+	                          className="px-2.5 py-1.5 text-xs rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 shrink-0"
+	                        >
+	                          บันทึก
+	                        </button>
+	                      </div>
+	                    </div>
+                  ) : hasTaskLocation ? (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={handleOpenTaskLocationOnMap}
+                      onKeyDown={handleTaskLocationKeyDown}
+                      title="Open in Google Maps"
+                      className="group flex items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2.5 cursor-pointer hover:border-blue-200 hover:bg-blue-50/50 transition-colors"
+                    >
+                      <span className="min-w-0 truncate text-sm font-medium text-gray-700">
+                        {normalizedTaskLocation}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(eventInput) => {
+                          eventInput.stopPropagation();
+                          setIsLocationEditorOpen(true);
+                        }}
+                        className="h-7 w-7 shrink-0 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                        title="Edit location"
+                        aria-label="Edit location"
+                      >
+                        <Edit2 className="w-3.5 h-3.5 mx-auto" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsLocationEditorOpen(true)}
+                      className="rounded-lg border border-dashed border-gray-300 bg-gray-50/80 px-3 py-2 text-sm text-gray-500 hover:border-blue-200 hover:bg-blue-50/50 transition-colors"
+                    >
+                      เพิ่มสถานที่
+                    </button>
+                  )}
                 </div>
 
                 <div className="text-gray-500">สถานะ</div>
@@ -41338,6 +41499,12 @@ function EventModal({
     return Boolean(start || end);
   });
   const [description, setDescription] = useState(event?.description || '');
+  const [location, setLocation] = useState(() => normalizeMapLocationText(event?.location));
+  const [isLocationInputOpen, setIsLocationInputOpen] = useState(() => {
+    const initialLocation = normalizeMapLocationText(event?.location);
+    return !event || !initialLocation;
+  });
+  const eventLocationInputRef = useRef(null);
   const [showInAllProjectCalendars, setShowInAllProjectCalendars] = useState(
     event?.showInAllProjectCalendars === true
   );
@@ -41361,6 +41528,8 @@ function EventModal({
   const [addToGoogleCalendar, setAddToGoogleCalendar] = useState(false);
   const [googleCalendarId, setGoogleCalendarId] = useState(preferredGoogleCalendarId);
   const [googleEventColorId, setGoogleEventColorId] = useState('');
+  const normalizedEventLocation = normalizeMapLocationText(location);
+  const hasEventLocation = Boolean(normalizedEventLocation);
 
   useEffect(() => {
     if (!hasEndDate) return;
@@ -41375,6 +41544,19 @@ function EventModal({
     if (hasCurrent) return;
     setGoogleCalendarId(preferredGoogleCalendarId);
   }, [addToGoogleCalendar, writableGoogleCalendars, googleCalendarId, preferredGoogleCalendarId]);
+  useEffect(() => {
+    const nextLocation = normalizeMapLocationText(event?.location);
+    setLocation(nextLocation);
+    setIsLocationInputOpen(!event || !nextLocation);
+  }, [event?.id]);
+
+  useEffect(() => {
+    if (!isLocationInputOpen) return;
+    const rafId = window.requestAnimationFrame(() => {
+      eventLocationInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [isLocationInputOpen]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -41422,6 +41604,7 @@ function EventModal({
           startTime: hasTime ? startTime : '00:00',
           endTime: hasTime ? endTime : '23:59',
           description,
+          location: normalizedEventLocation,
           showTime: hasTime,
           showInAllProjectCalendars: showInAllProjectCalendars === true,
           googleCalendarOptions: addToGoogleCalendar
@@ -41436,6 +41619,21 @@ function EventModal({
     } finally {
       setIsSubmitting(false);
     }
+  };
+  const handleOpenEventLocationOnMap = () => {
+    if (!hasEventLocation) return;
+    openGoogleMapsSearch(normalizedEventLocation);
+  };
+  const handleEventLocationKeyDown = (eventInput) => {
+    if (!hasEventLocation) return;
+    if (eventInput.key === 'Enter' || eventInput.key === ' ') {
+      eventInput.preventDefault();
+      openGoogleMapsSearch(normalizedEventLocation);
+    }
+  };
+  const handleDoneEventLocationEdit = () => {
+    setLocation(normalizeMapLocationText(location));
+    setIsLocationInputOpen(false);
   };
 
   return (
@@ -41559,6 +41757,76 @@ function EventModal({
                   </>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3 text-gray-600 mt-1">
+            <MapPin className="w-5 h-5 mt-2 shrink-0" />
+            <div className="flex-1">
+	              {isLocationInputOpen ? (
+	                <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-2.5">
+	                  <div className="flex items-center gap-2">
+	                    <input
+	                      ref={eventLocationInputRef}
+	                      type="text"
+	                      value={location}
+	                      onChange={(eventInput) => setLocation(eventInput.target.value)}
+	                      placeholder="กรอกสถานที่..."
+	                      maxLength={180}
+	                      className="min-w-0 flex-1 border-gray-300 rounded-md p-2 bg-white text-sm focus:ring-blue-500 focus:border-blue-500"
+	                    />
+	                    {hasEventLocation && (
+	                      <button
+	                        type="button"
+	                        onClick={handleOpenEventLocationOnMap}
+	                        className="px-2.5 py-1.5 text-xs rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 shrink-0"
+	                      >
+	                        Open Map
+	                      </button>
+	                    )}
+	                    <button
+	                      type="button"
+	                      onClick={handleDoneEventLocationEdit}
+	                      className="px-2.5 py-1.5 text-xs rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 shrink-0"
+	                    >
+	                      Done
+	                    </button>
+	                  </div>
+	                </div>
+              ) : hasEventLocation ? (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={handleOpenEventLocationOnMap}
+                  onKeyDown={handleEventLocationKeyDown}
+                  title="Open in Google Maps"
+                  className="group flex items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2.5 cursor-pointer hover:border-blue-200 hover:bg-blue-50/50 transition-colors"
+                >
+                  <span className="min-w-0 truncate text-sm font-medium text-gray-700">
+                    {normalizedEventLocation}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(eventInput) => {
+                      eventInput.stopPropagation();
+                      setIsLocationInputOpen(true);
+                    }}
+                    className="h-7 w-7 shrink-0 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                    title="Edit location"
+                    aria-label="Edit location"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 mx-auto" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIsLocationInputOpen(true)}
+                  className="w-full rounded-lg border border-dashed border-gray-300 bg-gray-50/80 px-3 py-2 text-left text-sm text-gray-500 hover:border-blue-200 hover:bg-blue-50/50 transition-colors"
+                >
+                  เพิ่มสถานที่
+                </button>
+              )}
             </div>
           </div>
 
