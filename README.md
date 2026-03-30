@@ -1,8 +1,8 @@
 # PM Calendar
 
 <div align="center">
-  <a href="https://pm-calendar-frontend-1065468614106.asia-southeast1.run.app/" target="_blank">
-    <strong>Live Project:</strong> pm-calendar-frontend-1065468614106.asia-southeast1.run.app
+  <a href="https://www.pamda.space" target="_blank">
+    <strong>PAMDA:</strong> Project Manager Calendar
   </a>
   <br />
   <br />
