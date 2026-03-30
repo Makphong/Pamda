@@ -2028,6 +2028,7 @@ const normalizeProjectResourceRows = (rowsInput) =>
     })
     .filter(Boolean);
 const DEFAULT_PROJECT_MILESTONES = ['Kickoff', 'Planning', 'Execution', 'Launch'];
+const PROJECT_MILESTONE_TRACK_COLORS = ['#fa7e5c', '#f8b032', '#42be8d', '#1aa6dd', '#b271da', '#fb8f65'];
 const normalizeProjectMilestones = (value) => {
   const source = Array.isArray(value) ? value : [];
   const normalized = source
@@ -5033,6 +5034,26 @@ function PopupProvider({ children }) {
           placeholder: String(field?.placeholder || '').trim(),
           defaultValue: String(field?.defaultValue || ''),
           type: String(field?.type || 'text').trim() || 'text',
+          layout: String(field?.layout || 'full').trim() || 'full',
+          options: Array.isArray(field?.options)
+            ? field.options
+                .map((option) => {
+                  if (
+                    option &&
+                    typeof option === 'object' &&
+                    !Array.isArray(option)
+                  ) {
+                    const value = String(option.value ?? '').trim();
+                    const label = String(option.label ?? option.value ?? '').trim();
+                    if (!value || !label) return null;
+                    return { value, label };
+                  }
+                  const value = String(option ?? '').trim();
+                  if (!value) return null;
+                  return { value, label: value };
+                })
+                .filter(Boolean)
+            : [],
         };
       })
       .filter(Boolean);
@@ -5094,23 +5115,55 @@ function PopupProvider({ children }) {
                 />
               )}
               {popupState.type === 'prompt_form' && (
-                <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
                   {(Array.isArray(popupState.fields) ? popupState.fields : []).map((field, fieldIndex) => (
-                    <label key={field.id} className="block space-y-1.5">
+                    <label
+                      key={field.id}
+                      className={`block space-y-1.5 ${field.layout === 'half' ? 'col-span-1' : 'col-span-2'}`}
+                    >
                       <span className="text-xs font-medium text-slate-600">{field.label}</span>
-                      <input
-                        type={field.type || 'text'}
-                        value={String(promptFormValues[field.id] || '')}
-                        onChange={(e) =>
-                          setPromptFormValues((prev) => ({
-                            ...prev,
-                            [field.id]: e.target.value,
-                          }))
-                        }
-                        placeholder={field.placeholder || ''}
-                        autoFocus={fieldIndex === 0}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
+                      {field.type === 'button_group' ? (
+                        <div className="flex items-center gap-2">
+                          {(Array.isArray(field.options) ? field.options : []).map((option) => {
+                            const optionValue = String(option?.value || '');
+                            const isSelected =
+                              String(promptFormValues[field.id] || '') === optionValue;
+                            return (
+                              <button
+                                key={`${field.id}-${optionValue}`}
+                                type="button"
+                                onClick={() =>
+                                  setPromptFormValues((prev) => ({
+                                    ...prev,
+                                    [field.id]: optionValue,
+                                  }))
+                                }
+                                className={`inline-flex h-9 min-w-[40px] items-center justify-center rounded-lg border px-3 text-sm font-semibold transition-colors ${
+                                  isSelected
+                                    ? 'border-blue-600 bg-blue-600 text-white'
+                                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                                }`}
+                              >
+                                {option?.label || optionValue}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <input
+                          type={field.type || 'text'}
+                          value={String(promptFormValues[field.id] || '')}
+                          onChange={(e) =>
+                            setPromptFormValues((prev) => ({
+                              ...prev,
+                              [field.id]: e.target.value,
+                            }))
+                          }
+                          placeholder={field.placeholder || ''}
+                          autoFocus={fieldIndex === 0}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      )}
                     </label>
                   ))}
                 </div>
@@ -13825,10 +13878,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       >
         <div className={shouldUseCompactTopNavigation ? '' : 'hidden'}>
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 min-w-0">
-              <CalendarDays className="w-6 h-6 shrink-0 text-blue-600" />
-              <h1 className="text-lg font-bold text-gray-800 truncate">
-                {isPersonalWorkspaceOpen ? 'Personal Reflection Space' : 'Multi-Project Calendar'}
+            <div className="flex items-center gap-4 min-w-0">
+              <img
+                src="/vite.svg"
+                alt="PAMDA logo"
+                className="h-9 w-9 shrink-0"
+                style={{ transform: 'scale(1.3)', transformOrigin: 'center' }}
+              />
+              <h1
+                className="text-lg font-bold leading-none text-gray-800 truncate"
+                style={{ transform: 'scale(1.3)', transformOrigin: 'left center' }}
+              >
+                {isPersonalWorkspaceOpen ? 'Personal Reflection Space' : 'PAMDA'}
               </h1>
             </div>
 
@@ -13925,10 +13986,18 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
             shouldUseCompactTopNavigation ? 'hidden' : 'flex'
           }`}
         >
-          <div data-calendar-desktop-brand="true" className="flex items-center gap-2">
-            <CalendarDays className="w-6 h-6 text-blue-600" />
-            <h1 className="text-xl font-bold text-gray-800">
-              {isPersonalWorkspaceOpen ? 'Personal Reflection Space' : 'Multi-Project Calendar'}
+          <div data-calendar-desktop-brand="true" className="flex items-center gap-4">
+            <img
+              src="/vite.svg"
+              alt="PAMDA logo"
+              className="h-9 w-9 shrink-0"
+              style={{ transform: 'scale(1.3)', transformOrigin: 'center' }}
+            />
+            <h1
+              className="text-xl font-bold leading-none text-gray-800"
+              style={{ transform: 'scale(1.3)', transformOrigin: 'left center' }}
+            >
+              {isPersonalWorkspaceOpen ? 'Personal Reflection Space' : 'PAMDA'}
             </h1>
           </div>
 
@@ -22896,7 +22965,6 @@ function ProjectDashboard({
       ),
     [project?.milestoneProgressIndex, projectMilestones.length]
   );
-  const projectMilestoneFillColor = getProjectColorHexByIndex(project?.colorIndex);
   const handleOpenProjectMilestoneEditor = useCallback(
     async (preferredStageIndexInput = null) => {
       const preferredStageIndex = Number.parseInt(String(preferredStageIndexInput ?? ''), 10);
@@ -22920,7 +22988,7 @@ function ProjectDashboard({
             label: 'Current Stage',
             placeholder: `0-${projectMilestones.length}`,
             defaultValue:
-              defaultStageIndex >= 0 ? String(defaultStageIndex + 1) : '0',
+              defaultStageIndex >= 0 ? String(defaultStageIndex + 1) : '',
             type: 'text',
           },
         ],
@@ -22931,7 +22999,7 @@ function ProjectDashboard({
         rawStages ? rawStages.split(/[,\n|]+/) : []
       );
       const selectedStageNumber = Number.parseInt(
-        String(milestoneForm?.currentStage || '').trim(),
+        String(milestoneForm?.currentStage || '0').trim(),
         10
       );
       const rawProgressIndex = Number.isFinite(selectedStageNumber)
@@ -23131,15 +23199,21 @@ function ProjectDashboard({
                 {/* Main Content (Left) */}
                 <div className="order-2 lg:order-1 flex-1 space-y-4 md:space-y-6">
 
-                  <div
-                    className="overflow-x-auto pb-1"
-                    onClick={() => {
-                      void handleOpenProjectMilestoneEditor();
-                    }}
-                  >
-                    <div className="inline-flex min-w-max items-center gap-2 p-1">
+                  <div className="overflow-x-auto pb-1">
+                    <div className="inline-flex min-w-[760px] items-stretch pr-10 md:pr-12">
                       {projectMilestones.map((milestoneLabel, milestoneIndex) => {
                         const isReached = milestoneIndex <= projectMilestoneProgressIndex;
+                        const stageColor =
+                          PROJECT_MILESTONE_TRACK_COLORS[
+                            milestoneIndex % PROJECT_MILESTONE_TRACK_COLORS.length
+                          ];
+                        const segmentBackgroundColor = isReached ? stageColor : '#e5e7eb';
+                        const segmentOutlineColor = isReached ? stageColor : '#d1d5db';
+                        const connectorFillColor = segmentBackgroundColor;
+                        const connectorArcColor = segmentOutlineColor;
+                        const segmentStackOrder = projectMilestones.length - milestoneIndex + 1;
+                        const stageLabelColor = isReached ? 'rgba(255,255,255,0.9)' : '#374151';
+                        const stageTitleColor = isReached ? '#ffffff' : '#0f172a';
                         return (
                           <button
                             key={`project-milestone-${milestoneIndex}`}
@@ -23148,32 +23222,50 @@ function ProjectDashboard({
                               event.stopPropagation();
                               void handleOpenProjectMilestoneEditor(milestoneIndex);
                             }}
-                            className="min-w-[180px] rounded-md border px-3 py-2.5 text-left transition-colors"
+                            className="relative min-w-[180px] flex-1 border-y border-r py-3 text-left first:rounded-l-xl first:border-l last:rounded-r-xl"
                             style={{
-                              backgroundColor: isReached ? projectMilestoneFillColor : '#e5e7eb',
-                              borderColor: isReached ? projectMilestoneFillColor : '#d1d5db',
+                              zIndex: segmentStackOrder,
+                              backgroundColor: segmentBackgroundColor,
+                              borderColor: segmentOutlineColor,
+                              paddingLeft: milestoneIndex === 0 ? '1rem' : '3.4rem',
+                              paddingRight: '2.75rem',
                             }}
                           >
                             <p
-                              className="text-[10px] font-semibold uppercase tracking-wide"
-                              style={{ color: isReached ? 'rgba(255,255,255,0.82)' : '#6b7280' }}
+                              className="relative z-[2] text-[11px] font-semibold uppercase tracking-wide"
+                              style={{ color: stageLabelColor }}
                             >
                               Stage {milestoneIndex + 1}
                             </p>
                             <p
-                              className="mt-1 text-sm font-semibold"
-                              style={{ color: isReached ? '#ffffff' : '#374151' }}
+                              className="relative z-[2] mt-1 text-sm font-semibold leading-tight"
+                              style={{ color: stageTitleColor }}
                             >
                               {milestoneLabel}
                             </p>
+                            <span className="pointer-events-none absolute right-[-20px] top-1/2 z-[1] -translate-y-1/2">
+                              <span className="relative block h-11 w-11">
+                                <span
+                                  className="absolute inset-0 rounded-full border-[8px] bg-white"
+                                  style={{ borderColor: connectorFillColor }}
+                                />
+                                <span
+                                  className="absolute inset-0 rounded-full border"
+                                  style={{
+                                    borderColor: connectorArcColor,
+                                    clipPath: 'inset(0 0 0 50%)',
+                                  }}
+                                />
+                              </span>
+                            </span>
                           </button>
                         );
                       })}
                     </div>
                   </div>
-                  
-	                  {/* Project Organization Calendar */}
-	                  <section className="bg-white p-3 md:p-4 rounded-xl">
+
+		                  {/* Project Organization Calendar */}
+		                  <section className="bg-white p-3 md:p-4 rounded-xl">
                     <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                       <div>
                         <h3 className="text-base md:text-lg font-semibold text-gray-800">
