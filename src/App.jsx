@@ -10865,6 +10865,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return;
     }
 
+    const linkedBefore = Boolean(googleCalendarStatus?.linked);
+    const linkedUpdatedAtBefore = String(googleCalendarStatus?.updatedAt || '').trim();
+    let authApiOrigin = '';
+    try {
+      authApiOrigin = new URL(AUTH_API_BASE_URL).origin;
+    } catch {
+      authApiOrigin = '';
+    }
+
     setIsGoogleCalendarBusy(true);
     try {
       const result = await requestCloudDataApi(
@@ -10889,7 +10898,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         throw new Error('Popup blocked. Please allow popups and try again.');
       }
 
-      const linkResult = await new Promise((resolve) => {
+      let linkResult = await new Promise((resolve) => {
         let done = false;
         const complete = (payload) => {
           if (done) return;
@@ -10901,6 +10910,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         };
 
         const onMessage = (event) => {
+          if (authApiOrigin && String(event?.origin || '').trim() && event.origin !== authApiOrigin) return;
           if (!event?.data || event.data.type !== 'PM_CALENDAR_GOOGLE_CALENDAR_LINK') return;
           complete(event.data);
         };
@@ -10909,6 +10919,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
           if (popupWindow.closed) {
             complete({
               ok: false,
+              reason: 'popup_closed',
               message: 'Google link window was closed before completion.',
             });
           }
@@ -10917,12 +10928,31 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         const timeout = window.setTimeout(() => {
           complete({
             ok: false,
+            reason: 'timeout',
             message: 'Google link timed out. Please try again.',
           });
         }, 180000);
 
         window.addEventListener('message', onMessage);
       });
+
+      if (!linkResult?.ok && (linkResult?.reason === 'popup_closed' || linkResult?.reason === 'timeout')) {
+        try {
+          const fallbackStatus = await refreshGoogleCalendarStatus();
+          const fallbackUpdatedAt = String(fallbackStatus?.updatedAt || '').trim();
+          const hasFreshLink =
+            fallbackStatus?.linked &&
+            (!linkedBefore || (fallbackUpdatedAt && fallbackUpdatedAt !== linkedUpdatedAtBefore));
+          if (hasFreshLink) {
+            linkResult = {
+              ok: true,
+              message: `Linked account: ${fallbackStatus?.linkedEmail || currentUser.email}`,
+            };
+          }
+        } catch (statusError) {
+          console.warn('Failed fallback Google Calendar status refresh:', statusError.message);
+        }
+      }
 
       if (!linkResult?.ok) {
         throw new Error(linkResult?.message || 'Failed to link Google Calendar.');

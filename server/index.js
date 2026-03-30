@@ -56,7 +56,10 @@ const GOOGLE_OAUTH_JSON_PATH = String(process.env.GOOGLE_OAUTH_JSON_PATH || '').
 const GOOGLE_CALENDAR_REDIRECT_URI = String(
   process.env.GOOGLE_CALENDAR_REDIRECT_URI || process.env.GOOGLE_REDIRECT_URI || ''
 ).trim();
-const GOOGLE_CALENDAR_STATE_TTL_MS = 10 * 60 * 1000;
+const GOOGLE_CALENDAR_STATE_TTL_MS = Math.max(
+  60 * 1000,
+  Number(process.env.GOOGLE_CALENDAR_STATE_TTL_MS || 15 * 60 * 1000)
+);
 const GOOGLE_CALENDAR_PROJECT_ID = '__google_calendar__';
 const GOOGLE_CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
@@ -214,6 +217,13 @@ const sanitizeEmail = (value) => String(value || '').trim().toLowerCase();
 const sanitizeUsername = (value) => String(value || '').trim().toLowerCase();
 const sanitizeUserId = (value) => String(value || '').trim();
 const sanitizeAuthToken = (value) => String(value || '').trim();
+const escapeHtml = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 const ROOT_ADMIN_EMAIL = sanitizeEmail(ROOT_ADMIN_EMAIL_RAW);
 
 const requiredEnv = ['GMAIL_USER', 'GMAIL_APP_PASSWORD', 'OTP_FROM_EMAIL'];
@@ -1698,14 +1708,32 @@ const fetchGoogleCalendarEvents = async (accessToken, timeMin, timeMax, selected
 };
 
 const sendGoogleCalendarPopupResponse = (res, payload) => {
+  const isSuccess = payload?.ok === true;
+  const message = String(payload?.message || '').trim();
+  const statusLine = isSuccess
+    ? 'Google Calendar linked. You can close this window.'
+    : 'Failed to link Google Calendar.';
   const safePayload = JSON.stringify({
     type: 'PM_CALENDAR_GOOGLE_CALENDAR_LINK',
-    ok: payload?.ok === true,
-    message: String(payload?.message || ''),
+    ok: isSuccess,
+    message,
   }).replace(/</g, '\\u003c');
+  const safeStatusLine = escapeHtml(statusLine);
+  const safeMessageLine = escapeHtml(message);
 
   res
-    .status(payload?.ok === true ? 200 : 400)
+    .set({
+      'Cache-Control': 'no-store, max-age=0',
+      Pragma: 'no-cache',
+      Expires: '0',
+      // Google callback is opened from a different origin (www -> api) and must keep opener for postMessage.
+      'Cross-Origin-Opener-Policy': 'unsafe-none',
+      'Cross-Origin-Resource-Policy': 'cross-origin',
+      // This tiny callback page uses a short inline script to notify opener and auto-close.
+      'Content-Security-Policy':
+        "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+    })
+    .status(isSuccess ? 200 : 400)
     .type('html')
     .send(`<!doctype html>
 <html>
@@ -1715,7 +1743,8 @@ const sendGoogleCalendarPopupResponse = (res, payload) => {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
   </head>
   <body style="font-family:Arial,sans-serif;padding:24px;">
-    <p>${payload?.ok === true ? 'Google Calendar linked. You can close this window.' : 'Failed to link Google Calendar.'}</p>
+    <p>${safeStatusLine}</p>
+    ${safeMessageLine ? `<p style="color:#374151;white-space:pre-wrap;">${safeMessageLine}</p>` : ''}
     <script>
       (function () {
         var payload = ${safePayload};
@@ -3972,6 +4001,12 @@ app.post('/auth/verify-otp', async (req, res) => {
 
 app.get('/google/calendar/auth-url', requireAuth, async (req, res) => {
   try {
+    res.set({
+      'Cache-Control': 'no-store, max-age=0',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+
     const userId = sanitizeUserId(req.query?.userId);
     if (!userId) {
       return res.status(400).json({ message: 'userId is required.' });
@@ -3998,18 +4033,24 @@ app.get('/google/calendar/auth-url', requireAuth, async (req, res) => {
       return res.status(400).json({ message: 'This account has no email and cannot link Google Calendar.' });
     }
 
-    const stateToken = crypto.randomBytes(24).toString('hex');
-    await usersRef.doc(userId).set(
-      {
-        googleCalendarLinkState: {
-          token: stateToken,
-          expiresAt: Date.now() + GOOGLE_CALENDAR_STATE_TTL_MS,
-          createdAt: new Date().toISOString(),
+    const nowMs = Date.now();
+    const existingState = getGoogleCalendarLinkState(user);
+    const canReuseExistingState = Boolean(existingState && nowMs <= existingState.expiresAt);
+    const stateToken = canReuseExistingState ? existingState.token : crypto.randomBytes(24).toString('hex');
+    if (!canReuseExistingState) {
+      const nowIso = new Date().toISOString();
+      await usersRef.doc(userId).set(
+        {
+          googleCalendarLinkState: {
+            token: stateToken,
+            expiresAt: nowMs + GOOGLE_CALENDAR_STATE_TTL_MS,
+            createdAt: nowIso,
+          },
+          updatedAt: nowIso,
         },
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
+        { merge: true }
+      );
+    }
 
     const authUrl = oauthForCalendar.generateAuthUrl({
       access_type: 'offline',
@@ -4062,7 +4103,7 @@ app.get('/google/calendar/callback', async (req, res) => {
     if (userSnapshot.empty) {
       return sendGoogleCalendarPopupResponse(res, {
         ok: false,
-        message: 'Invalid or expired Google Calendar linking state.',
+        message: 'Invalid or expired Google Calendar linking state. Please close this window and start linking again from PM Calendar.',
       });
     }
 
@@ -4080,7 +4121,7 @@ app.get('/google/calendar/callback', async (req, res) => {
       );
       return sendGoogleCalendarPopupResponse(res, {
         ok: false,
-        message: 'Google Calendar linking request expired. Please try again.',
+        message: 'Google Calendar linking request expired. Please close this window and try linking again from PM Calendar.',
       });
     }
 
