@@ -20,11 +20,11 @@ WORKDIR /app
 
 COPY --from=builder /app/dist ./dist
 COPY docker/entrypoint.sh /entrypoint.sh
-COPY docker/static-server.mjs /app/static-server.mjs
+COPY docker/static-server.mjs /app/docker/static-server.mjs
 RUN chmod +x /entrypoint.sh
 
 ENV PORT=8080
 EXPOSE 8080
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["node", "/app/static-server.mjs"]
+CMD ["node", "/app/docker/static-server.mjs"]
