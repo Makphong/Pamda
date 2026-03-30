@@ -5759,10 +5759,6 @@ function LegalPrivacyTermsPage() {
             </div>
             <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Terms of Service & Privacy Policy</h1>
             <p className="text-sm text-gray-500">อัปเดตล่าสุด: 30 มีนาคม 2026</p>
-            <p className="text-sm text-gray-700 leading-relaxed">
-              หน้านี้เป็นหน้าแยกสำหรับอ่านข้อกำหนดและนโยบายความเป็นส่วนตัวแบบละเอียด โดยสามารถเข้าถึงได้โดยไม่ต้องล็อกอินผ่าน URL
-              <span className="font-medium"> https://www.pamda.space/privacy</span>
-            </p>
           </header>
 
           <section id="terms" className="space-y-3">
