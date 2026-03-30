@@ -1966,6 +1966,21 @@ const normalizeProjectResourceRows = (rowsInput) =>
       };
     })
     .filter(Boolean);
+const DEFAULT_PROJECT_MILESTONES = ['Kickoff', 'Planning', 'Execution', 'Launch'];
+const normalizeProjectMilestones = (value) => {
+  const source = Array.isArray(value) ? value : [];
+  const normalized = source
+    .map((item) => normalizeProjectResourceLabel(item, { fallback: '', maxLength: 80 }))
+    .filter(Boolean)
+    .slice(0, 16);
+  return normalized.length > 0 ? normalized : [...DEFAULT_PROJECT_MILESTONES];
+};
+const normalizeProjectMilestoneProgressIndex = (value, milestoneCountInput) => {
+  const milestoneCount = Math.max(1, Number.parseInt(String(milestoneCountInput || '0'), 10) || 0);
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isFinite(parsed)) return -1;
+  return Math.min(milestoneCount - 1, Math.max(-1, parsed));
+};
 const normalizeProjectJoinCodeSecret = (value) =>
   String(value || '')
     .trim()
@@ -11840,6 +11855,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         status: 'on_track',
         description: '',
         milestones: [],
+        milestoneProgressIndex: -1,
         ownerId: currentUser.id,
         ownerUsername: currentUser.username,
         members: [currentUser.username],
@@ -22525,6 +22541,76 @@ function ProjectDashboard({
     },
     [onRequestEditEvent]
   );
+  const projectMilestones = useMemo(
+    () => normalizeProjectMilestones(project?.milestones),
+    [project?.milestones]
+  );
+  const projectMilestoneProgressIndex = useMemo(
+    () =>
+      normalizeProjectMilestoneProgressIndex(
+        project?.milestoneProgressIndex,
+        projectMilestones.length
+      ),
+    [project?.milestoneProgressIndex, projectMilestones.length]
+  );
+  const projectMilestoneFillColor = getProjectColorHexByIndex(project?.colorIndex);
+  const handleOpenProjectMilestoneEditor = useCallback(
+    async (preferredStageIndexInput = null) => {
+      const preferredStageIndex = Number.parseInt(String(preferredStageIndexInput ?? ''), 10);
+      const defaultStageIndex = Number.isFinite(preferredStageIndex)
+        ? normalizeProjectMilestoneProgressIndex(preferredStageIndex, projectMilestones.length)
+        : projectMilestoneProgressIndex;
+      const milestoneForm = await popup.promptForm({
+        title: 'Edit Milestones',
+        message:
+          'ใส่ชื่อ Stage โดยคั่นด้วย comma และระบุ Stage ปัจจุบัน (0 = ยังไม่เริ่ม, 1 = Stage แรก)',
+        fields: [
+          {
+            id: 'stages',
+            label: 'Stages',
+            placeholder: 'Kickoff, Planning, Execution, Launch',
+            defaultValue: projectMilestones.join(', '),
+            type: 'text',
+          },
+          {
+            id: 'currentStage',
+            label: 'Current Stage',
+            placeholder: `0-${projectMilestones.length}`,
+            defaultValue:
+              defaultStageIndex >= 0 ? String(defaultStageIndex + 1) : '0',
+            type: 'text',
+          },
+        ],
+      });
+      if (milestoneForm === null) return;
+      const rawStages = String(milestoneForm?.stages || '').trim();
+      const nextMilestones = normalizeProjectMilestones(
+        rawStages ? rawStages.split(/[,\n|]+/) : []
+      );
+      const selectedStageNumber = Number.parseInt(
+        String(milestoneForm?.currentStage || '').trim(),
+        10
+      );
+      const rawProgressIndex = Number.isFinite(selectedStageNumber)
+        ? selectedStageNumber - 1
+        : -1;
+      const nextProgressIndex = normalizeProjectMilestoneProgressIndex(
+        rawProgressIndex,
+        nextMilestones.length
+      );
+      onUpdateProject(project.id, {
+        milestones: nextMilestones,
+        milestoneProgressIndex: nextProgressIndex,
+      });
+    },
+    [
+      onUpdateProject,
+      popup,
+      project.id,
+      projectMilestoneProgressIndex,
+      projectMilestones,
+    ]
+  );
 
   return (
     <div className="pm-management-scroll-hidden flex flex-col h-screen bg-white font-sans relative" style={{ height: '100dvh' }}>
@@ -22697,13 +22783,54 @@ function ProjectDashboard({
             </div>
 
             {/* Content Mockups Based on Active Tab */}
-	            {activeTab === 'organization' && (
-	              <div className="flex flex-col lg:flex-row gap-4 md:gap-6 lg:gap-8">
+		            {activeTab === 'organization' && (
+		              <div className="flex flex-col lg:flex-row gap-4 md:gap-6 lg:gap-8">
                 {/* Main Content (Left) */}
                 <div className="order-2 lg:order-1 flex-1 space-y-4 md:space-y-6">
+
+                  <div
+                    className="overflow-x-auto pb-1"
+                    onClick={() => {
+                      void handleOpenProjectMilestoneEditor();
+                    }}
+                  >
+                    <div className="inline-flex min-w-max items-center gap-2 p-1">
+                      {projectMilestones.map((milestoneLabel, milestoneIndex) => {
+                        const isReached = milestoneIndex <= projectMilestoneProgressIndex;
+                        return (
+                          <button
+                            key={`project-milestone-${milestoneIndex}`}
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleOpenProjectMilestoneEditor(milestoneIndex);
+                            }}
+                            className="min-w-[180px] rounded-md border px-3 py-2.5 text-left transition-colors"
+                            style={{
+                              backgroundColor: isReached ? projectMilestoneFillColor : '#e5e7eb',
+                              borderColor: isReached ? projectMilestoneFillColor : '#d1d5db',
+                            }}
+                          >
+                            <p
+                              className="text-[10px] font-semibold uppercase tracking-wide"
+                              style={{ color: isReached ? 'rgba(255,255,255,0.82)' : '#6b7280' }}
+                            >
+                              Stage {milestoneIndex + 1}
+                            </p>
+                            <p
+                              className="mt-1 text-sm font-semibold"
+                              style={{ color: isReached ? '#ffffff' : '#374151' }}
+                            >
+                              {milestoneLabel}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                   
-                  {/* Project Organization Calendar */}
-                  <section className="bg-white p-3 md:p-4 rounded-xl">
+	                  {/* Project Organization Calendar */}
+	                  <section className="bg-white p-3 md:p-4 rounded-xl">
                     <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                       <div>
                         <h3 className="text-base md:text-lg font-semibold text-gray-800">
