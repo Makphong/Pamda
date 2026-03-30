@@ -41500,10 +41500,7 @@ function EventModal({
   });
   const [description, setDescription] = useState(event?.description || '');
   const [location, setLocation] = useState(() => normalizeMapLocationText(event?.location));
-  const [isLocationInputOpen, setIsLocationInputOpen] = useState(() => {
-    const initialLocation = normalizeMapLocationText(event?.location);
-    return !event || !initialLocation;
-  });
+  const [isLocationInputOpen, setIsLocationInputOpen] = useState(false);
   const eventLocationInputRef = useRef(null);
   const [showInAllProjectCalendars, setShowInAllProjectCalendars] = useState(
     event?.showInAllProjectCalendars === true
@@ -41547,7 +41544,7 @@ function EventModal({
   useEffect(() => {
     const nextLocation = normalizeMapLocationText(event?.location);
     setLocation(nextLocation);
-    setIsLocationInputOpen(!event || !nextLocation);
+    setIsLocationInputOpen(false);
   }, [event?.id]);
 
   useEffect(() => {
