@@ -3841,6 +3841,7 @@ const getGoogleOAuthErrorMessage = (errorCodeInput) => {
 const LINE_IN_APP_USER_AGENT_PATTERN = /\bLine\/|LIFF/i;
 const LINE_LINK_TOKEN_QUERY_KEY = 'pamdaLineLinkToken';
 const LINE_LINK_ACTION_QUERY_KEY = 'pamdaLineAction';
+const LINE_BRIDGE_ID_QUERY_KEY = 'pamdaLineBridgeId';
 const LINE_GOOGLE_BRIDGE_QUERY_KEY = 'pamdaLineGoogleBridge';
 const LINE_EXTERNAL_QUERY_KEY = 'pamdaLineExternal';
 const isLineInAppBrowser = () => {
@@ -3915,6 +3916,8 @@ const getLineLinkTokenFromLocationUrl = (urlInput) =>
   readQueryValueFromLocationUrl(urlInput, LINE_LINK_TOKEN_QUERY_KEY);
 const getLineLinkActionFromLocationUrl = (urlInput) =>
   readQueryValueFromLocationUrl(urlInput, LINE_LINK_ACTION_QUERY_KEY);
+const getLineBridgeIdFromLocationUrl = (urlInput) =>
+  readQueryValueFromLocationUrl(urlInput, LINE_BRIDGE_ID_QUERY_KEY);
 const getLineBridgeModeFromLocationUrl = (urlInput) =>
   readQueryValueFromLocationUrl(urlInput, LINE_GOOGLE_BRIDGE_QUERY_KEY) === '1';
 const LINE_LIFF_URL_ID_PATTERN = /liff\.line\.me\/([A-Za-z0-9_-]+)/i;
@@ -4015,13 +4018,18 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
 
   return false;
 };
-const buildLineBridgeExternalUrl = (urlInput) => {
+const buildLineBridgeExternalUrl = (urlInput, bridgeIdInput = '') => {
   const currentUrl = urlInput instanceof URL ? urlInput : null;
   if (!currentUrl) return '';
   const nextUrl = new URL(`${currentUrl.origin}${currentUrl.pathname}`);
-  const linkToken = getLineLinkTokenFromLocationUrl(currentUrl);
   const lineAction = getLineLinkActionFromLocationUrl(currentUrl);
-  if (linkToken) nextUrl.searchParams.set(LINE_LINK_TOKEN_QUERY_KEY, linkToken);
+  const bridgeId = String(bridgeIdInput || '').trim() || getLineBridgeIdFromLocationUrl(currentUrl);
+  const linkToken = getLineLinkTokenFromLocationUrl(currentUrl);
+  if (bridgeId) {
+    nextUrl.searchParams.set(LINE_BRIDGE_ID_QUERY_KEY, bridgeId);
+  } else if (linkToken) {
+    nextUrl.searchParams.set(LINE_LINK_TOKEN_QUERY_KEY, linkToken);
+  }
   if (lineAction) nextUrl.searchParams.set(LINE_LINK_ACTION_QUERY_KEY, lineAction);
   nextUrl.searchParams.set(LINE_GOOGLE_BRIDGE_QUERY_KEY, '1');
   nextUrl.searchParams.set(LINE_EXTERNAL_QUERY_KEY, '1');
@@ -6133,6 +6141,10 @@ function AuthScreen({ onAuthSuccess }) {
     const url = getCurrentLocationUrl();
     return getLineLinkTokenFromLocationUrl(url);
   });
+  const [lineBridgeId, setLineBridgeId] = useState(() => {
+    const url = getCurrentLocationUrl();
+    return getLineBridgeIdFromLocationUrl(url);
+  });
   const [lineBridgeMode, setLineBridgeMode] = useState(() => {
     const url = getCurrentLocationUrl();
     return getLineBridgeModeFromLocationUrl(url);
@@ -6144,6 +6156,7 @@ function AuthScreen({ onAuthSuccess }) {
   const syncLineFlowFromUrl = useCallback(() => {
     const url = getCurrentLocationUrl();
     setLineLinkToken(getLineLinkTokenFromLocationUrl(url));
+    setLineBridgeId(getLineBridgeIdFromLocationUrl(url));
     setLineBridgeMode(getLineBridgeModeFromLocationUrl(url));
     setIsLineBrowser(isLineInAppBrowser());
   }, []);
@@ -6171,16 +6184,59 @@ function AuthScreen({ onAuthSuccess }) {
 
   const clearLineBridgeQueryFlags = useCallback(() => {
     replaceUrlSearchParams((searchParams) => {
+      searchParams.delete(LINE_LINK_TOKEN_QUERY_KEY);
+      searchParams.delete(LINE_LINK_ACTION_QUERY_KEY);
+      searchParams.delete(LINE_BRIDGE_ID_QUERY_KEY);
       searchParams.delete(LINE_GOOGLE_BRIDGE_QUERY_KEY);
       searchParams.delete(LINE_EXTERNAL_QUERY_KEY);
     });
   }, [replaceUrlSearchParams]);
 
+  const createLineBridgeSessionId = useCallback(async () => {
+    const effectiveLineLinkToken = String(lineLinkToken || '').trim();
+    if (!AUTH_API_BASE_URL || !effectiveLineLinkToken) return '';
+    const response = await fetch(`${AUTH_API_BASE_URL}/line/oa/bridge-session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        linkToken: effectiveLineLinkToken,
+      }),
+      cache: 'no-store',
+    });
+    let result = null;
+    try {
+      result = await response.json();
+    } catch {
+      result = null;
+    }
+    if (!response.ok) {
+      throw new Error(result?.message || 'Unable to prepare LINE bridge session.');
+    }
+    const bridgeId = String(result?.bridgeId || '').trim();
+    if (!bridgeId) {
+      throw new Error('LINE bridge session is missing bridge ID.');
+    }
+    return bridgeId;
+  }, [lineLinkToken]);
+
   const openLineBridgeInExternalBrowser = useCallback(async () => {
     if (typeof window === 'undefined') return false;
     const currentUrl = getCurrentLocationUrl();
     if (!currentUrl) return false;
-    const href = buildLineBridgeExternalUrl(currentUrl);
+    let effectiveBridgeId = String(lineBridgeId || '').trim();
+    if (!effectiveBridgeId) {
+      try {
+        effectiveBridgeId = await createLineBridgeSessionId();
+      } catch (bridgeError) {
+        console.warn('Failed to create LINE bridge session:', bridgeError?.message || bridgeError);
+      }
+    }
+    if (!effectiveBridgeId) {
+      return false;
+    }
+    const href = buildLineBridgeExternalUrl(currentUrl, effectiveBridgeId);
     if (!href) return false;
 
     const openedByLine = await openUrlInLineExternalBrowser(href);
@@ -6200,7 +6256,7 @@ function AuthScreen({ onAuthSuccess }) {
     } catch {
       return false;
     }
-  }, []);
+  }, [lineBridgeId, createLineBridgeSessionId]);
 
   useEffect(() => {
     syncLineFlowFromUrl();
@@ -6236,7 +6292,7 @@ function AuthScreen({ onAuthSuccess }) {
   const showConfirmPasswordMismatch =
     !isLoginMode && Boolean(confirmPassword) && Boolean(password) && password !== confirmPassword;
   const activeLegalDocument = LEGAL_DOCS[activeLegalDoc] || LEGAL_DOCS.terms;
-  const isLineGoogleBridgeFlow = lineBridgeMode && Boolean(lineLinkToken);
+  const isLineGoogleBridgeFlow = lineBridgeMode && Boolean(lineLinkToken || lineBridgeId);
 
   useEffect(() => {
     if (!isLineGoogleBridgeFlow || !AUTH_API_BASE_URL) {
@@ -6246,13 +6302,22 @@ function AuthScreen({ onAuthSuccess }) {
     }
     let isCancelled = false;
     const requestLinkStatus = async (isBackground = false) => {
-      if (!AUTH_API_BASE_URL || !lineLinkToken) return;
+      if (!AUTH_API_BASE_URL) return;
+      const effectiveLineLinkToken = String(lineLinkToken || '').trim();
+      const effectiveBridgeId = String(lineBridgeId || '').trim();
+      if (!effectiveLineLinkToken && !effectiveBridgeId) return;
       if (!isBackground && !isCancelled) {
         setIsLineLinkStatusLoading(true);
       }
       try {
+        const statusParams = new URLSearchParams();
+        if (effectiveLineLinkToken) {
+          statusParams.set('linkToken', effectiveLineLinkToken);
+        } else if (effectiveBridgeId) {
+          statusParams.set('bridgeId', effectiveBridgeId);
+        }
         const response = await fetch(
-          `${AUTH_API_BASE_URL}/line/oa/link-status?linkToken=${encodeURIComponent(lineLinkToken)}`,
+          `${AUTH_API_BASE_URL}/line/oa/link-status?${statusParams.toString()}`,
           {
             cache: 'no-store',
           }
@@ -6285,7 +6350,7 @@ function AuthScreen({ onAuthSuccess }) {
       isCancelled = true;
       window.clearInterval(statusIntervalId);
     };
-  }, [isLineGoogleBridgeFlow, lineLinkToken]);
+  }, [isLineGoogleBridgeFlow, lineLinkToken, lineBridgeId]);
 
   const openLegalModal = (docKey = 'terms') => {
     const normalizedDoc = LEGAL_DOCS[docKey] ? docKey : 'terms';
@@ -6332,7 +6397,9 @@ function AuthScreen({ onAuthSuccess }) {
 
   const linkLineOaAccountWithAuthToken = async (authTokenInput) => {
     const authToken = String(authTokenInput || '').trim();
-    if (!AUTH_API_BASE_URL || !lineLinkToken || !authToken) return null;
+    const effectiveLineLinkToken = String(lineLinkToken || '').trim();
+    const effectiveBridgeId = String(lineBridgeId || '').trim();
+    if (!AUTH_API_BASE_URL || (!effectiveLineLinkToken && !effectiveBridgeId) || !authToken) return null;
     const response = await fetch(`${AUTH_API_BASE_URL}/line/oa/link`, {
       method: 'POST',
       headers: {
@@ -6340,7 +6407,8 @@ function AuthScreen({ onAuthSuccess }) {
         Authorization: `Bearer ${authToken}`,
       },
       body: JSON.stringify({
-        linkToken: lineLinkToken,
+        ...(effectiveLineLinkToken ? { linkToken: effectiveLineLinkToken } : {}),
+        ...(effectiveBridgeId ? { bridgeId: effectiveBridgeId } : {}),
       }),
       cache: 'no-store',
     });
@@ -6358,8 +6426,10 @@ function AuthScreen({ onAuthSuccess }) {
   };
 
   const loginWithLineLinkToken = async () => {
-    if (!lineLinkToken) {
-      setError('LINE link token is missing.');
+    const effectiveLineLinkToken = String(lineLinkToken || '').trim();
+    const effectiveBridgeId = String(lineBridgeId || '').trim();
+    if (!effectiveLineLinkToken && !effectiveBridgeId) {
+      setError('LINE bridge data is missing.');
       return;
     }
     setIsSubmitting(true);
@@ -6367,7 +6437,8 @@ function AuthScreen({ onAuthSuccess }) {
     setSuccess('');
     try {
       const result = await postAuthApi('/line/oa/login', {
-        linkToken: lineLinkToken,
+        ...(effectiveLineLinkToken ? { linkToken: effectiveLineLinkToken } : {}),
+        ...(effectiveBridgeId ? { bridgeId: effectiveBridgeId } : {}),
       });
       const authenticatedUser = composeAuthUserWithToken(result.user, result.token);
       syncUserToLocalCache(authenticatedUser);
@@ -6471,7 +6542,7 @@ function AuthScreen({ onAuthSuccess }) {
       }
       const opened = await openLineBridgeInExternalBrowser();
       if (!opened) {
-        setError('Unable to open external browser. Please allow popups and try again.');
+        setError('Unable to open external browser. Please check popup permission and deploy /line/oa/bridge-session on API.');
       }
       return;
     }
@@ -6700,7 +6771,7 @@ function AuthScreen({ onAuthSuccess }) {
       if (isLineBrowser) {
         const opened = await openLineBridgeInExternalBrowser();
         if (!opened) {
-          setError('Unable to open external browser. Please allow popups and try again.');
+          setError('Unable to open external browser. Please check popup permission and deploy /line/oa/bridge-session on API.');
         }
         return;
       }

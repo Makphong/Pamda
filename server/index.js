@@ -85,6 +85,9 @@ const FIRESTORE_LINE_OA_LINK_COLLECTION = String(
 const FIRESTORE_LINE_OA_CHAT_SESSION_COLLECTION = String(
   process.env.FIRESTORE_LINE_OA_CHAT_SESSION_COLLECTION || 'line_oa_chat_sessions'
 ).trim();
+const FIRESTORE_LINE_OA_BRIDGE_SESSION_COLLECTION = String(
+  process.env.FIRESTORE_LINE_OA_BRIDGE_SESSION_COLLECTION || 'line_oa_bridge_sessions'
+).trim();
 const LINE_OA_CONFIG_DOC_ID = String(process.env.LINE_OA_CONFIG_DOC_ID || 'global').trim();
 const FIRESTORE_ADMIN_COMPLAINT_COLLECTION = String(
   process.env.FIRESTORE_ADMIN_COMPLAINT_COLLECTION || 'support_complaints'
@@ -138,6 +141,10 @@ const LINE_OA_CHAT_TIMEOUT_MS = Math.max(
 const LINE_OA_LOGIN_TOKEN_TTL_MS = Math.max(
   60 * 1000,
   Math.min(24 * 60 * 60 * 1000, Number(process.env.LINE_OA_LOGIN_TOKEN_TTL_MS || 15 * 60 * 1000))
+);
+const LINE_OA_BRIDGE_SESSION_TTL_MS = Math.max(
+  60 * 1000,
+  Math.min(60 * 60 * 1000, Number(process.env.LINE_OA_BRIDGE_SESSION_TTL_MS || 10 * 60 * 1000))
 );
 const LINE_CHANNEL_SECRET = String(process.env.LINE_CHANNEL_SECRET || '').trim();
 const LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN = String(
@@ -282,6 +289,7 @@ const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLEC
 const lineOaConfigRef = firestore.collection(FIRESTORE_LINE_OA_CONFIG_COLLECTION).doc(LINE_OA_CONFIG_DOC_ID);
 const lineOaLinkRef = firestore.collection(FIRESTORE_LINE_OA_LINK_COLLECTION);
 const lineOaChatSessionRef = firestore.collection(FIRESTORE_LINE_OA_CHAT_SESSION_COLLECTION);
+const lineOaBridgeSessionRef = firestore.collection(FIRESTORE_LINE_OA_BRIDGE_SESSION_COLLECTION);
 const adminComplaintRef = firestore.collection(FIRESTORE_ADMIN_COMPLAINT_COLLECTION);
 const supportTicketRef = firestore.collection(FIRESTORE_SUPPORT_TICKET_COLLECTION);
 const aiThreadRef = firestore.collection(FIRESTORE_AI_THREAD_COLLECTION);
@@ -1807,6 +1815,97 @@ const parseLineOaLinkToken = (tokenInput) => {
   return {
     lineUserId,
     nextAction: LINE_OA_ACTION_SET.has(nextAction) ? nextAction : '',
+  };
+};
+const sanitizeLineOaBridgeId = (bridgeIdInput) => {
+  const bridgeId = String(bridgeIdInput || '').trim();
+  if (!/^[A-Za-z0-9_-]{10,120}$/.test(bridgeId)) return '';
+  return bridgeId;
+};
+const createLineOaBridgeSessionFromLinkToken = async (linkTokenInput) => {
+  const linkToken = String(linkTokenInput || '').trim();
+  const decoded = parseLineOaLinkToken(linkToken);
+  if (!decoded?.lineUserId) {
+    return null;
+  }
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const expiresAtMs = nowMs + LINE_OA_BRIDGE_SESSION_TTL_MS;
+  const bridgeId = crypto.randomBytes(18).toString('base64url');
+  const payload = {
+    bridgeId,
+    linkToken,
+    lineUserId: decoded.lineUserId,
+    nextAction: decoded.nextAction || '',
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    expiresAt: expiresAtMs,
+  };
+  await lineOaBridgeSessionRef.doc(bridgeId).set(payload, { merge: true });
+  return payload;
+};
+const getLineOaBridgeSessionById = async (bridgeIdInput) => {
+  const bridgeId = sanitizeLineOaBridgeId(bridgeIdInput);
+  if (!bridgeId) return null;
+  const docRef = lineOaBridgeSessionRef.doc(bridgeId);
+  const snapshot = await docRef.get();
+  if (!snapshot.exists) return null;
+  const data = snapshot.data() || {};
+  const expiresAtMs = Number(data.expiresAt || 0);
+  if (!Number.isFinite(expiresAtMs) || Date.now() > expiresAtMs) {
+    await docRef.delete().catch(() => {});
+    return null;
+  }
+  const linkToken = String(data.linkToken || '').trim();
+  const decoded = parseLineOaLinkToken(linkToken);
+  if (!decoded?.lineUserId) {
+    await docRef.delete().catch(() => {});
+    return null;
+  }
+  return {
+    bridgeId,
+    linkToken,
+    lineUserId: decoded.lineUserId,
+    nextAction: decoded.nextAction || '',
+    expiresAt: expiresAtMs,
+  };
+};
+const resolveLineOaLinkContext = async ({ linkTokenInput = '', bridgeIdInput = '' } = {}) => {
+  const linkToken = String(linkTokenInput || '').trim();
+  if (linkToken) {
+    const decoded = parseLineOaLinkToken(linkToken);
+    if (!decoded?.lineUserId) {
+      return {
+        ok: false,
+        status: 400,
+        message: 'Invalid or expired line link token.',
+      };
+    }
+    return {
+      ok: true,
+      linkToken,
+      lineUserId: decoded.lineUserId,
+      nextAction: decoded.nextAction || '',
+      bridgeId: '',
+      expiresAt: null,
+    };
+  }
+
+  const bridgeSession = await getLineOaBridgeSessionById(bridgeIdInput);
+  if (!bridgeSession) {
+    return {
+      ok: false,
+      status: 400,
+      message: 'Invalid or expired line bridge session.',
+    };
+  }
+  return {
+    ok: true,
+    linkToken: bridgeSession.linkToken,
+    lineUserId: bridgeSession.lineUserId,
+    nextAction: bridgeSession.nextAction,
+    bridgeId: bridgeSession.bridgeId,
+    expiresAt: bridgeSession.expiresAt,
   };
 };
 const appendQueryToUrl = (urlInput, paramsInput) => {
@@ -6886,6 +6985,33 @@ app.put('/data/project-invites', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/line/oa/bridge-session', async (req, res) => {
+  try {
+    res.set({
+      'Cache-Control': 'no-store, max-age=0',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    const linkToken = String(req.body?.linkToken || '').trim();
+    if (!linkToken) {
+      return res.status(400).json({ message: 'linkToken is required.' });
+    }
+    const bridgeSession = await createLineOaBridgeSessionFromLinkToken(linkToken);
+    if (!bridgeSession?.bridgeId) {
+      return res.status(400).json({ message: 'Invalid or expired line link token.' });
+    }
+    return res.json({
+      ok: true,
+      bridgeId: bridgeSession.bridgeId,
+      lineUserId: bridgeSession.lineUserId,
+      nextAction: bridgeSession.nextAction || '',
+      expiresAt: bridgeSession.expiresAt,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to create LINE OA bridge session.' });
+  }
+});
+
 app.get('/line/oa/link-status', async (req, res) => {
   try {
     res.set({
@@ -6893,23 +7019,25 @@ app.get('/line/oa/link-status', async (req, res) => {
       Pragma: 'no-cache',
       Expires: '0',
     });
-    const linkToken = String(req.query?.linkToken || '').trim();
-    if (!linkToken) {
-      return res.status(400).json({ message: 'linkToken is required.' });
+    const context = await resolveLineOaLinkContext({
+      linkTokenInput: req.query?.linkToken,
+      bridgeIdInput: req.query?.bridgeId,
+    });
+    if (!context.ok) {
+      return res.status(context.status || 400).json({ message: context.message || 'Invalid LINE OA link context.' });
     }
-    const decoded = parseLineOaLinkToken(linkToken);
-    if (!decoded?.lineUserId) {
-      return res.status(400).json({ message: 'Invalid or expired line link token.' });
-    }
-    const linkedRecord = await getLineOaLinkByLineUserId(decoded.lineUserId);
+
+    const linkedRecord = await getLineOaLinkByLineUserId(context.lineUserId);
     const linkedUserId = sanitizeUserId(linkedRecord?.data?.userId);
     return res.json({
       ok: true,
       linked: Boolean(linkedUserId),
-      lineUserId: decoded.lineUserId,
+      lineUserId: context.lineUserId,
       userId: linkedUserId,
       username: sanitizeUsername(linkedRecord?.data?.username),
-      nextAction: decoded.nextAction || '',
+      nextAction: context.nextAction || '',
+      bridgeId: context.bridgeId || '',
+      bridgeExpiresAt: context.expiresAt || null,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to get LINE OA link status.' });
@@ -6926,34 +7054,34 @@ app.post('/line/oa/link', requireAuth, async (req, res) => {
     if (!userRecord) {
       return res.status(404).json({ message: 'User not found.' });
     }
-    const linkToken = String(req.body?.linkToken || '').trim();
-    if (!linkToken) {
-      return res.status(400).json({ message: 'linkToken is required.' });
-    }
-    const decoded = parseLineOaLinkToken(linkToken);
-    if (!decoded?.lineUserId) {
-      return res.status(400).json({ message: 'Invalid or expired line link token.' });
+    const context = await resolveLineOaLinkContext({
+      linkTokenInput: req.body?.linkToken,
+      bridgeIdInput: req.body?.bridgeId,
+    });
+    if (!context.ok) {
+      return res.status(context.status || 400).json({ message: context.message || 'Invalid LINE OA link context.' });
     }
     const linked = await upsertLineOaLink({
-      lineUserId: decoded.lineUserId,
+      lineUserId: context.lineUserId,
       userId: authUserId,
       username: sanitizeUsername(userRecord.username || req.authUser?.username),
     });
-    await saveLineOaChatSession(decoded.lineUserId, {
-      lineUserId: decoded.lineUserId,
+    await saveLineOaChatSession(context.lineUserId, {
+      lineUserId: context.lineUserId,
       userId: authUserId,
       active: false,
       history: [],
       expiresAt: null,
       timeoutNotifiedAt: null,
     });
-    clearLineOaSessionTimeoutTimer(decoded.lineUserId);
+    clearLineOaSessionTimeoutTimer(context.lineUserId);
     return res.json({
       ok: true,
       linked: Boolean(linked?.lineUserId && linked?.userId),
-      lineUserId: linked?.lineUserId || decoded.lineUserId,
+      lineUserId: linked?.lineUserId || context.lineUserId,
       userId: linked?.userId || authUserId,
-      nextAction: decoded.nextAction || '',
+      nextAction: context.nextAction || '',
+      bridgeId: context.bridgeId || '',
       message: 'LINE OA account linked successfully.',
     });
   } catch (error) {
@@ -6963,16 +7091,15 @@ app.post('/line/oa/link', requireAuth, async (req, res) => {
 
 app.post('/line/oa/login', async (req, res) => {
   try {
-    const linkToken = String(req.body?.linkToken || '').trim();
-    if (!linkToken) {
-      return res.status(400).json({ message: 'linkToken is required.' });
-    }
-    const decoded = parseLineOaLinkToken(linkToken);
-    if (!decoded?.lineUserId) {
-      return res.status(400).json({ message: 'Invalid or expired line link token.' });
+    const context = await resolveLineOaLinkContext({
+      linkTokenInput: req.body?.linkToken,
+      bridgeIdInput: req.body?.bridgeId,
+    });
+    if (!context.ok) {
+      return res.status(context.status || 400).json({ message: context.message || 'Invalid LINE OA link context.' });
     }
 
-    const linkedRecord = await getLineOaLinkByLineUserId(decoded.lineUserId);
+    const linkedRecord = await getLineOaLinkByLineUserId(context.lineUserId);
     const linkedUserId = sanitizeUserId(linkedRecord?.data?.userId);
     if (!linkedUserId) {
       return res.status(404).json({
@@ -7005,8 +7132,9 @@ app.post('/line/oa/login', async (req, res) => {
       message: 'LINE OA login successful.',
       user: publicUser,
       token: createAuthToken(publicUser),
-      lineUserId: decoded.lineUserId,
-      nextAction: decoded.nextAction || '',
+      lineUserId: context.lineUserId,
+      nextAction: context.nextAction || '',
+      bridgeId: context.bridgeId || '',
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to login with LINE OA link token.' });
