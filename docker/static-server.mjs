@@ -15,6 +15,14 @@ const routeAliases = new Map([
   ['/privacy', '/privacy.html'],
   ['/terms', '/terms.html'],
 ]);
+const canonicalPathRedirects = new Map([
+  ['/oauth-home/', '/oauth-home'],
+  ['/privacy/', '/privacy'],
+  ['/terms/', '/terms'],
+  ['/oauth-home/index.html', '/oauth-home'],
+  ['/privacy/index.html', '/privacy'],
+  ['/terms/index.html', '/terms'],
+]);
 
 const mimeTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -94,6 +102,19 @@ const sendFile = async (req, res, filePath) => {
   stream.pipe(res);
 };
 
+const sendRedirect = (req, res, targetPathname, search = '') => {
+  const location = `${targetPathname}${search}`;
+  res.writeHead(301, {
+    Location: location,
+    'Cache-Control': 'no-store',
+  });
+  if (req.method === 'HEAD') {
+    res.end();
+    return;
+  }
+  res.end(`Moved Permanently: ${location}`);
+};
+
 const server = http.createServer(async (req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -102,12 +123,19 @@ const server = http.createServer(async (req, res) => {
   }
 
   let pathname = '/';
+  let search = '';
   try {
     const parsed = new URL(req.url || '/', 'http://localhost');
     pathname = decodeURIComponent(parsed.pathname || '/');
+    search = parsed.search || '';
   } catch {
     res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Bad Request');
+    return;
+  }
+
+  if (canonicalPathRedirects.has(pathname)) {
+    sendRedirect(req, res, canonicalPathRedirects.get(pathname), search);
     return;
   }
 

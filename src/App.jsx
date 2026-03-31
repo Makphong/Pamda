@@ -1655,7 +1655,7 @@ const AUTH_USER_KEY = 'pm_calendar_auth_user';
 const AUTH_USERS_KEY = 'pm_calendar_users';
 const LEGAL_DOC_ORDER = ['terms', 'privacy'];
 const LEGAL_DOC_LINKS = {
-  terms: '/privacy',
+  terms: '/terms',
   privacy: '/privacy',
 };
 const LEGAL_DOCS = {
@@ -7524,16 +7524,28 @@ function ProfileSettingsView({
                 </div>
 
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-                  <a
-                    href={LEGAL_DOC_LINKS.privacy}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100"
-                    title="Open Terms & Privacy page"
-                  >
-                    <FileText className="w-4 h-4" />
-                    Terms & Privacy
-                  </a>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <a
+                      href={LEGAL_DOC_LINKS.terms}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100"
+                      title="Open Terms of Service"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Terms
+                    </a>
+                    <a
+                      href={LEGAL_DOC_LINKS.privacy}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100"
+                      title="Open Privacy Policy"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Privacy
+                    </a>
+                  </div>
                 </div>
 
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
