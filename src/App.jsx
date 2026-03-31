@@ -3840,6 +3840,7 @@ const getGoogleOAuthErrorMessage = (errorCodeInput) => {
 };
 const LINE_IN_APP_USER_AGENT_PATTERN = /\bLine\/|LIFF/i;
 const LINE_LINK_TOKEN_QUERY_KEY = 'pamdaLineLinkToken';
+const LINE_LINK_ACTION_QUERY_KEY = 'pamdaLineAction';
 const LINE_GOOGLE_BRIDGE_QUERY_KEY = 'pamdaLineGoogleBridge';
 const LINE_EXTERNAL_QUERY_KEY = 'pamdaLineExternal';
 const isLineInAppBrowser = () => {
@@ -3912,6 +3913,8 @@ const readQueryValueFromLocationUrl = (urlInput, keyInput) => {
 };
 const getLineLinkTokenFromLocationUrl = (urlInput) =>
   readQueryValueFromLocationUrl(urlInput, LINE_LINK_TOKEN_QUERY_KEY);
+const getLineLinkActionFromLocationUrl = (urlInput) =>
+  readQueryValueFromLocationUrl(urlInput, LINE_LINK_ACTION_QUERY_KEY);
 const getLineBridgeModeFromLocationUrl = (urlInput) =>
   readQueryValueFromLocationUrl(urlInput, LINE_GOOGLE_BRIDGE_QUERY_KEY) === '1';
 const LINE_LIFF_URL_ID_PATTERN = /liff\.line\.me\/([A-Za-z0-9_-]+)/i;
@@ -4011,6 +4014,18 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
   } catch {}
 
   return false;
+};
+const buildLineBridgeExternalUrl = (urlInput) => {
+  const currentUrl = urlInput instanceof URL ? urlInput : null;
+  if (!currentUrl) return '';
+  const nextUrl = new URL(`${currentUrl.origin}${currentUrl.pathname}`);
+  const linkToken = getLineLinkTokenFromLocationUrl(currentUrl);
+  const lineAction = getLineLinkActionFromLocationUrl(currentUrl);
+  if (linkToken) nextUrl.searchParams.set(LINE_LINK_TOKEN_QUERY_KEY, linkToken);
+  if (lineAction) nextUrl.searchParams.set(LINE_LINK_ACTION_QUERY_KEY, lineAction);
+  nextUrl.searchParams.set(LINE_GOOGLE_BRIDGE_QUERY_KEY, '1');
+  nextUrl.searchParams.set(LINE_EXTERNAL_QUERY_KEY, '1');
+  return nextUrl.toString();
 };
 const GOOGLE_CALENDAR_PROJECT_ID = '__google_calendar__';
 const GOOGLE_CALENDAR_PROJECT_META = {
@@ -6163,11 +6178,10 @@ function AuthScreen({ onAuthSuccess }) {
 
   const openLineBridgeInExternalBrowser = useCallback(async () => {
     if (typeof window === 'undefined') return false;
-    const externalUrl = getCurrentLocationUrl();
-    if (!externalUrl) return false;
-    externalUrl.searchParams.set(LINE_GOOGLE_BRIDGE_QUERY_KEY, '1');
-    externalUrl.searchParams.set(LINE_EXTERNAL_QUERY_KEY, '1');
-    const href = externalUrl.toString();
+    const currentUrl = getCurrentLocationUrl();
+    if (!currentUrl) return false;
+    const href = buildLineBridgeExternalUrl(currentUrl);
+    if (!href) return false;
 
     const openedByLine = await openUrlInLineExternalBrowser(href);
     if (openedByLine) return true;
