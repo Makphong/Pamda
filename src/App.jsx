@@ -1835,6 +1835,58 @@ const normalizeProfileAdminActiveRange = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   return PROFILE_ADMIN_ACTIVE_RANGE_SET.has(normalized) ? normalized : 'today';
 };
+const PROFILE_LINE_OA_ACTION_OPTIONS = Object.freeze([
+  { id: 'A', label: 'Action A (เข้า PAMDA)' },
+  { id: 'B', label: 'Action B (เช็คTask)' },
+  { id: 'C', label: 'Action C (เช็คEvent)' },
+  { id: 'D', label: 'Action D (สรุปรายวัน)' },
+  { id: 'E', label: 'Action E (แชทกับบอท)' },
+  { id: 'F', label: 'Action F (ตั้งค่าข้อความ)' },
+]);
+const DEFAULT_PROFILE_LINE_OA_CONFIG = Object.freeze({
+  enabled: true,
+  liffEntryUrl: '',
+  commands: {
+    A: 'เข้า PAMDA',
+    B: 'เช็คTask',
+    C: 'เช็คEvent',
+    D: 'สรุปรายวัน',
+    E: 'แชทกับบอท',
+    F: 'ตั้งค่าข้อความ',
+  },
+  chatTimeoutMs: 2 * 60 * 1000,
+  updatedAt: null,
+  updatedBy: '',
+});
+const normalizeProfileLineOaConfig = (configInput) => {
+  const config =
+    configInput && typeof configInput === 'object' && !Array.isArray(configInput) ? configInput : {};
+  const commandsInput =
+    config.commands && typeof config.commands === 'object' && !Array.isArray(config.commands)
+      ? config.commands
+      : {};
+  const normalizedCommands = {};
+  PROFILE_LINE_OA_ACTION_OPTIONS.forEach((option) => {
+    normalizedCommands[option.id] = String(
+      commandsInput[option.id] || DEFAULT_PROFILE_LINE_OA_CONFIG.commands[option.id] || ''
+    )
+      .trim()
+      .slice(0, 120);
+  });
+  const chatTimeoutMsRaw = Number.parseInt(String(config.chatTimeoutMs || ''), 10);
+  return {
+    ...DEFAULT_PROFILE_LINE_OA_CONFIG,
+    ...config,
+    enabled: config.enabled !== false,
+    liffEntryUrl: String(config.liffEntryUrl || '').trim(),
+    commands: normalizedCommands,
+    chatTimeoutMs: Number.isInteger(chatTimeoutMsRaw)
+      ? Math.min(30 * 60 * 1000, Math.max(30 * 1000, chatTimeoutMsRaw))
+      : DEFAULT_PROFILE_LINE_OA_CONFIG.chatTimeoutMs,
+    updatedAt: String(config.updatedAt || '').trim() || null,
+    updatedBy: String(config.updatedBy || '').trim(),
+  };
+};
 const normalizeSupportTicketStatus = (statusInput) => {
   const status = String(statusInput || '').trim().toLowerCase();
   if (
@@ -6536,6 +6588,8 @@ function ProfileSettingsView({
   onLoadSupportAdmins,
   onAddSupportAdmin,
   onRemoveSupportAdmin,
+  onLoadLineOaConfig,
+  onSaveLineOaConfig,
 }) {
   const [username, setUsername] = useState(currentUser.username || '');
   const [email, setEmail] = useState(currentUser.email || '');
@@ -6573,6 +6627,12 @@ function ProfileSettingsView({
   const [isSupportAdminsLoading, setIsSupportAdminsLoading] = useState(false);
   const [activeSupportAdminId, setActiveSupportAdminId] = useState('');
   const [adminResult, setAdminResult] = useState(null);
+  const [lineOaConfigDraft, setLineOaConfigDraft] = useState(() =>
+    normalizeProfileLineOaConfig(DEFAULT_PROFILE_LINE_OA_CONFIG)
+  );
+  const [isLineOaConfigLoading, setIsLineOaConfigLoading] = useState(false);
+  const [isLineOaConfigSaving, setIsLineOaConfigSaving] = useState(false);
+  const [lineOaResult, setLineOaResult] = useState(null);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -6614,6 +6674,8 @@ function ProfileSettingsView({
     setSupportAdminIdentifier('');
     setSupportAdmins([]);
     setAdminResult(null);
+    setLineOaConfigDraft(normalizeProfileLineOaConfig(DEFAULT_PROFILE_LINE_OA_CONFIG));
+    setLineOaResult(null);
     setNewPassword('');
     setConfirmNewPassword('');
     setVerificationMethod('otp');
@@ -6958,11 +7020,82 @@ function ProfileSettingsView({
     }
   }, [isRootAdmin, onLoadSupportAdmins]);
 
+  const loadLineOaConfig = useCallback(async () => {
+    if (!isRootAdmin || !onLoadLineOaConfig) return;
+    setIsLineOaConfigLoading(true);
+    setLineOaResult(null);
+    try {
+      const result = await Promise.resolve(onLoadLineOaConfig());
+      if (!result?.ok) {
+        setLineOaResult({
+          ok: false,
+          message: result?.message || 'Failed to load Line OA settings.',
+        });
+        return;
+      }
+      setLineOaConfigDraft(
+        normalizeProfileLineOaConfig(result?.config || DEFAULT_PROFILE_LINE_OA_CONFIG)
+      );
+    } finally {
+      setIsLineOaConfigLoading(false);
+    }
+  }, [isRootAdmin, onLoadLineOaConfig]);
+
+  const handleLineOaCommandDraftChange = useCallback((actionIdInput, valueInput) => {
+    const actionId = String(actionIdInput || '').trim().toUpperCase();
+    const value = String(valueInput || '').slice(0, 120);
+    if (!actionId) return;
+    setLineOaConfigDraft((prev) => {
+      const normalizedPrev = normalizeProfileLineOaConfig(prev);
+      return {
+        ...normalizedPrev,
+        commands: {
+          ...normalizedPrev.commands,
+          [actionId]: value,
+        },
+      };
+    });
+  }, []);
+
+  const handleSaveLineOaConfig = useCallback(async () => {
+    if (!isRootAdmin) {
+      setLineOaResult({ ok: false, message: 'Admin access denied.' });
+      return;
+    }
+    if (!onSaveLineOaConfig) {
+      setLineOaResult({ ok: false, message: 'Line OA settings is unavailable.' });
+      return;
+    }
+    const normalizedDraft = normalizeProfileLineOaConfig(lineOaConfigDraft);
+    setIsLineOaConfigSaving(true);
+    setLineOaResult(null);
+    try {
+      const result = await Promise.resolve(onSaveLineOaConfig(normalizedDraft));
+      if (!result?.ok) {
+        setLineOaResult({
+          ok: false,
+          message: result?.message || 'Failed to save Line OA settings.',
+        });
+        return;
+      }
+      setLineOaConfigDraft(
+        normalizeProfileLineOaConfig(result?.config || normalizedDraft)
+      );
+      setLineOaResult({
+        ok: true,
+        message: result?.message || 'Line OA settings saved.',
+      });
+    } finally {
+      setIsLineOaConfigSaving(false);
+    }
+  }, [isRootAdmin, lineOaConfigDraft, onSaveLineOaConfig]);
+
   useEffect(() => {
     if (activeMenu !== PROFILE_VIEW_MENUS.ADMIN || !isRootAdmin) return;
     void loadAdminData();
     void loadSupportAdmins();
-  }, [activeMenu, isRootAdmin, loadAdminData, loadSupportAdmins]);
+    void loadLineOaConfig();
+  }, [activeMenu, isRootAdmin, loadAdminData, loadSupportAdmins, loadLineOaConfig]);
 
   const resolveSupportRole = useCallback(async () => {
     if (!onLoadSupportRole) {
@@ -8102,6 +8235,115 @@ function ProfileSettingsView({
                   )}
                 </div>
 
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="text-base font-semibold text-gray-800">LINE OA Private Chat</h4>
+                    <button
+                      type="button"
+                      onClick={() => void loadLineOaConfig()}
+                      disabled={isLineOaConfigLoading}
+                      className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-sm disabled:opacity-50"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+
+                  {isLineOaConfigLoading ? (
+                    <p className="text-sm text-gray-500">กำลังโหลดค่า LINE OA...</p>
+                  ) : (
+                    <div className="space-y-4">
+                      <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={lineOaConfigDraft.enabled === true}
+                          onChange={(event) =>
+                            setLineOaConfigDraft((prev) => ({
+                              ...normalizeProfileLineOaConfig(prev),
+                              enabled: event.target.checked,
+                            }))
+                          }
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        เปิดใช้งาน LINE OA private chatbot
+                      </label>
+
+                      <label className="block space-y-1">
+                        <span className="text-xs text-gray-500">LINE LIFF URL (Action A)</span>
+                        <input
+                          type="url"
+                          value={String(lineOaConfigDraft.liffEntryUrl || '')}
+                          onChange={(event) =>
+                            setLineOaConfigDraft((prev) => ({
+                              ...normalizeProfileLineOaConfig(prev),
+                              liffEntryUrl: event.target.value,
+                            }))
+                          }
+                          placeholder="https://liff.line.me/..."
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </label>
+
+                      <label className="block space-y-1">
+                        <span className="text-xs text-gray-500">Chat timeout (seconds)</span>
+                        <input
+                          type="number"
+                          min={30}
+                          max={1800}
+                          value={Math.max(30, Math.round(Number(lineOaConfigDraft.chatTimeoutMs || 120000) / 1000))}
+                          onChange={(event) => {
+                            const seconds = Number.parseInt(String(event.target.value || '120'), 10);
+                            const safeSeconds = Number.isInteger(seconds) ? Math.min(1800, Math.max(30, seconds)) : 120;
+                            setLineOaConfigDraft((prev) => ({
+                              ...normalizeProfileLineOaConfig(prev),
+                              chatTimeoutMs: safeSeconds * 1000,
+                            }));
+                          }}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </label>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {PROFILE_LINE_OA_ACTION_OPTIONS.map((actionOption) => (
+                          <label key={`line-oa-command-${actionOption.id}`} className="block space-y-1">
+                            <span className="text-xs text-gray-500">{actionOption.label}</span>
+                            <input
+                              type="text"
+                              value={String(lineOaConfigDraft.commands?.[actionOption.id] || '')}
+                              onChange={(event) =>
+                                handleLineOaCommandDraftChange(actionOption.id, event.target.value)
+                              }
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </label>
+                        ))}
+                      </div>
+
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveLineOaConfig()}
+                          disabled={isLineOaConfigSaving}
+                          className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300"
+                        >
+                          {isLineOaConfigSaving ? 'Saving...' : 'Save LINE OA settings'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {lineOaResult?.message && (
+                    <p
+                      className={`text-sm rounded-lg px-3 py-2 border ${
+                        lineOaResult.ok
+                          ? 'bg-green-50 text-green-700 border-green-200'
+                          : 'bg-red-50 text-red-600 border-red-200'
+                      }`}
+                    >
+                      {lineOaResult.message}
+                    </p>
+                  )}
+                </div>
+
                 {adminResult?.message && (
                   <p
                     className={`text-sm rounded-lg px-3 py-2 border ${
@@ -8502,6 +8744,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     appliedSeq: 0,
   });
   const hasTriggeredMissingTokenLogoutRef = useRef(false);
+  const handledLineLinkTokenRef = useRef('');
   const previousUnseenProjectUpdateIdsRef = useRef([]);
   const projectUpdateToastTimersRef = useRef({ autoHide: null, clear: null });
 
@@ -8751,6 +8994,52 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       isCancelled = true;
     };
   }, [currentUser.id, currentUser.authToken]);
+
+  useEffect(() => {
+    if (!AUTH_API_BASE_URL || !isAccountDataHydrated || !currentUser?.id) return;
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const linkToken = String(url.searchParams.get('pamdaLineLinkToken') || '').trim();
+    if (!linkToken || handledLineLinkTokenRef.current === linkToken) return;
+    handledLineLinkTokenRef.current = linkToken;
+
+    const cleanupUrl = () => {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.delete('pamdaLineLinkToken');
+      nextUrl.searchParams.delete('pamdaLineAction');
+      window.history.replaceState({}, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+    };
+
+    let isCancelled = false;
+    const linkLineAccount = async () => {
+      try {
+        const result = await requestCloudDataApi('/line/oa/link', {
+          method: 'POST',
+          body: {
+            linkToken,
+          },
+        });
+        if (isCancelled) return;
+        await popup.alert({
+          title: 'LINE OA Linked',
+          message: result?.message || 'เชื่อมบัญชี LINE OA เรียบร้อยแล้ว',
+        });
+      } catch (error) {
+        if (isCancelled) return;
+        await popup.alert({
+          title: 'LINE OA Link Failed',
+          message: error?.message || 'ไม่สามารถเชื่อมบัญชี LINE OA ได้',
+        });
+      } finally {
+        cleanupUrl();
+      }
+    };
+
+    void linkLineAccount();
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUser?.id, currentUser?.authToken, isAccountDataHydrated, popup]);
 
   const normalizeAiThread = useCallback((threadInput) => {
     const thread =
@@ -13406,6 +13695,47 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       return { ok: false, message: error.message || 'Failed to remove support admin.' };
     }
   }, [isRootAdmin]);
+  const handleLoadLineOaConfig = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Admin dashboard requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    try {
+      const result = await requestCloudDataApi('/admin/line-oa/config');
+      return {
+        ok: true,
+        config: normalizeProfileLineOaConfig(result?.config || DEFAULT_PROFILE_LINE_OA_CONFIG),
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to load Line OA settings.' };
+    }
+  }, [isRootAdmin]);
+  const handleSaveLineOaConfig = useCallback(async (configInput) => {
+    if (!AUTH_API_BASE_URL) {
+      return { ok: false, message: 'Admin dashboard requires Cloud Auth API.' };
+    }
+    if (!isRootAdmin) {
+      return { ok: false, message: 'Admin access denied.' };
+    }
+    const config = normalizeProfileLineOaConfig(configInput);
+    try {
+      const result = await requestCloudDataApi('/admin/line-oa/config', {
+        method: 'PUT',
+        body: {
+          config,
+        },
+      });
+      return {
+        ok: true,
+        message: result?.message || 'Line OA settings saved.',
+        config: normalizeProfileLineOaConfig(result?.config || config),
+      };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Failed to save Line OA settings.' };
+    }
+  }, [isRootAdmin]);
   const projectUpdatesOverlay = (
     <>
       {projectUpdateToastNotice && !isProjectUpdatesPopupOpen && (
@@ -13467,6 +13797,8 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         onLoadSupportAdmins={handleLoadSupportAdmins}
         onAddSupportAdmin={handleAddSupportAdmin}
         onRemoveSupportAdmin={handleRemoveSupportAdmin}
+        onLoadLineOaConfig={handleLoadLineOaConfig}
+        onSaveLineOaConfig={handleSaveLineOaConfig}
       />
     );
   }

@@ -76,6 +76,16 @@ const FIRESTORE_LINE_REMINDER_LOG_COLLECTION = String(
 const FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION = String(
   process.env.FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION || 'line_webhook_logs'
 ).trim();
+const FIRESTORE_LINE_OA_CONFIG_COLLECTION = String(
+  process.env.FIRESTORE_LINE_OA_CONFIG_COLLECTION || 'line_oa_admin_config'
+).trim();
+const FIRESTORE_LINE_OA_LINK_COLLECTION = String(
+  process.env.FIRESTORE_LINE_OA_LINK_COLLECTION || 'line_oa_user_links'
+).trim();
+const FIRESTORE_LINE_OA_CHAT_SESSION_COLLECTION = String(
+  process.env.FIRESTORE_LINE_OA_CHAT_SESSION_COLLECTION || 'line_oa_chat_sessions'
+).trim();
+const LINE_OA_CONFIG_DOC_ID = String(process.env.LINE_OA_CONFIG_DOC_ID || 'global').trim();
 const FIRESTORE_ADMIN_COMPLAINT_COLLECTION = String(
   process.env.FIRESTORE_ADMIN_COMPLAINT_COLLECTION || 'support_complaints'
 ).trim();
@@ -121,6 +131,14 @@ const DEFAULT_LINE_REMINDER_HOUR = Math.min(
 );
 const LINE_REMINDER_DAYS_BEFORE_OPTIONS = [7, 3, 1];
 const DEFAULT_LINE_REMINDER_DAYS_BEFORE = [1];
+const LINE_OA_CHAT_TIMEOUT_MS = Math.max(
+  30 * 1000,
+  Math.min(30 * 60 * 1000, Number(process.env.LINE_OA_CHAT_TIMEOUT_MS || 2 * 60 * 1000))
+);
+const LINE_OA_LOGIN_TOKEN_TTL_MS = Math.max(
+  60 * 1000,
+  Math.min(24 * 60 * 60 * 1000, Number(process.env.LINE_OA_LOGIN_TOKEN_TTL_MS || 15 * 60 * 1000))
+);
 const LINE_CHANNEL_SECRET = String(process.env.LINE_CHANNEL_SECRET || '').trim();
 const LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN = String(
   process.env.LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || process.env.LINE_CHANNEL_ACCESS_TOKEN || ''
@@ -137,6 +155,11 @@ const OPENAI_REASONING_EFFORT = String(process.env.OPENAI_REASONING_EFFORT || 'l
   .trim()
   .toLowerCase();
 const OPENAI_BASE_URL = String(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').trim();
+const GEMINI_API_KEY = String(process.env.GEMINI_API_KEY || '').trim();
+const GEMINI_MODEL = String(process.env.GEMINI_MODEL || 'gemini-2.0-flash').trim();
+const GEMINI_API_BASE_URL = String(
+  process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta'
+).trim();
 const AI_THREAD_MAX_MESSAGES = Math.max(10, Math.min(200, Number(process.env.AI_THREAD_MAX_MESSAGES || 80)));
 const AI_THREAD_MESSAGE_PREVIEW_LIMIT = Math.max(
   40,
@@ -212,6 +235,9 @@ const AUTH_TOKEN_SECRET = String(
 ).trim();
 const EFFECTIVE_AUTH_TOKEN_SECRET = AUTH_TOKEN_SECRET || '__pm_calendar_insecure_dev_secret__';
 const AUTH_TOKEN_TTL_MS = Math.max(60 * 60 * 1000, Number(process.env.AUTH_TOKEN_TTL_MS || 30 * 24 * 60 * 60 * 1000));
+const LINE_OA_LOGIN_TOKEN_SECRET = String(
+  process.env.LINE_OA_LOGIN_TOKEN_SECRET || EFFECTIVE_AUTH_TOKEN_SECRET
+).trim();
 
 const sanitizeEmail = (value) => String(value || '').trim().toLowerCase();
 const sanitizeUsername = (value) => String(value || '').trim().toLowerCase();
@@ -253,6 +279,9 @@ const invitesDocRef = firestore.collection(PROJECT_INVITES_COLLECTION).doc(PROJE
 const lineReminderConfigRef = firestore.collection(FIRESTORE_LINE_REMINDER_COLLECTION);
 const lineReminderLogRef = firestore.collection(FIRESTORE_LINE_REMINDER_LOG_COLLECTION);
 const lineWebhookLogRef = firestore.collection(FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION);
+const lineOaConfigRef = firestore.collection(FIRESTORE_LINE_OA_CONFIG_COLLECTION).doc(LINE_OA_CONFIG_DOC_ID);
+const lineOaLinkRef = firestore.collection(FIRESTORE_LINE_OA_LINK_COLLECTION);
+const lineOaChatSessionRef = firestore.collection(FIRESTORE_LINE_OA_CHAT_SESSION_COLLECTION);
 const adminComplaintRef = firestore.collection(FIRESTORE_ADMIN_COMPLAINT_COLLECTION);
 const supportTicketRef = firestore.collection(FIRESTORE_SUPPORT_TICKET_COLLECTION);
 const aiThreadRef = firestore.collection(FIRESTORE_AI_THREAD_COLLECTION);
@@ -655,6 +684,99 @@ const toLineReminderPublicResponse = (recordInput) => {
     lastTestedAt: normalized.lastTestedAt,
     lastOpenTaskDigestAt: normalized.lastOpenTaskDigestAt,
   };
+};
+
+const loadLineOaConfig = async () => {
+  const snapshot = await lineOaConfigRef.get();
+  if (!snapshot.exists) {
+    return normalizeLineOaConfigRecord(buildDefaultLineOaConfig());
+  }
+  return normalizeLineOaConfigRecord(snapshot.data() || {});
+};
+
+const saveLineOaConfig = async (configInput, { updatedBy = '' } = {}) => {
+  const normalized = normalizeLineOaConfigRecord(configInput);
+  const nowIso = new Date().toISOString();
+  const payload = {
+    enabled: normalized.enabled,
+    liffEntryUrl: normalized.liffEntryUrl,
+    commands: normalizeLineOaCommandMap(normalized.commands),
+    chatTimeoutMs: normalized.chatTimeoutMs,
+    updatedAt: nowIso,
+    updatedBy: sanitizeUserId(updatedBy),
+  };
+  await lineOaConfigRef.set(payload, { merge: true });
+  return normalizeLineOaConfigRecord(payload);
+};
+
+const getLineOaLinkByLineUserId = async (lineUserIdInput) => {
+  const lineUserId = String(lineUserIdInput || '').trim();
+  if (!lineUserId) return null;
+  const docRef = lineOaLinkRef.doc(lineOaLinkDocIdFor(lineUserId));
+  const snapshot = await docRef.get();
+  if (!snapshot.exists) return null;
+  return {
+    ref: docRef,
+    data: normalizeLineOaUserLinkRecord(snapshot.data() || {}),
+  };
+};
+
+const upsertLineOaLink = async ({ lineUserId, userId, username, filter = null }) => {
+  const safeLineUserId = String(lineUserId || '').trim();
+  const safeUserId = sanitizeUserId(userId);
+  if (!safeLineUserId || !safeUserId) return null;
+  const docRef = lineOaLinkRef.doc(lineOaLinkDocIdFor(safeLineUserId));
+  const existing = await docRef.get();
+  const existingRecord = normalizeLineOaUserLinkRecord(existing.exists ? existing.data() || {} : {});
+  const nowIso = new Date().toISOString();
+  const nextFilter = filter ? normalizeLineOaFilterConfig(filter) : existingRecord.filter;
+  const payload = {
+    lineUserId: safeLineUserId,
+    userId: safeUserId,
+    username: sanitizeUsername(username),
+    linkedAt: existingRecord.linkedAt || nowIso,
+    updatedAt: nowIso,
+    lastSeenAt: nowIso,
+    filter: nextFilter,
+  };
+  await docRef.set(payload, { merge: true });
+  return normalizeLineOaUserLinkRecord(payload);
+};
+
+const removeLineOaLinkByLineUserId = async (lineUserIdInput) => {
+  const lineUserId = String(lineUserIdInput || '').trim();
+  if (!lineUserId) return;
+  await lineOaLinkRef.doc(lineOaLinkDocIdFor(lineUserId)).delete();
+};
+
+const getLineOaChatSession = async (lineUserIdInput) => {
+  const lineUserId = String(lineUserIdInput || '').trim();
+  if (!lineUserId) return null;
+  const docRef = lineOaChatSessionRef.doc(lineOaLinkDocIdFor(lineUserId));
+  const snapshot = await docRef.get();
+  if (!snapshot.exists) return null;
+  return {
+    ref: docRef,
+    data: normalizeLineOaChatSessionRecord(snapshot.data() || {}),
+  };
+};
+
+const saveLineOaChatSession = async (lineUserIdInput, sessionInput) => {
+  const lineUserId = String(lineUserIdInput || '').trim();
+  if (!lineUserId) return null;
+  const normalized = normalizeLineOaChatSessionRecord({
+    ...(sessionInput && typeof sessionInput === 'object' ? sessionInput : {}),
+    lineUserId,
+  });
+  const nowIso = new Date().toISOString();
+  const payload = {
+    ...normalized,
+    lineUserId,
+    updatedAt: nowIso,
+  };
+  const docRef = lineOaChatSessionRef.doc(lineOaLinkDocIdFor(lineUserId));
+  await docRef.set(payload, { merge: true });
+  return normalizeLineOaChatSessionRecord(payload);
 };
 
 const clampLineText = (value, maxLength = 160) =>
@@ -1403,11 +1525,19 @@ const isValidLineWebhookSignature = (req) => {
   return crypto.timingSafeEqual(incomingBuffer, expectedBuffer);
 };
 
-const sendLineReplyMessage = async ({ replyToken, message }) => {
+const normalizeLineReplyMessages = (options = {}) => {
+  const explicit = Array.isArray(options.messages) ? options.messages.filter(Boolean) : [];
+  if (explicit.length > 0) return explicit;
+  const text = String(options.message || '').trim();
+  if (!text) return [];
+  return [{ type: 'text', text: text.slice(0, 4900) }];
+};
+
+const sendLineReplyMessages = async ({ replyToken, message, messages }) => {
   const token = String(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || '').trim();
   const safeReplyToken = String(replyToken || '').trim();
-  const text = String(message || '').trim();
-  if (!token || !safeReplyToken || !text) return;
+  const preparedMessages = normalizeLineReplyMessages({ message, messages });
+  if (!token || !safeReplyToken || preparedMessages.length === 0) return;
   const response = await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
     headers: {
@@ -1416,7 +1546,7 @@ const sendLineReplyMessage = async ({ replyToken, message }) => {
     },
     body: JSON.stringify({
       replyToken: safeReplyToken,
-      messages: [{ type: 'text', text: text.slice(0, 4900) }],
+      messages: preparedMessages,
     }),
   });
   if (!response.ok) {
@@ -1424,6 +1554,31 @@ const sendLineReplyMessage = async ({ replyToken, message }) => {
     throw new Error(
       `LINE reply failed (${response.status})${responseText ? `: ${responseText.slice(0, 220)}` : ''}`
     );
+  }
+};
+
+const sendLineReplyMessage = async ({ replyToken, message, messages }) =>
+  sendLineReplyMessages({ replyToken, message, messages });
+
+const startLineChatLoading = async ({ chatId, loadingSeconds = 8 }) => {
+  const token = String(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || '').trim();
+  const safeChatId = String(chatId || '').trim();
+  const seconds = Math.max(5, Math.min(60, Number.parseInt(String(loadingSeconds || 8), 10) || 8));
+  if (!token || !safeChatId) return;
+  try {
+    await fetch('https://api.line.me/v2/bot/chat/loading/start', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        chatId: safeChatId,
+        loadingSeconds: seconds,
+      }),
+    });
+  } catch {
+    // Best effort only.
   }
 };
 
@@ -1445,6 +1600,265 @@ const isLineGroupIdCommand = (value) => {
     '/gid',
     'gid',
   ]).has(normalized);
+};
+
+const LINE_OA_ACTIONS = Object.freeze({
+  A: 'A',
+  B: 'B',
+  C: 'C',
+  D: 'D',
+  E: 'E',
+  F: 'F',
+});
+const LINE_OA_ACTION_SET = new Set(Object.values(LINE_OA_ACTIONS));
+const LINE_OA_FILTER_MODES = Object.freeze({
+  MERGE: 'merge',
+  SELECTED: 'selected',
+});
+const LINE_OA_INTERNAL_MESSAGES = Object.freeze({
+  LOGOUT: '__PAMDA_LOGOUT__',
+  FILTER_MERGE: '__PAMDA_FILTER_MERGE__',
+  FILTER_PROJECT_PREFIX: '__PAMDA_FILTER_PROJECT__::',
+});
+const DEFAULT_LINE_OA_COMMAND_MAP = Object.freeze({
+  [LINE_OA_ACTIONS.A]: 'เข้า PAMDA',
+  [LINE_OA_ACTIONS.B]: 'เช็คTask',
+  [LINE_OA_ACTIONS.C]: 'เช็คEvent',
+  [LINE_OA_ACTIONS.D]: 'สรุปรายวัน',
+  [LINE_OA_ACTIONS.E]: 'แชทกับบอท',
+  [LINE_OA_ACTIONS.F]: 'ตั้งค่าข้อความ',
+});
+const normalizeLineOaFilterMode = (modeInput) => {
+  const mode = String(modeInput || '').trim().toLowerCase();
+  if (mode === LINE_OA_FILTER_MODES.SELECTED) return LINE_OA_FILTER_MODES.SELECTED;
+  return LINE_OA_FILTER_MODES.MERGE;
+};
+const normalizeLineOaProjectIdList = (projectIdsInput) =>
+  Array.from(
+    new Set(
+      (Array.isArray(projectIdsInput) ? projectIdsInput : [])
+        .map((projectId) => String(projectId || '').trim())
+        .filter(Boolean)
+    )
+  );
+const normalizeLineOaFilterConfig = (filterInput) => {
+  const filter = filterInput && typeof filterInput === 'object' && !Array.isArray(filterInput)
+    ? filterInput
+    : {};
+  const mode = normalizeLineOaFilterMode(filter.mode);
+  const projectIds = normalizeLineOaProjectIdList(filter.projectIds);
+  if (mode !== LINE_OA_FILTER_MODES.SELECTED || projectIds.length === 0) {
+    return {
+      mode: LINE_OA_FILTER_MODES.MERGE,
+      projectIds: [],
+      updatedAt: String(filter.updatedAt || '').trim() || null,
+    };
+  }
+  return {
+    mode,
+    projectIds,
+    updatedAt: String(filter.updatedAt || '').trim() || null,
+  };
+};
+const normalizeLineOaCommandMap = (commandsInput) => {
+  const commands = commandsInput && typeof commandsInput === 'object' && !Array.isArray(commandsInput)
+    ? commandsInput
+    : {};
+  const normalized = {};
+  Object.values(LINE_OA_ACTIONS).forEach((actionKey) => {
+    normalized[actionKey] = clampLineMultilineText(
+      String(commands[actionKey] || DEFAULT_LINE_OA_COMMAND_MAP[actionKey] || '').trim(),
+      120
+    );
+  });
+  return normalized;
+};
+const buildDefaultLineOaConfig = () => ({
+  enabled: true,
+  liffEntryUrl: '',
+  commands: normalizeLineOaCommandMap(DEFAULT_LINE_OA_COMMAND_MAP),
+  chatTimeoutMs: LINE_OA_CHAT_TIMEOUT_MS,
+  updatedAt: null,
+  updatedBy: '',
+});
+const normalizeLineOaConfigRecord = (recordInput) => {
+  const record = recordInput && typeof recordInput === 'object' && !Array.isArray(recordInput)
+    ? recordInput
+    : {};
+  const parsedChatTimeout = Number.parseInt(String(record.chatTimeoutMs || LINE_OA_CHAT_TIMEOUT_MS), 10);
+  return {
+    ...buildDefaultLineOaConfig(),
+    enabled: record.enabled !== false,
+    liffEntryUrl: String(record.liffEntryUrl || '').trim(),
+    commands: normalizeLineOaCommandMap(record.commands),
+    chatTimeoutMs: Number.isFinite(parsedChatTimeout)
+      ? Math.max(30 * 1000, Math.min(30 * 60 * 1000, parsedChatTimeout))
+      : LINE_OA_CHAT_TIMEOUT_MS,
+    updatedAt: String(record.updatedAt || '').trim() || null,
+    updatedBy: String(record.updatedBy || '').trim(),
+  };
+};
+const toLineOaConfigPublicResponse = (recordInput) => {
+  const normalized = normalizeLineOaConfigRecord(recordInput);
+  return {
+    enabled: normalized.enabled,
+    liffEntryUrl: normalized.liffEntryUrl,
+    commands: normalized.commands,
+    chatTimeoutMs: normalized.chatTimeoutMs,
+    updatedAt: normalized.updatedAt,
+    updatedBy: normalized.updatedBy,
+  };
+};
+const lineOaLinkDocIdFor = (lineUserIdInput) =>
+  crypto.createHash('sha256').update(String(lineUserIdInput || '').trim()).digest('hex');
+const normalizeLineOaUserLinkRecord = (recordInput) => {
+  const record = recordInput && typeof recordInput === 'object' && !Array.isArray(recordInput)
+    ? recordInput
+    : {};
+  return {
+    lineUserId: String(record.lineUserId || '').trim(),
+    userId: sanitizeUserId(record.userId),
+    username: sanitizeUsername(record.username),
+    linkedAt: String(record.linkedAt || '').trim() || null,
+    updatedAt: String(record.updatedAt || '').trim() || null,
+    lastSeenAt: String(record.lastSeenAt || '').trim() || null,
+    filter: normalizeLineOaFilterConfig(record.filter),
+  };
+};
+const normalizeLineOaChatHistory = (historyInput) =>
+  (Array.isArray(historyInput) ? historyInput : [])
+    .slice(-20)
+    .map((entryInput) => {
+      const entry = entryInput && typeof entryInput === 'object' && !Array.isArray(entryInput)
+        ? entryInput
+        : {};
+      const role = String(entry.role || '').trim().toLowerCase() === 'assistant' ? 'assistant' : 'user';
+      const text = sanitizeAiMessageContent(entry.text, 1200);
+      if (!text) return null;
+      return {
+        role,
+        text,
+        createdAt: String(entry.createdAt || '').trim() || new Date().toISOString(),
+      };
+    })
+    .filter(Boolean);
+const normalizeLineOaChatSessionRecord = (recordInput) => {
+  const record = recordInput && typeof recordInput === 'object' && !Array.isArray(recordInput)
+    ? recordInput
+    : {};
+  return {
+    lineUserId: String(record.lineUserId || '').trim(),
+    userId: sanitizeUserId(record.userId),
+    active: record.active === true,
+    history: normalizeLineOaChatHistory(record.history),
+    expiresAt: String(record.expiresAt || '').trim() || null,
+    updatedAt: String(record.updatedAt || '').trim() || null,
+    timeoutNotifiedAt: String(record.timeoutNotifiedAt || '').trim() || null,
+  };
+};
+const createLineOaLinkToken = ({ lineUserId, nextAction = '' }) => {
+  const safeLineUserId = String(lineUserId || '').trim();
+  if (!safeLineUserId || !LINE_OA_LOGIN_TOKEN_SECRET) return '';
+  const nowMs = Date.now();
+  const payload = {
+    lineUserId: safeLineUserId,
+    nextAction: LINE_OA_ACTION_SET.has(String(nextAction || '').trim().toUpperCase())
+      ? String(nextAction || '').trim().toUpperCase()
+      : '',
+    iat: nowMs,
+    exp: nowMs + LINE_OA_LOGIN_TOKEN_TTL_MS,
+  };
+  const payloadPart = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', LINE_OA_LOGIN_TOKEN_SECRET)
+    .update(payloadPart)
+    .digest('base64url');
+  return `${payloadPart}.${signature}`;
+};
+const parseLineOaLinkToken = (tokenInput) => {
+  const token = String(tokenInput || '').trim();
+  if (!token || !token.includes('.') || !LINE_OA_LOGIN_TOKEN_SECRET) return null;
+  const [payloadPartRaw, signatureRaw] = token.split('.');
+  const payloadPart = String(payloadPartRaw || '').trim();
+  const signature = String(signatureRaw || '').trim();
+  if (!payloadPart || !signature) return null;
+  const expectedSignature = crypto
+    .createHmac('sha256', LINE_OA_LOGIN_TOKEN_SECRET)
+    .update(payloadPart)
+    .digest('base64url');
+  const expectedBuffer = Buffer.from(expectedSignature);
+  const incomingBuffer = Buffer.from(signature);
+  if (expectedBuffer.length !== incomingBuffer.length) return null;
+  if (!crypto.timingSafeEqual(expectedBuffer, incomingBuffer)) return null;
+
+  let payload = null;
+  try {
+    payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+  } catch {
+    payload = null;
+  }
+  if (!payload || typeof payload !== 'object') return null;
+  const lineUserId = String(payload.lineUserId || '').trim();
+  const exp = Number(payload.exp || 0);
+  const nextAction = String(payload.nextAction || '').trim().toUpperCase();
+  if (!lineUserId || !Number.isFinite(exp) || Date.now() > exp) {
+    return null;
+  }
+  return {
+    lineUserId,
+    nextAction: LINE_OA_ACTION_SET.has(nextAction) ? nextAction : '',
+  };
+};
+const appendQueryToUrl = (urlInput, paramsInput) => {
+  const url = String(urlInput || '').trim();
+  if (!isSafeHttpUrl(url)) return '';
+  try {
+    const parsed = new URL(url);
+    Object.entries(paramsInput || {}).forEach(([key, value]) => {
+      const safeValue = String(value || '').trim();
+      if (!safeValue) return;
+      parsed.searchParams.set(key, safeValue);
+    });
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+};
+const buildLineOaLiffUrl = ({ config, lineUserId, nextAction = '' }) => {
+  const safeConfig = normalizeLineOaConfigRecord(config);
+  const baseUrl = String(safeConfig.liffEntryUrl || '').trim();
+  if (!isSafeHttpUrl(baseUrl)) return '';
+  const linkToken = createLineOaLinkToken({ lineUserId, nextAction });
+  return appendQueryToUrl(baseUrl, {
+    pamdaLineLinkToken: linkToken,
+    pamdaLineAction: String(nextAction || '').trim().toUpperCase(),
+  });
+};
+const resolveLineOaActionFromMessage = ({ config, messageText }) => {
+  const normalized = normalizeLineCommandText(messageText);
+  if (!normalized) return '';
+  if (normalized === normalizeLineCommandText(LINE_OA_INTERNAL_MESSAGES.LOGOUT)) {
+    return LINE_OA_INTERNAL_MESSAGES.LOGOUT;
+  }
+  if (normalized === normalizeLineCommandText(LINE_OA_INTERNAL_MESSAGES.FILTER_MERGE)) {
+    return LINE_OA_INTERNAL_MESSAGES.FILTER_MERGE;
+  }
+  if (normalized.startsWith(normalizeLineCommandText(LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX))) {
+    return LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX;
+  }
+  const commandMap = normalizeLineOaCommandMap(config?.commands);
+  for (const [actionKey, actionLabel] of Object.entries(commandMap)) {
+    if (!actionLabel) continue;
+    if (normalized === normalizeLineCommandText(actionLabel)) {
+      return actionKey;
+    }
+  }
+  return '';
+};
+const parseLineOaFilterProjectToggleMessage = (messageTextInput) => {
+  const messageText = String(messageTextInput || '').trim();
+  if (!messageText.startsWith(LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX)) return '';
+  return String(messageText.slice(LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX.length) || '').trim();
 };
 
 const normalizeGoogleEventColorId = (value) => {
@@ -2232,6 +2646,454 @@ const applyAiProjectScopeToPayload = ({ payload, scope }) => {
     projects: scopedProjects,
     events: scopedEvents,
   };
+};
+
+const resolveLineOaProjectScopeFromFilter = ({ payload, filterInput }) => {
+  const filter = normalizeLineOaFilterConfig(filterInput);
+  if (filter.mode !== LINE_OA_FILTER_MODES.SELECTED) {
+    return resolveAiProjectScopeFromRequest({ payload, scopeInput: { mode: AI_PROJECT_SCOPE_MODES.MERGE } });
+  }
+  return resolveAiProjectScopeFromRequest({
+    payload,
+    scopeInput: {
+      mode: AI_PROJECT_SCOPE_MODES.SELECTED,
+      projectIds: filter.projectIds,
+    },
+  });
+};
+
+const applyLineOaFilterToPayload = ({ payload, filterInput }) => {
+  const scope = resolveLineOaProjectScopeFromFilter({ payload, filterInput });
+  const scopedPayload = applyAiProjectScopeToPayload({ payload, scope });
+  return {
+    scope,
+    payload: scopedPayload,
+  };
+};
+
+const isTaskAssignedToUser = (taskInput, userIdInput) => {
+  const userId = sanitizeUserId(userIdInput);
+  if (!userId) return false;
+  const assigneeIds = normalizeTaskAssigneeIds(taskInput);
+  return assigneeIds.includes(userId);
+};
+
+const collectLineOaOpenTasksForUser = ({ payload, userId }) =>
+  getPayloadEvents(payload)
+    .filter((event) => isTaskRecord(event))
+    .filter((event) => !isCompletedTaskRecord(event))
+    .filter((event) => isTaskAssignedToUser(event, userId))
+    .sort((left, right) => {
+      const leftProjectName = getProjectNameByIdFromPayload(payload, left?.projectId);
+      const rightProjectName = getProjectNameByIdFromPayload(payload, right?.projectId);
+      if (leftProjectName !== rightProjectName) {
+        return leftProjectName.localeCompare(rightProjectName, undefined, { sensitivity: 'base' });
+      }
+      const leftDate = normalizeIsoDate(left?.endDate || left?.startDate);
+      const rightDate = normalizeIsoDate(right?.endDate || right?.startDate);
+      if (leftDate !== rightDate) {
+        return String(leftDate || '9999-12-31').localeCompare(String(rightDate || '9999-12-31'));
+      }
+      return String(left?.title || '').localeCompare(String(right?.title || ''), undefined, {
+        sensitivity: 'base',
+      });
+    });
+
+const collectLineOaUpcomingEvents = ({ payload, timezone = DEFAULT_LINE_REMINDER_TIMEZONE, nextDays = 7 }) => {
+  const safeDays = Math.max(1, Math.min(30, Number.parseInt(String(nextDays || 7), 10) || 7));
+  const today = getIsoDateInTimeZone(new Date(), timezone);
+  const untilDate = shiftIsoDateByDays(today, safeDays);
+  return getPayloadEvents(payload)
+    .filter((event) => !isTaskRecord(event))
+    .filter((event) => {
+      const startDate = normalizeIsoDate(event?.startDate || event?.endDate);
+      if (!startDate || !today || !untilDate) return false;
+      return startDate >= today && startDate <= untilDate;
+    })
+    .sort((left, right) => {
+      const leftDate = normalizeIsoDate(left?.startDate || left?.endDate);
+      const rightDate = normalizeIsoDate(right?.startDate || right?.endDate);
+      if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+      const leftTime = normalizeIsoTime(left?.startTime || '');
+      const rightTime = normalizeIsoTime(right?.startTime || '');
+      if (leftTime !== rightTime) return String(leftTime || '99:99').localeCompare(String(rightTime || '99:99'));
+      const leftProjectName = getProjectNameByIdFromPayload(payload, left?.projectId);
+      const rightProjectName = getProjectNameByIdFromPayload(payload, right?.projectId);
+      if (leftProjectName !== rightProjectName) {
+        return leftProjectName.localeCompare(rightProjectName, undefined, { sensitivity: 'base' });
+      }
+      return String(left?.title || '').localeCompare(String(right?.title || ''), undefined, {
+        sensitivity: 'base',
+      });
+    });
+};
+
+const collectLineOaDailyUpdates = ({ payload, lookbackHours = 24 }) => {
+  const sinceMs = Date.now() - Math.max(1, Number.parseInt(String(lookbackHours || 24), 10) || 24) * 3600000;
+  return getPayloadProjects(payload)
+    .map((project) => {
+      const feed = Array.isArray(project?.changeFeed) ? project.changeFeed : [];
+      const updates = feed
+        .filter((entry) => new Date(String(entry?.createdAt || '')).getTime() >= sinceMs)
+        .slice(0, 20)
+        .map((entry) => ({
+          id: String(entry?.id || '').trim(),
+          type: String(entry?.type || '').trim(),
+          title: String(entry?.title || '').trim(),
+          message: String(entry?.message || '').trim(),
+          createdAt: String(entry?.createdAt || '').trim(),
+        }));
+      return {
+        projectId: String(project?.id || '').trim(),
+        projectName: String(project?.name || project?.id || '').trim() || 'Project',
+        updates,
+      };
+    })
+    .filter((item) => item.updates.length > 0)
+    .sort((left, right) => {
+      const leftTop = left.updates[0]?.createdAt || '';
+      const rightTop = right.updates[0]?.createdAt || '';
+      return String(rightTop).localeCompare(String(leftTop));
+    });
+};
+
+const buildLineOaSimpleRows = (itemsInput, { max = 8 } = {}) => {
+  const items = Array.isArray(itemsInput) ? itemsInput.slice(0, max) : [];
+  if (items.length === 0) {
+    return [
+      {
+        type: 'text',
+        text: 'No data',
+        size: 'sm',
+        color: '#64748b',
+      },
+    ];
+  }
+  return items.map((item, index) => {
+    const title = clampLineText(item?.title || '-', 120) || '-';
+    const subtitle = clampLineText(item?.subtitle || '', 220);
+    const badge = clampLineText(item?.badge || '', 40);
+    return {
+      type: 'box',
+      layout: 'vertical',
+      spacing: '5px',
+      paddingAll: '10px',
+      backgroundColor: '#f8fafc',
+      borderColor: '#e2e8f0',
+      borderWidth: '1px',
+      cornerRadius: '10px',
+      contents: [
+        {
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            {
+              type: 'text',
+              text: `${index + 1}. ${title}`,
+              size: 'sm',
+              weight: 'bold',
+              color: '#0f172a',
+              wrap: true,
+              flex: 1,
+            },
+            ...(badge
+              ? [
+                  {
+                    type: 'text',
+                    text: badge,
+                    size: 'xxs',
+                    color: '#2563eb',
+                    align: 'end',
+                    gravity: 'center',
+                    flex: 0,
+                  },
+                ]
+              : []),
+          ],
+        },
+        ...(subtitle
+          ? [
+              {
+                type: 'text',
+                text: subtitle,
+                size: 'xs',
+                color: '#334155',
+                wrap: true,
+              },
+            ]
+          : []),
+      ],
+    };
+  });
+};
+
+const buildLineOaLoginRequiredMessage = ({ liffUrl = '', actionName = '' }) => {
+  const safeActionName = clampLineText(actionName || 'this feature', 80) || 'this feature';
+  const canOpenLiff = isSafeHttpUrl(liffUrl);
+  return {
+    type: 'flex',
+    altText: '[PAMDA] Login required',
+    contents: {
+      type: 'bubble',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '10px',
+        contents: [
+          {
+            type: 'text',
+            text: 'Please login with PAMDA first',
+            weight: 'bold',
+            size: 'md',
+            wrap: true,
+            color: '#0f172a',
+          },
+          {
+            type: 'text',
+            text: clampLineText(`To use "${safeActionName}", please open PAMDA LIFF and login once.`, 220),
+            size: 'sm',
+            color: '#475569',
+            wrap: true,
+          },
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '8px',
+        contents: [
+          {
+            type: 'button',
+            style: 'primary',
+            color: '#2563eb',
+            action: canOpenLiff
+              ? {
+                  type: 'uri',
+                  label: 'Open PAMDA Login',
+                  uri: liffUrl,
+                }
+              : {
+                  type: 'message',
+                  label: 'No LIFF URL yet',
+                  text: 'LIFF URL is not configured yet.',
+                },
+          },
+        ],
+      },
+    },
+  };
+};
+
+const buildLineOaEntryMenuMessage = ({ liffUrl = '', logoutCommand = LINE_OA_INTERNAL_MESSAGES.LOGOUT }) => {
+  const canOpenLiff = isSafeHttpUrl(liffUrl);
+  return {
+    type: 'flex',
+    altText: '[PAMDA] Open menu',
+    contents: {
+      type: 'bubble',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '10px',
+        contents: [
+          {
+            type: 'text',
+            text: 'PAMDA',
+            weight: 'bold',
+            size: 'lg',
+            color: '#0f172a',
+          },
+          {
+            type: 'text',
+            text: 'Open PAMDA LIFF or logout your linked account from LINE OA.',
+            size: 'sm',
+            color: '#475569',
+            wrap: true,
+          },
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '8px',
+        contents: [
+          {
+            type: 'button',
+            style: 'primary',
+            color: '#2563eb',
+            action: canOpenLiff
+              ? {
+                  type: 'uri',
+                  label: 'Open PAMDA',
+                  uri: liffUrl,
+                }
+              : {
+                  type: 'message',
+                  label: 'LIFF URL not set',
+                  text: 'LIFF URL is not configured yet.',
+                },
+          },
+          {
+            type: 'button',
+            style: 'secondary',
+            action: {
+              type: 'message',
+              label: 'Logout linked account',
+              text: logoutCommand,
+            },
+          },
+        ],
+      },
+    },
+  };
+};
+
+const buildLineOaSessionSleepMessage = () =>
+  buildLineCardFlexMessage({
+    headerLabel: 'PAMDA',
+    altText: '[PAMDA] Chat session closed',
+    title: 'Chat mode ended',
+    subtitle: 'น้อง PAMDA ขอตัวไปพักก่อนนะคั้บ',
+    accentColor: '#0ea5e9',
+    rows: buildLineOaSimpleRows(
+      [
+        {
+          title: 'Tap "แชทกับบอท" in rich menu to start again.',
+        },
+      ],
+      { max: 1 }
+    ),
+  });
+
+const buildLineOaFilterMessage = ({ payload, filterInput }) => {
+  const projects = getPayloadProjects(payload);
+  const filter = normalizeLineOaFilterConfig(filterInput);
+  const isMergeMode = filter.mode !== LINE_OA_FILTER_MODES.SELECTED || filter.projectIds.length === 0;
+  const projectButtons = projects.slice(0, 10).map((project) => {
+    const projectId = String(project?.id || '').trim();
+    const selected = filter.projectIds.includes(projectId);
+    return {
+      type: 'button',
+      style: selected ? 'primary' : 'secondary',
+      color: selected ? '#16a34a' : '#94a3b8',
+      action: {
+        type: 'message',
+        label: clampLineText(
+          `${selected ? '✓ ' : ''}${String(project?.name || projectId || 'Project').trim()}`,
+          20
+        ),
+        text: `${LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX}${projectId}`,
+      },
+      margin: 'sm',
+    };
+  });
+  return {
+    type: 'flex',
+    altText: '[PAMDA] Filter settings',
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '10px',
+        contents: [
+          {
+            type: 'text',
+            text: 'Response filter',
+            size: 'lg',
+            weight: 'bold',
+            color: '#0f172a',
+          },
+          {
+            type: 'text',
+            text: isMergeMode
+              ? 'Current mode: Merge view (all projects)'
+              : `Current mode: ${filter.projectIds.length} selected project(s)`,
+            size: 'sm',
+            color: '#475569',
+            wrap: true,
+          },
+          {
+            type: 'button',
+            style: isMergeMode ? 'primary' : 'secondary',
+            color: '#2563eb',
+            action: {
+              type: 'message',
+              label: 'Use merge view',
+              text: LINE_OA_INTERNAL_MESSAGES.FILTER_MERGE,
+            },
+          },
+          ...(projectButtons.length > 0
+            ? [
+                {
+                  type: 'separator',
+                  margin: 'md',
+                },
+                {
+                  type: 'text',
+                  text: 'Tap project to toggle',
+                  size: 'xs',
+                  color: '#64748b',
+                },
+                ...projectButtons,
+              ]
+            : [
+                {
+                  type: 'text',
+                  text: 'No projects found.',
+                  size: 'sm',
+                  color: '#64748b',
+                },
+              ]),
+        ],
+      },
+    },
+  };
+};
+
+const lineOaSessionTimerByLineUserId = new Map();
+
+const clearLineOaSessionTimeoutTimer = (lineUserIdInput) => {
+  const lineUserId = String(lineUserIdInput || '').trim();
+  if (!lineUserId) return;
+  const timer = lineOaSessionTimerByLineUserId.get(lineUserId);
+  if (timer) {
+    clearTimeout(timer);
+    lineOaSessionTimerByLineUserId.delete(lineUserId);
+  }
+};
+
+const scheduleLineOaSessionTimeoutNotice = ({ lineUserId, timeoutMs = LINE_OA_CHAT_TIMEOUT_MS }) => {
+  const safeLineUserId = String(lineUserId || '').trim();
+  if (!safeLineUserId) return;
+  const safeTimeoutMs = Math.max(30 * 1000, Math.min(30 * 60 * 1000, Number(timeoutMs || LINE_OA_CHAT_TIMEOUT_MS)));
+  clearLineOaSessionTimeoutTimer(safeLineUserId);
+  const timer = setTimeout(async () => {
+    try {
+      const current = await getLineOaChatSession(safeLineUserId);
+      if (!current?.data?.active) return;
+      const expiresAtMs = new Date(String(current.data.expiresAt || '')).getTime();
+      if (!Number.isFinite(expiresAtMs) || Date.now() < expiresAtMs) return;
+      const nowIso = new Date().toISOString();
+      await saveLineOaChatSession(safeLineUserId, {
+        ...current.data,
+        active: false,
+        timeoutNotifiedAt: nowIso,
+        updatedAt: nowIso,
+      });
+      await sendLinePushMessage({
+        channelAccessToken: LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN,
+        to: safeLineUserId,
+        messages: [buildLineOaSessionSleepMessage()],
+      });
+    } catch (error) {
+      console.warn('Failed to send LINE OA timeout notice:', error.message);
+    } finally {
+      lineOaSessionTimerByLineUserId.delete(safeLineUserId);
+    }
+  }, safeTimeoutMs + 1200);
+  lineOaSessionTimerByLineUserId.set(safeLineUserId, timer);
 };
 
 const normalizeAiInputAttachments = (attachmentsInput) =>
@@ -3165,6 +4027,213 @@ const runAiAssistant = async ({
   };
 };
 
+const callGeminiGenerateContent = async ({
+  systemInstruction = '',
+  history = [],
+  userMessage = '',
+}) => {
+  if (!GEMINI_API_KEY) {
+    const error = new Error('GEMINI_API_KEY is not configured on server.');
+    error.status = 503;
+    error.code = 'gemini_key_missing';
+    throw error;
+  }
+  const endpointBase = String(GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(
+    /\/+$/,
+    ''
+  );
+  const model = String(GEMINI_MODEL || 'gemini-2.0-flash').trim() || 'gemini-2.0-flash';
+  const contents = [];
+  const safeHistory = Array.isArray(history) ? history.slice(-16) : [];
+  safeHistory.forEach((entryInput) => {
+    const entry = entryInput && typeof entryInput === 'object' && !Array.isArray(entryInput)
+      ? entryInput
+      : {};
+    const role = String(entry.role || '').trim().toLowerCase() === 'assistant' ? 'model' : 'user';
+    const text = sanitizeAiMessageContent(entry.text, 1500);
+    if (!text) return;
+    contents.push({
+      role,
+      parts: [{ text }],
+    });
+  });
+  const safeUserMessage = sanitizeAiMessageContent(userMessage, AI_CHAT_MAX_USER_MESSAGE_LENGTH);
+  if (safeUserMessage) {
+    contents.push({
+      role: 'user',
+      parts: [{ text: safeUserMessage }],
+    });
+  }
+  const payload = {
+    systemInstruction: {
+      parts: [{ text: sanitizeAiMessageContent(systemInstruction, 20000) }],
+    },
+    contents,
+    generationConfig: {
+      temperature: 0.35,
+      topP: 0.95,
+      responseMimeType: 'application/json',
+    },
+  };
+  const response = await fetch(
+    `${endpointBase}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(
+      GEMINI_API_KEY
+    )}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+  const text = String(await response.text()).trim();
+  let parsed = {};
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
+    parsed = {};
+  }
+  if (!response.ok) {
+    const status = Number(response.status || 500);
+    const message = String(parsed?.error?.message || parsed?.message || '').trim();
+    const error = new Error(
+      message || `Gemini request failed (${status})${text ? `: ${text.slice(0, 240)}` : ''}`
+    );
+    error.status = status;
+    throw error;
+  }
+  const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [];
+  const firstCandidate = candidates[0] && typeof candidates[0] === 'object' ? candidates[0] : {};
+  const content = firstCandidate?.content && typeof firstCandidate.content === 'object'
+    ? firstCandidate.content
+    : {};
+  const parts = Array.isArray(content.parts) ? content.parts : [];
+  const outputText = parts
+    .map((part) => String(part?.text || '').trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  return {
+    raw: parsed,
+    outputText,
+  };
+};
+
+const runLineOaGeminiAssistant = async ({
+  payload,
+  userId,
+  username = '',
+  userMessage,
+  history = [],
+  authUsername = '',
+}) => {
+  const contextSummary = buildAiContextSummary({
+    payload,
+    userId,
+    username: username || authUsername,
+  });
+  const systemInstruction = [
+    'You are PAMDA LINE OA private assistant.',
+    'Always answer in Thai.',
+    'Return strict JSON object only with this shape:',
+    '{"replyText":"string","action":{"type":"none|create_task|delete_event|notify_open_tasks","payload":{}}}',
+    'If no action is needed, set action.type = "none".',
+    'If user asks to create a task, include create_task payload with projectId or projectHint and title.',
+    'If user asks to delete/remove task/event, include delete_event payload with eventId or titleContains (+projectId when known).',
+    'If user asks to notify LINE group open tasks, include notify_open_tasks payload with projectId.',
+    'Never fabricate ids. If unsure, ask follow-up in replyText and keep action.type as "none".',
+    'Context summary JSON:',
+    JSON.stringify(contextSummary),
+  ].join('\n');
+
+  const geminiResult = await callGeminiGenerateContent({
+    systemInstruction,
+    history,
+    userMessage,
+  });
+  const parsed = parseJsonObjectSafe(geminiResult.outputText);
+  const replyText = sanitizeAiMessageContent(parsed?.replyText || geminiResult.outputText, 3000);
+  const action = parsed?.action && typeof parsed.action === 'object' ? parsed.action : {};
+  const actionType = String(action.type || '').trim().toLowerCase();
+  const actionPayload = action.payload && typeof action.payload === 'object' ? action.payload : {};
+  let actionResult = null;
+  let actionErrorMessage = '';
+
+  try {
+    if (actionType === 'create_task') {
+      const matchedProject =
+        getProjectByIdFromPayload(payload, actionPayload.projectId) ||
+        resolveAiProjectByHint(payload, actionPayload.projectHint);
+      const title = sanitizeAiMessageContent(actionPayload.title, 220);
+      if (!matchedProject || !title) {
+        actionErrorMessage = !matchedProject
+          ? 'ยังไม่พบโปรเจกต์ที่ต้องการสร้าง Task'
+          : 'ยังไม่มีชื่องานที่ชัดเจน';
+      } else {
+        actionResult = await executeAiCreateTaskAction({
+          userId,
+          actionPayload: {
+            ...actionPayload,
+            projectId: String(matchedProject.id || '').trim(),
+            title,
+          },
+        });
+      }
+    } else if (actionType === 'delete_event') {
+      const targetEvent = resolveAiEventForDeletion({
+        payload,
+        eventId: actionPayload.eventId,
+        projectId: actionPayload.projectId,
+        titleContains: actionPayload.titleContains,
+      });
+      if (!targetEvent) {
+        actionErrorMessage = 'ยังไม่พบรายการที่ต้องการลบ';
+      } else {
+        actionResult = await executeAiDeleteEventAction({
+          userId,
+          actionPayload: {
+            eventId: String(targetEvent.id || '').trim(),
+          },
+        });
+      }
+    } else if (actionType === 'notify_open_tasks') {
+      const matchedProject =
+        getProjectByIdFromPayload(payload, actionPayload.projectId) ||
+        resolveAiProjectByHint(payload, actionPayload.projectHint);
+      if (!matchedProject) {
+        actionErrorMessage = 'ยังไม่พบโปรเจกต์ที่ต้องการส่งแจ้งเตือน';
+      } else {
+        actionResult = await sendLineOpenTaskDigestForProject({
+          userId,
+          projectId: String(matchedProject.id || '').trim(),
+          authUsername,
+        });
+      }
+    }
+  } catch (error) {
+    actionErrorMessage = String(error?.message || 'Action execution failed.').trim();
+  }
+
+  let assistantText = replyText || 'รับทราบครับ';
+  if (actionResult?.task?.title) {
+    assistantText = `${assistantText}\n\nสร้าง Task "${actionResult.task.title}" เรียบร้อยแล้ว`;
+  } else if (actionResult?.removed?.title) {
+    assistantText = `${assistantText}\n\nลบรายการ "${actionResult.removed.title}" เรียบร้อยแล้ว`;
+  } else if (actionResult?.openTaskCount >= 0) {
+    assistantText = `${assistantText}\n\nส่งสรุป Open Task ไปที่ LINE กลุ่มแล้ว (${actionResult.openTaskCount} งาน)`;
+  } else if (actionErrorMessage) {
+    assistantText = `${assistantText}\n\nหมายเหตุ: ${actionErrorMessage}`;
+  }
+
+  return {
+    assistantText: sanitizeAiMessageContent(assistantText, 5000) || 'รับทราบครับ',
+    actionType,
+    actionResult,
+    actionErrorMessage,
+  };
+};
+
 const resolveAiTaskAssigneeIds = ({ project, payloadAssigneeIds, payloadAssigneeNames }) => {
   const teamMembers = Array.isArray(project?.teamMembers) ? project.teamMembers : [];
   const memberById = new Map();
@@ -3718,6 +4787,9 @@ app.get('/health', (_req, res) => {
     firestoreLineReminderCollection: FIRESTORE_LINE_REMINDER_COLLECTION,
     firestoreLineReminderLogCollection: FIRESTORE_LINE_REMINDER_LOG_COLLECTION,
     firestoreLineWebhookLogCollection: FIRESTORE_LINE_WEBHOOK_LOG_COLLECTION,
+    firestoreLineOaConfigCollection: FIRESTORE_LINE_OA_CONFIG_COLLECTION,
+    firestoreLineOaLinkCollection: FIRESTORE_LINE_OA_LINK_COLLECTION,
+    firestoreLineOaChatSessionCollection: FIRESTORE_LINE_OA_CHAT_SESSION_COLLECTION,
     firestoreAdminComplaintCollection: FIRESTORE_ADMIN_COMPLAINT_COLLECTION,
     firestoreSupportTicketCollection: FIRESTORE_SUPPORT_TICKET_COLLECTION,
     googleClientConfigured: Boolean(GOOGLE_CLIENT_ID),
@@ -3730,9 +4802,13 @@ app.get('/health', (_req, res) => {
     lineReminderDefaultDaysBefore: DEFAULT_LINE_REMINDER_DAYS_BEFORE,
     lineWebhookConfigured: Boolean(LINE_CHANNEL_SECRET),
     lineWebhookReplyConfigured: Boolean(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN),
+    lineOaLoginTokenConfigured: Boolean(LINE_OA_LOGIN_TOKEN_SECRET),
+    lineOaDefaultChatTimeoutMs: LINE_OA_CHAT_TIMEOUT_MS,
     openAiConfigured: Boolean(OPENAI_API_KEY),
     openAiModel: OPENAI_MODEL,
     openAiReasoningEffort: OPENAI_REASONING_EFFORT,
+    geminiConfigured: Boolean(GEMINI_API_KEY),
+    geminiModel: GEMINI_MODEL,
     rootAdminConfigured: Boolean(ROOT_ADMIN_EMAIL),
     adminStatsTimezone: ADMIN_STATS_TIMEZONE,
     supportTicketAttachmentLimit: SUPPORT_TICKET_MAX_ATTACHMENTS,
@@ -5047,6 +6123,33 @@ app.get('/admin/me', requireAuth, requireRootAdmin, async (req, res) => {
   });
 });
 
+app.get('/admin/line-oa/config', requireAuth, requireRootAdmin, async (_req, res) => {
+  try {
+    const config = await loadLineOaConfig();
+    return res.json({
+      config: toLineOaConfigPublicResponse(config),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load Line OA config.' });
+  }
+});
+
+app.put('/admin/line-oa/config', requireAuth, requireRootAdmin, async (req, res) => {
+  try {
+    const nextConfigInput = req.body?.config;
+    const nextConfig = normalizeLineOaConfigRecord(nextConfigInput);
+    const saved = await saveLineOaConfig(nextConfig, {
+      updatedBy: sanitizeUserId(req.rootAdmin?.id),
+    });
+    return res.json({
+      message: 'Line OA settings saved.',
+      config: toLineOaConfigPublicResponse(saved),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to save Line OA config.' });
+  }
+});
+
 app.get('/admin/stats/accounts', requireAuth, requireRootAdmin, async (req, res) => {
   try {
     const range = normalizeAdminActiveRange(req.query?.range);
@@ -5783,6 +6886,614 @@ app.put('/data/project-invites', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/line/oa/link', requireAuth, async (req, res) => {
+  try {
+    const authUserId = sanitizeUserId(req.authUser?.sub);
+    if (!authUserId) {
+      return res.status(401).json({ message: 'Unauthorized request.' });
+    }
+    const userRecord = await getAuthUserRecord(authUserId);
+    if (!userRecord) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    const linkToken = String(req.body?.linkToken || '').trim();
+    if (!linkToken) {
+      return res.status(400).json({ message: 'linkToken is required.' });
+    }
+    const decoded = parseLineOaLinkToken(linkToken);
+    if (!decoded?.lineUserId) {
+      return res.status(400).json({ message: 'Invalid or expired line link token.' });
+    }
+    const linked = await upsertLineOaLink({
+      lineUserId: decoded.lineUserId,
+      userId: authUserId,
+      username: sanitizeUsername(userRecord.username || req.authUser?.username),
+    });
+    await saveLineOaChatSession(decoded.lineUserId, {
+      lineUserId: decoded.lineUserId,
+      userId: authUserId,
+      active: false,
+      history: [],
+      expiresAt: null,
+      timeoutNotifiedAt: null,
+    });
+    clearLineOaSessionTimeoutTimer(decoded.lineUserId);
+    return res.json({
+      ok: true,
+      linked: Boolean(linked?.lineUserId && linked?.userId),
+      lineUserId: linked?.lineUserId || decoded.lineUserId,
+      userId: linked?.userId || authUserId,
+      nextAction: decoded.nextAction || '',
+      message: 'LINE OA account linked successfully.',
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to link LINE OA account.' });
+  }
+});
+
+const buildLineOaScopeLabel = ({ scope, payload }) => {
+  const safeScope = scope && typeof scope === 'object' ? scope : {};
+  if (safeScope.mode !== AI_PROJECT_SCOPE_MODES.SELECTED) {
+    return 'Scope: Merge view (all projects)';
+  }
+  const names = (Array.isArray(safeScope.projectIds) ? safeScope.projectIds : [])
+    .map((projectId) => getProjectNameByIdFromPayload(payload, projectId))
+    .filter(Boolean);
+  if (names.length === 0) return 'Scope: Merge view (all projects)';
+  return `Scope: ${clampLineText(names.join(', '), 120)}`;
+};
+
+const buildLineOaTaskDigestMessage = ({ payload, userId, scope }) => {
+  const tasks = collectLineOaOpenTasksForUser({ payload, userId });
+  const rows = buildLineOaSimpleRows(
+    tasks.map((task) => {
+      const projectName = getProjectNameByIdFromPayload(payload, task?.projectId) || '-';
+      const dueDate = normalizeIsoDate(task?.endDate || task?.startDate);
+      return {
+        title: clampLineText(task?.title || 'Untitled task', 120),
+        subtitle: clampLineText(
+          `${projectName}${dueDate ? ` | Due ${formatIsoDateDmy(dueDate)}` : ''}`,
+          220
+        ),
+        badge: clampLineText(task?.status || 'To Do', 20),
+      };
+    }),
+    { max: 10 }
+  );
+  return buildLineCardFlexMessage({
+    headerLabel: 'PAMDA',
+    altText: `[PAMDA] Your tasks (${tasks.length})`,
+    title: 'Task ที่ต้องทำ',
+    subtitle: buildLineOaScopeLabel({ scope, payload }),
+    accentColor: '#2563eb',
+    statLabel: 'Open Task',
+    statValue: `${tasks.length}`,
+    rows,
+    footerNote:
+      tasks.length > 10
+        ? `Showing 10 of ${tasks.length} tasks`
+        : `${tasks.length} task(s)`,
+  });
+};
+
+const buildLineOaUpcomingEventsMessage = ({ payload, scope }) => {
+  const events = collectLineOaUpcomingEvents({
+    payload,
+    timezone: DEFAULT_LINE_REMINDER_TIMEZONE,
+    nextDays: 7,
+  });
+  const rows = buildLineOaSimpleRows(
+    events.map((event) => {
+      const projectName = getProjectNameByIdFromPayload(payload, event?.projectId) || '-';
+      const startDate = normalizeIsoDate(event?.startDate || event?.endDate);
+      const startTime = normalizeIsoTime(event?.startTime || '');
+      return {
+        title: clampLineText(event?.title || 'Untitled event', 120),
+        subtitle: clampLineText(
+          `${projectName}${startDate ? ` | ${formatIsoDateDmy(startDate)}` : ''}${
+            startTime ? ` ${startTime}` : ''
+          }`,
+          220
+        ),
+      };
+    }),
+    { max: 10 }
+  );
+  return buildLineCardFlexMessage({
+    headerLabel: 'PAMDA',
+    altText: `[PAMDA] Upcoming events (${events.length})`,
+    title: 'Event 7 วันข้างหน้า',
+    subtitle: buildLineOaScopeLabel({ scope, payload }),
+    accentColor: '#0ea5e9',
+    statLabel: 'Upcoming',
+    statValue: `${events.length}`,
+    rows,
+    footerNote:
+      events.length > 10
+        ? `Showing 10 of ${events.length} events`
+        : `${events.length} event(s)`,
+  });
+};
+
+const buildLineOaDailyUpdatesMessage = ({ payload, scope }) => {
+  const updates = collectLineOaDailyUpdates({ payload, lookbackHours: 24 });
+  const flattened = updates.flatMap((group) =>
+    group.updates.slice(0, 3).map((entry) => ({
+      title: clampLineText(`${group.projectName}: ${entry.title || entry.type || 'Update'}`, 120),
+      subtitle: clampLineText(entry.message || entry.type || '-', 220),
+      badge: formatSupportTicketDateTime(entry.createdAt),
+    }))
+  );
+  const rows = buildLineOaSimpleRows(flattened, { max: 10 });
+  return buildLineCardFlexMessage({
+    headerLabel: 'PAMDA',
+    altText: `[PAMDA] Daily summary (${flattened.length})`,
+    title: 'สรุปรายวัน (24 ชม.)',
+    subtitle: buildLineOaScopeLabel({ scope, payload }),
+    accentColor: '#16a34a',
+    statLabel: 'Updates',
+    statValue: `${flattened.length}`,
+    rows,
+    footerNote:
+      flattened.length > 10
+        ? `Showing 10 of ${flattened.length} updates`
+        : `${flattened.length} update(s)`,
+  });
+};
+
+const buildLineOaChatModeEnabledMessage = ({ timeoutMs = LINE_OA_CHAT_TIMEOUT_MS }) =>
+  buildLineCardFlexMessage({
+    headerLabel: 'PAMDA',
+    altText: '[PAMDA] Chat mode enabled',
+    title: 'โหมดแชทพร้อมใช้งาน',
+    subtitle: `สามารถคุยกับบอทได้ ${Math.max(1, Math.round(timeoutMs / 60000))} นาที`,
+    accentColor: '#f59e0b',
+    rows: buildLineOaSimpleRows(
+      [
+        {
+          title: 'หากไม่มีการคุยเกิน 2 นาที ระบบจะปิดโหมดแชทอัตโนมัติ',
+        },
+      ],
+      { max: 1 }
+    ),
+  });
+
+const buildLineOaDefaultHintMessage = () =>
+  buildLineCardFlexMessage({
+    headerLabel: 'PAMDA',
+    altText: '[PAMDA] Ready',
+    title: 'พร้อมให้บริการ',
+    subtitle: 'เลือกเมนูจาก Rich Menu ได้เลย',
+    accentColor: '#2563eb',
+    rows: buildLineOaSimpleRows(
+      [
+        { title: 'เช็คTask, เช็คEvent, สรุปรายวัน, แชทกับบอท, ตั้งค่าข้อความ' },
+      ],
+      { max: 1 }
+    ),
+  });
+
+const replyLineEventWithFallback = async ({ event, messages, fallbackTarget = '' }) => {
+  const safeReplyToken = String(event?.replyToken || '').trim();
+  const preparedMessages = Array.isArray(messages) ? messages.filter(Boolean) : [];
+  if (preparedMessages.length === 0) return;
+  if (!safeReplyToken) {
+    if (fallbackTarget) {
+      await sendLinePushMessage({
+        channelAccessToken: LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN,
+        to: fallbackTarget,
+        messages: preparedMessages,
+      });
+    }
+    return;
+  }
+  try {
+    await sendLineReplyMessages({
+      replyToken: safeReplyToken,
+      messages: preparedMessages,
+    });
+  } catch (error) {
+    console.warn('Failed to reply LINE message, fallback push:', error.message);
+    if (!fallbackTarget) return;
+    await sendLinePushMessage({
+      channelAccessToken: LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN,
+      to: fallbackTarget,
+      messages: preparedMessages,
+      notificationDisabled: true,
+    });
+  }
+};
+
+const handleLineOaPrivateTextMessage = async ({
+  event,
+  lineUserId,
+  messageText,
+  lineOaConfig,
+}) => {
+  const replyToken = String(event?.replyToken || '').trim();
+  if (!replyToken || !lineUserId) return;
+  const config = normalizeLineOaConfigRecord(lineOaConfig);
+  if (!config.enabled) {
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineCardFlexMessage({
+          headerLabel: 'PAMDA',
+          altText: '[PAMDA] Maintenance',
+          title: 'Line OA is temporarily unavailable',
+          subtitle: 'Please try again later.',
+          accentColor: '#64748b',
+        }),
+      ],
+    });
+    return;
+  }
+
+  const parsedProjectToggleId = parseLineOaFilterProjectToggleMessage(messageText);
+  const actionToken = parsedProjectToggleId
+    ? LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX
+    : resolveLineOaActionFromMessage({ config, messageText });
+  const requiresLinkedAccount =
+    actionToken === LINE_OA_ACTIONS.B ||
+    actionToken === LINE_OA_ACTIONS.C ||
+    actionToken === LINE_OA_ACTIONS.D ||
+    actionToken === LINE_OA_ACTIONS.E ||
+    actionToken === LINE_OA_ACTIONS.F ||
+    actionToken === LINE_OA_INTERNAL_MESSAGES.FILTER_MERGE ||
+    actionToken === LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX;
+
+  const existingLinkRecord = await getLineOaLinkByLineUserId(lineUserId);
+  const linkedRecord = existingLinkRecord?.data || null;
+  const linkedUserId = sanitizeUserId(linkedRecord?.userId);
+
+  if (actionToken === LINE_OA_INTERNAL_MESSAGES.LOGOUT) {
+    await removeLineOaLinkByLineUserId(lineUserId);
+    clearLineOaSessionTimeoutTimer(lineUserId);
+    await saveLineOaChatSession(lineUserId, {
+      lineUserId,
+      userId: '',
+      active: false,
+      history: [],
+      expiresAt: null,
+      timeoutNotifiedAt: new Date().toISOString(),
+    });
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineCardFlexMessage({
+          headerLabel: 'PAMDA',
+          altText: '[PAMDA] Logged out',
+          title: 'Logout complete',
+          subtitle: 'Your LINE OA chat is now unlinked from PAMDA account.',
+          accentColor: '#ef4444',
+        }),
+      ],
+    });
+    return;
+  }
+
+  if (actionToken === LINE_OA_ACTIONS.A) {
+    const openLiffUrl = buildLineOaLiffUrl({
+      config,
+      lineUserId,
+      nextAction: '',
+    });
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaEntryMenuMessage({
+          liffUrl: openLiffUrl,
+          logoutCommand: LINE_OA_INTERNAL_MESSAGES.LOGOUT,
+        }),
+      ],
+    });
+    return;
+  }
+
+  if (requiresLinkedAccount && !linkedUserId) {
+    const loginLiffUrl = buildLineOaLiffUrl({
+      config,
+      lineUserId,
+      nextAction: LINE_OA_ACTION_SET.has(actionToken) ? actionToken : '',
+    });
+    const actionLabel =
+      LINE_OA_ACTION_SET.has(actionToken)
+        ? normalizeLineOaCommandMap(config.commands)[actionToken] || actionToken
+        : 'this command';
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaLoginRequiredMessage({
+          liffUrl: loginLiffUrl,
+          actionName: actionLabel,
+        }),
+      ],
+    });
+    return;
+  }
+
+  if (linkedUserId) {
+    await upsertLineOaLink({
+      lineUserId,
+      userId: linkedUserId,
+      username: linkedRecord?.username || '',
+      filter: linkedRecord?.filter,
+    });
+  }
+
+  const payload = linkedUserId ? await readAccountPayloadFromStore(linkedUserId) : {};
+  const filter = normalizeLineOaFilterConfig(linkedRecord?.filter);
+  const filtered = applyLineOaFilterToPayload({
+    payload,
+    filterInput: filter,
+  });
+  const scopedPayload = filtered.payload;
+  const scopedProjects = getPayloadProjects(scopedPayload);
+
+  if (actionToken === LINE_OA_INTERNAL_MESSAGES.FILTER_MERGE && linkedUserId) {
+    const nextFilter = normalizeLineOaFilterConfig({
+      mode: LINE_OA_FILTER_MODES.MERGE,
+      projectIds: [],
+      updatedAt: new Date().toISOString(),
+    });
+    await upsertLineOaLink({
+      lineUserId,
+      userId: linkedUserId,
+      username: linkedRecord?.username || '',
+      filter: nextFilter,
+    });
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaFilterMessage({
+          payload,
+          filterInput: nextFilter,
+        }),
+      ],
+    });
+    return;
+  }
+
+  if (actionToken === LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX && linkedUserId) {
+    const projectId = parsedProjectToggleId;
+    const isValidProject = getProjectByIdFromPayload(payload, projectId);
+    if (!isValidProject) {
+      await replyLineEventWithFallback({
+        event,
+        fallbackTarget: lineUserId,
+        messages: [
+          buildLineCardFlexMessage({
+            headerLabel: 'PAMDA',
+            altText: '[PAMDA] Invalid project',
+            title: 'Project not found',
+            subtitle: 'Please choose project from the filter card.',
+            accentColor: '#ef4444',
+          }),
+        ],
+      });
+      return;
+    }
+    const currentSelected = normalizeLineOaProjectIdList(linkedRecord?.filter?.projectIds);
+    const selectedSet = new Set(currentSelected);
+    if (selectedSet.has(projectId)) {
+      selectedSet.delete(projectId);
+    } else {
+      selectedSet.add(projectId);
+    }
+    const nextProjectIds = Array.from(selectedSet);
+    const nextFilter = normalizeLineOaFilterConfig({
+      mode: nextProjectIds.length > 0 ? LINE_OA_FILTER_MODES.SELECTED : LINE_OA_FILTER_MODES.MERGE,
+      projectIds: nextProjectIds,
+      updatedAt: new Date().toISOString(),
+    });
+    await upsertLineOaLink({
+      lineUserId,
+      userId: linkedUserId,
+      username: linkedRecord?.username || '',
+      filter: nextFilter,
+    });
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaFilterMessage({
+          payload,
+          filterInput: nextFilter,
+        }),
+      ],
+    });
+    return;
+  }
+
+  if (actionToken === LINE_OA_ACTIONS.B) {
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaTaskDigestMessage({
+          payload: scopedPayload,
+          userId: linkedUserId,
+          scope: filtered.scope,
+        }),
+      ],
+    });
+    return;
+  }
+
+  if (actionToken === LINE_OA_ACTIONS.C) {
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaUpcomingEventsMessage({
+          payload: scopedPayload,
+          scope: filtered.scope,
+        }),
+      ],
+    });
+    return;
+  }
+
+  if (actionToken === LINE_OA_ACTIONS.D) {
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaDailyUpdatesMessage({
+          payload: scopedPayload,
+          scope: filtered.scope,
+        }),
+      ],
+    });
+    return;
+  }
+
+  if (actionToken === LINE_OA_ACTIONS.F) {
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaFilterMessage({
+          payload,
+          filterInput: linkedRecord?.filter,
+        }),
+      ],
+    });
+    return;
+  }
+
+  const existingSession = await getLineOaChatSession(lineUserId);
+  const sessionRecord = normalizeLineOaChatSessionRecord(existingSession?.data || {});
+  const nowMs = Date.now();
+  const sessionExpiresMs = new Date(String(sessionRecord.expiresAt || '')).getTime();
+  const timeoutMs = Math.max(30 * 1000, Math.min(30 * 60 * 1000, Number(config.chatTimeoutMs || LINE_OA_CHAT_TIMEOUT_MS)));
+  const sessionIsExpired =
+    !sessionRecord.active || !Number.isFinite(sessionExpiresMs) || nowMs > sessionExpiresMs;
+
+  if (actionToken === LINE_OA_ACTIONS.E) {
+    const expiresAt = new Date(nowMs + timeoutMs).toISOString();
+    const nextSession = await saveLineOaChatSession(lineUserId, {
+      ...sessionRecord,
+      lineUserId,
+      userId: linkedUserId,
+      active: true,
+      expiresAt,
+      timeoutNotifiedAt: null,
+    });
+    scheduleLineOaSessionTimeoutNotice({
+      lineUserId,
+      timeoutMs,
+    });
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [buildLineOaChatModeEnabledMessage({ timeoutMs })],
+    });
+    return;
+  }
+
+  if (sessionIsExpired) {
+    if (sessionRecord.active) {
+      await saveLineOaChatSession(lineUserId, {
+        ...sessionRecord,
+        active: false,
+        timeoutNotifiedAt: new Date().toISOString(),
+      });
+      clearLineOaSessionTimeoutTimer(lineUserId);
+      await replyLineEventWithFallback({
+        event,
+        fallbackTarget: lineUserId,
+        messages: [buildLineOaSessionSleepMessage()],
+      });
+      return;
+    }
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [buildLineOaDefaultHintMessage()],
+    });
+    return;
+  }
+
+  let assistantText = '';
+  try {
+    const sessionHistory = normalizeLineOaChatHistory(sessionRecord.history);
+    if (GEMINI_API_KEY) {
+      const geminiResult = await runLineOaGeminiAssistant({
+        payload: scopedPayload,
+        userId: linkedUserId,
+        username: linkedRecord?.username || '',
+        userMessage: messageText,
+        history: sessionHistory,
+        authUsername: linkedRecord?.username || '',
+      });
+      assistantText = sanitizeAiMessageContent(geminiResult.assistantText, 4000);
+    } else if (OPENAI_API_KEY) {
+      const aiResult = await runAiAssistant({
+        payload: scopedPayload,
+        threadMessages: sessionHistory.map((entry) => ({
+          role: entry.role,
+          content: entry.text,
+        })),
+        userMessage: messageText,
+        userId: linkedUserId,
+        username: linkedRecord?.username || '',
+        userContextNote: buildAiRequestContextNote({
+          payload: scopedPayload,
+          scope: filtered.scope,
+          attachments: [],
+        }),
+        attachments: [],
+      });
+      assistantText = sanitizeAiMessageContent(aiResult.assistantText, 4000);
+    } else {
+      assistantText =
+        'ยังไม่ได้ตั้งค่า Gemini หรือ OpenAI API บนเซิร์ฟเวอร์ จึงยังไม่สามารถคุยโหมดบอทได้';
+    }
+  } catch (error) {
+    assistantText = `ขออภัย เกิดข้อผิดพลาดระหว่างประมวลผล: ${String(error.message || '').trim()}`;
+  }
+
+  const nowIso = new Date().toISOString();
+  const nextExpiresAt = new Date(nowMs + timeoutMs).toISOString();
+  const nextHistory = normalizeLineOaChatHistory([
+    ...(Array.isArray(sessionRecord.history) ? sessionRecord.history : []),
+    {
+      role: 'user',
+      text: messageText,
+      createdAt: nowIso,
+    },
+    {
+      role: 'assistant',
+      text: assistantText,
+      createdAt: nowIso,
+    },
+  ]);
+  await saveLineOaChatSession(lineUserId, {
+    ...sessionRecord,
+    lineUserId,
+    userId: linkedUserId,
+    active: true,
+    history: nextHistory,
+    expiresAt: nextExpiresAt,
+    timeoutNotifiedAt: null,
+  });
+  scheduleLineOaSessionTimeoutNotice({
+    lineUserId,
+    timeoutMs,
+  });
+  await replyLineEventWithFallback({
+    event,
+    fallbackTarget: lineUserId,
+    messages: [{ type: 'text', text: sanitizeAiMessageContent(assistantText, 4500) || 'รับทราบครับ' }],
+  });
+};
+
 app.post('/line/webhook', async (req, res) => {
   try {
     if (!LINE_CHANNEL_SECRET) {
@@ -5797,8 +7508,8 @@ app.post('/line/webhook', async (req, res) => {
     const events = Array.isArray(req.body?.events) ? req.body.events : [];
     const destination = String(req.body?.destination || '').trim();
     const nowIso = new Date().toISOString();
+    const lineOaConfig = await loadLineOaConfig();
 
-    const writes = [];
     for (const event of events) {
       const source = event?.source && typeof event.source === 'object' ? event.source : {};
       const sourceType = String(source.type || '').trim();
@@ -5807,7 +7518,7 @@ app.post('/line/webhook', async (req, res) => {
       const eventType = String(event?.type || '').trim();
       const messageType = String(event?.message?.type || '').trim();
       const messageText =
-        messageType === 'text' ? String(event?.message?.text || '').trim().slice(0, 300) : '';
+        messageType === 'text' ? String(event?.message?.text || '').trim().slice(0, 500) : '';
       const eventTimestamp = Number(event?.timestamp || Date.now());
 
       if (groupId) {
@@ -5815,57 +7526,58 @@ app.post('/line/webhook', async (req, res) => {
           .createHash('sha256')
           .update(`${groupId}|${eventTimestamp}|${eventType}|${messageText}`)
           .digest('hex');
-        writes.push(
-          lineWebhookLogRef.doc(logId).set(
-            {
-              destination,
-              sourceType,
-              eventType,
-              messageType,
-              messageText,
-              groupId,
-              userId,
-              eventTimestamp,
-              receivedAt: nowIso,
-            },
-            { merge: true }
-          )
+        await lineWebhookLogRef.doc(logId).set(
+          {
+            destination,
+            sourceType,
+            eventType,
+            messageType,
+            messageText,
+            groupId,
+            userId,
+            eventTimestamp,
+            receivedAt: nowIso,
+          },
+          { merge: true }
         );
       }
 
-      const shouldReplyGroupId =
-        groupId &&
-        eventType === 'message' &&
-        messageType === 'text' &&
-        isLineGroupIdCommand(messageText);
-      if (shouldReplyGroupId && event?.replyToken) {
+      const isTextMessage = eventType === 'message' && messageType === 'text' && Boolean(messageText);
+
+      const shouldReplyGroupId = groupId && isTextMessage && isLineGroupIdCommand(messageText);
+      if (shouldReplyGroupId) {
         const helperText = [
           'PAMDA LINE Group ID',
           groupId,
           '',
           'Paste this value into Manage Project > Announcements > LINE Reminder.',
         ].join('\n');
-        writes.push(
-          sendLineReplyMessage({
-            replyToken: String(event.replyToken || '').trim(),
-            message: helperText,
-          }).catch((error) => {
-            console.warn('Failed to send LINE webhook helper reply:', error.message);
-            return sendLinePushMessage({
-              channelAccessToken: LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN,
-              to: groupId,
-              message: helperText,
-              notificationDisabled: true,
-            }).catch((pushError) => {
-              console.warn('Failed to send LINE webhook helper fallback push:', pushError.message);
-            });
-          })
-        );
+        await replyLineEventWithFallback({
+          event,
+          fallbackTarget: groupId,
+          messages: [{ type: 'text', text: helperText }],
+        });
+        continue;
       }
-    }
 
-    if (writes.length > 0) {
-      await Promise.all(writes);
+      const isPrivateUserText =
+        sourceType === 'user' &&
+        isTextMessage &&
+        userId &&
+        !groupId &&
+        String(source.roomId || '').trim() === '';
+      if (isPrivateUserText) {
+        await startLineChatLoading({
+          chatId: userId,
+          loadingSeconds: 8,
+        });
+        await handleLineOaPrivateTextMessage({
+          event,
+          lineUserId: userId,
+          messageText,
+          lineOaConfig,
+        });
+      }
     }
 
     return res.json({
