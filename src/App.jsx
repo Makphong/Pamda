@@ -3831,7 +3831,7 @@ const getGoogleOAuthErrorMessage = (errorCodeInput) => {
   }
   return errorCodeInput ? String(errorCodeInput) : 'Google sign-in failed.';
 };
-const LINE_IN_APP_USER_AGENT_PATTERN = /\bLine\//i;
+const LINE_IN_APP_USER_AGENT_PATTERN = /\bLine\/|LIFF/i;
 const LINE_LINK_TOKEN_QUERY_KEY = 'pamdaLineLinkToken';
 const LINE_GOOGLE_BRIDGE_QUERY_KEY = 'pamdaLineGoogleBridge';
 const LINE_EXTERNAL_QUERY_KEY = 'pamdaLineExternal';
@@ -3848,6 +3848,65 @@ const getCurrentLocationUrl = () => {
     return null;
   }
 };
+const readQueryValueFromSearchLike = (searchLikeInput, keyInput) => {
+  const key = String(keyInput || '').trim();
+  if (!key) return '';
+  const normalized = String(searchLikeInput || '').trim().replace(/^[?#]/, '');
+  if (!normalized) return '';
+  const params = new URLSearchParams(normalized);
+  return String(params.get(key) || '').trim();
+};
+const safelyDecodeUriComponent = (valueInput, depth = 2) => {
+  let value = String(valueInput || '').trim();
+  for (let index = 0; index < depth; index += 1) {
+    try {
+      const decoded = decodeURIComponent(value);
+      if (decoded === value) break;
+      value = decoded;
+    } catch {
+      break;
+    }
+  }
+  return value;
+};
+const readQueryValueFromLocationUrl = (urlInput, keyInput) => {
+  const url = urlInput instanceof URL ? urlInput : null;
+  const key = String(keyInput || '').trim();
+  if (!url || !key) return '';
+
+  const directValue = String(url.searchParams.get(key) || '').trim();
+  if (directValue) return directValue;
+
+  const hashValue = readQueryValueFromSearchLike(url.hash, key);
+  if (hashValue) return hashValue;
+
+  const liffStateRaw = String(url.searchParams.get('liff.state') || '').trim();
+  if (!liffStateRaw) return '';
+  const decodedLiffState = safelyDecodeUriComponent(liffStateRaw);
+
+  const stateDirectValue = readQueryValueFromSearchLike(decodedLiffState, key);
+  if (stateDirectValue) return stateDirectValue;
+
+  const stateQueryIndex = decodedLiffState.indexOf('?');
+  if (stateQueryIndex >= 0) {
+    const queryValue = readQueryValueFromSearchLike(decodedLiffState.slice(stateQueryIndex + 1), key);
+    if (queryValue) return queryValue;
+  }
+
+  try {
+    const nestedUrl = new URL(decodedLiffState, url.origin);
+    const nestedDirectValue = String(nestedUrl.searchParams.get(key) || '').trim();
+    if (nestedDirectValue) return nestedDirectValue;
+    const nestedHashValue = readQueryValueFromSearchLike(nestedUrl.hash, key);
+    if (nestedHashValue) return nestedHashValue;
+  } catch {}
+
+  return '';
+};
+const getLineLinkTokenFromLocationUrl = (urlInput) =>
+  readQueryValueFromLocationUrl(urlInput, LINE_LINK_TOKEN_QUERY_KEY);
+const getLineBridgeModeFromLocationUrl = (urlInput) =>
+  readQueryValueFromLocationUrl(urlInput, LINE_GOOGLE_BRIDGE_QUERY_KEY) === '1';
 const GOOGLE_CALENDAR_PROJECT_ID = '__google_calendar__';
 const GOOGLE_CALENDAR_PROJECT_META = {
   id: GOOGLE_CALENDAR_PROJECT_ID,
@@ -5952,11 +6011,11 @@ function AuthScreen({ onAuthSuccess }) {
   const legalScrollContainerRef = useRef(null);
   const [lineLinkToken, setLineLinkToken] = useState(() => {
     const url = getCurrentLocationUrl();
-    return String(url?.searchParams.get(LINE_LINK_TOKEN_QUERY_KEY) || '').trim();
+    return getLineLinkTokenFromLocationUrl(url);
   });
   const [lineBridgeMode, setLineBridgeMode] = useState(() => {
     const url = getCurrentLocationUrl();
-    return String(url?.searchParams.get(LINE_GOOGLE_BRIDGE_QUERY_KEY) || '').trim() === '1';
+    return getLineBridgeModeFromLocationUrl(url);
   });
   const [isLineBrowser, setIsLineBrowser] = useState(() => isLineInAppBrowser());
   const [lineLinkIsLinked, setLineLinkIsLinked] = useState(false);
@@ -5964,8 +6023,8 @@ function AuthScreen({ onAuthSuccess }) {
 
   const syncLineFlowFromUrl = useCallback(() => {
     const url = getCurrentLocationUrl();
-    setLineLinkToken(String(url?.searchParams.get(LINE_LINK_TOKEN_QUERY_KEY) || '').trim());
-    setLineBridgeMode(String(url?.searchParams.get(LINE_GOOGLE_BRIDGE_QUERY_KEY) || '').trim() === '1');
+    setLineLinkToken(getLineLinkTokenFromLocationUrl(url));
+    setLineBridgeMode(getLineBridgeModeFromLocationUrl(url));
     setIsLineBrowser(isLineInAppBrowser());
   }, []);
 
@@ -6004,6 +6063,22 @@ function AuthScreen({ onAuthSuccess }) {
     externalUrl.searchParams.set(LINE_GOOGLE_BRIDGE_QUERY_KEY, '1');
     externalUrl.searchParams.set(LINE_EXTERNAL_QUERY_KEY, '1');
     const href = externalUrl.toString();
+
+    if (window.liff?.openWindow) {
+      try {
+        window.liff.openWindow({
+          url: href,
+          external: true,
+        });
+        return true;
+      } catch {}
+    }
+
+    try {
+      window.location.href = `https://line.me/R/openurl/?url=${encodeURIComponent(href)}`;
+      return true;
+    } catch {}
+
     const openedWindow = window.open(href, '_blank', 'noopener,noreferrer');
     if (openedWindow) return true;
     try {
@@ -6280,16 +6355,7 @@ function AuthScreen({ onAuthSuccess }) {
     setError('');
     setSuccess('');
 
-    if (!isLoginMode && !acceptTerms && !isLineGoogleBridgeFlow) {
-      void popup.alert({
-        title: 'Please Accept Terms First',
-        message: 'Please read Terms of Service and Privacy Policy, then tick I accept before registering with Google.',
-      });
-      openLegalModal('terms');
-      return;
-    }
-
-    if (isLineBrowser && lineLinkToken) {
+    if (isLineBrowser) {
       if (!lineBridgeMode) {
         activateLineBridgeMode();
       }
@@ -6300,6 +6366,15 @@ function AuthScreen({ onAuthSuccess }) {
       if (!opened) {
         setError('Unable to open external browser. Please allow popups and try again.');
       }
+      return;
+    }
+
+    if (!isLoginMode && !acceptTerms && !isLineGoogleBridgeFlow) {
+      void popup.alert({
+        title: 'Please Accept Terms First',
+        message: 'Please read Terms of Service and Privacy Policy, then tick I accept before registering with Google.',
+      });
+      openLegalModal('terms');
       return;
     }
 
