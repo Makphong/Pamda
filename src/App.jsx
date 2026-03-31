@@ -1662,7 +1662,7 @@ const LEGAL_DOCS = {
   terms: {
     title: 'Terms of Service',
     summary:
-      'These terms describe the rules for using PM Calendar, including account responsibility, acceptable use, and service limitations.',
+      'These terms describe the rules for using PAMDA, including account responsibility, acceptable use, and service limitations.',
     sections: [
       {
         heading: '1) Account Responsibility',
@@ -1689,7 +1689,7 @@ const LEGAL_DOCS = {
   privacy: {
     title: 'Privacy Policy',
     summary:
-      'This policy explains what information PM Calendar collects, how it is used, and how we protect your data.',
+      'This policy explains what information PAMDA collects, how it is used, and how we protect your data.',
     sections: [
       {
         heading: '1) Data We Collect',
@@ -5732,7 +5732,7 @@ function LegalPrivacyTermsPage() {
   const termsSections = [
     {
       heading: '1) การยอมรับข้อกำหนด',
-      text: 'การเข้าใช้งานเว็บไซต์และบริการ PM Calendar ถือว่าคุณยอมรับข้อกำหนดการใช้งานและนโยบายความเป็นส่วนตัวฉบับนี้ทั้งหมด',
+      text: 'การเข้าใช้งานเว็บไซต์และบริการ PAMDA ถือว่าคุณยอมรับข้อกำหนดการใช้งานและนโยบายความเป็นส่วนตัวฉบับนี้ทั้งหมด',
     },
     {
       heading: '2) การมีสิทธิ์ใช้งานบัญชี',
@@ -5971,7 +5971,7 @@ function AuthScreen({ onAuthSuccess }) {
         setSuccess('No account found for this Google email. Please register first.');
         void popup.alert({
           title: 'Please Register First',
-          message: 'No PM Calendar account was found for this Google email. Please complete registration first.',
+          message: 'No PAMDA account was found for this Google email. Please complete registration first.',
         });
         return;
       }
@@ -6218,10 +6218,20 @@ function AuthScreen({ onAuthSuccess }) {
     <div className="min-h-screen bg-gradient-to-br from-blue-100 via-slate-100 to-cyan-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md rounded-2xl bg-white shadow-xl border border-blue-100 overflow-hidden">
         <div className="bg-blue-600 px-6 py-5 text-white">
-          <h1 className="text-2xl font-bold">PM Calendar</h1>
-          <p className="text-blue-100 text-sm mt-1">
-            {isLoginMode ? 'Sign in to continue' : 'Create account with email verification'}
-          </p>
+          <div className="flex items-center gap-4">
+            <img
+              src="/pamdalogin.svg"
+              alt="PAMDA logo"
+              className="w-12 h-12 shrink-0 object-contain"
+              style={{ transform: 'scale(1.35)', transformOrigin: 'center' }}
+              loading="eager"
+              decoding="async"
+            />
+            <div className="ml-2">
+              <h1 className="text-2xl font-bold">PAMDA</h1>
+              <p className="text-blue-100 text-sm mt-1">Project manager tool</p>
+            </div>
+          </div>
         </div>
 
         <div className="p-6">

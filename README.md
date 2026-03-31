@@ -1,4 +1,4 @@
-# PM Calendar
+﻿# PAMDA
 
 <div align="center">
   <a href="https://www.pamda.space" target="_blank">
@@ -17,7 +17,7 @@
 
 ## 1) What Is This Project?
 
-PM Calendar is a team productivity platform that combines:
+PAMDA is a team productivity platform that combines:
 
 - Multi-project calendar planning (split and merge view)
 - Team collaboration with role-based project access
@@ -269,4 +269,5 @@ If successful, open:
 - `VITE_GOOGLE_CLIENT_ID` must be a full value ending with `.apps.googleusercontent.com`
 - OAuth client type must be **Web application**
 - Authorized JavaScript origins must exactly match the frontend URL
+
 

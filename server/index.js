@@ -1,4 +1,4 @@
-import cors from 'cors';
+﻿import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import nodemailer from 'nodemailer';
@@ -1117,7 +1117,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
           ? [
               {
                 type: 'text',
-                text: clampLineText(`Task ใหญ่: ${parentTaskTitle}`, 180),
+                text: clampLineText(`Task à¹ƒà¸«à¸à¹ˆ: ${parentTaskTitle}`, 180),
                 size: 'xs',
                 color: '#64748b',
                 wrap: true,
@@ -1150,7 +1150,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
 };
 
 const buildLineCardFlexMessage = ({
-  headerLabel = 'PM Calendar',
+  headerLabel = 'PAMDA',
   altText,
   title,
   subtitle,
@@ -1160,9 +1160,9 @@ const buildLineCardFlexMessage = ({
   rows = [],
   footerNote = '',
 }) => {
-  const safeHeaderLabel = clampLineText(headerLabel, 50) || 'PM Calendar';
-  const safeAltText = clampLineText(altText, 380) || 'PM Calendar update';
-  const safeTitle = clampLineText(title, 64) || 'PM Calendar';
+  const safeHeaderLabel = clampLineText(headerLabel, 50) || 'PAMDA';
+  const safeAltText = clampLineText(altText, 380) || 'PAMDA update';
+  const safeTitle = clampLineText(title, 64) || 'PAMDA';
   const safeSubtitle = clampLineText(subtitle, 120);
   const safeStatLabel = clampLineText(statLabel, 32);
   const safeStatValue = clampLineText(statValue, 42);
@@ -1280,7 +1280,7 @@ const buildLineAnnouncementMessage = ({ projectName, message }) => {
   const content = clampLineMultilineText(message, 700) || '-';
   return {
     type: 'flex',
-    altText: clampLineText(`[PM Calendar] ${safeProjectName}: ${content}`, 360),
+    altText: clampLineText(`[PAMDA] ${safeProjectName}: ${content}`, 360),
     contents: {
       type: 'bubble',
       size: 'mega',
@@ -1342,7 +1342,7 @@ const buildLineOpenTasksDigestMessage = ({
       : `Total ${taskRows.totalCount} tasks`;
   return buildLineCardFlexMessage({
     headerLabel: safeProjectName,
-    altText: `[PM Calendar] Open tasks ${safeProjectName} (${taskRows.totalCount})`,
+    altText: `[PAMDA] Open tasks ${safeProjectName} (${taskRows.totalCount})`,
     title: 'Open Task Summary',
     accentColor: '#2563eb',
     statLabel: 'Open Tasks',
@@ -1378,7 +1378,7 @@ const buildLineReminderMessage = ({
       : `Total ${taskRows.totalCount} tasks`;
   return buildLineCardFlexMessage({
     headerLabel: safeProjectName,
-    altText: `[PM Calendar] Due in ${safeDaysBefore} day(s) ${safeProjectName} (${taskRows.totalCount})`,
+    altText: `[PAMDA] Due in ${safeDaysBefore} day(s) ${safeProjectName} (${taskRows.totalCount})`,
     title: `Tasks Due in ${safeDaysBefore} day${safeDaysBefore > 1 ? 's' : ''}`,
     subtitle,
     accentColor: '#f59e0b',
@@ -2846,7 +2846,7 @@ const buildAiContextSummary = ({ payload, userId, username }) => {
 const buildAiAssistantSystemPrompt = ({ contextSummary }) => {
   const contextText = JSON.stringify(contextSummary);
   return [
-    'You are PM Calendar AI assistant.',
+    'You are PAMDA AI assistant.',
     'Answer in concise Thai by default.',
     'Use tools when a tool can improve accuracy.',
     'Never invent project/task/event ids.',
@@ -2892,7 +2892,7 @@ const getAiImageInputPartsFromAttachments = (attachmentsInput) => {
 const buildOpenAiUserMessageWithAttachments = ({ textInput, attachmentsInput }) => {
   const text =
     sanitizeAiMessageContent(textInput, 12000) ||
-    'โปรดวิเคราะห์รูปที่ผู้ใช้แนบมาพร้อมบริบทของโปรเจกต์';
+    'à¹‚à¸›à¸£à¸”à¸§à¸´à¹€à¸„à¸£à¸²à¸°à¸«à¹Œà¸£à¸¹à¸›à¸—à¸µà¹ˆà¸œà¸¹à¹‰à¹ƒà¸Šà¹‰à¹à¸™à¸šà¸¡à¸²à¸žà¸£à¹‰à¸­à¸¡à¸šà¸£à¸´à¸šà¸—à¸‚à¸­à¸‡à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ';
   const imageParts = getAiImageInputPartsFromAttachments(attachmentsInput);
   if (imageParts.length === 0) {
     return buildOpenAiInputMessage('user', text);
@@ -3115,7 +3115,7 @@ const runAiAssistant = async ({
     if (shouldAppendCurrentUserMessage) {
       fallbackInput.pop();
       const imageCount = attachedImageParts.length;
-      const fallbackText = `${String(userMessage || '').trim()}\n\n[แนบรูป ${imageCount} ไฟล์]`;
+      const fallbackText = `${String(userMessage || '').trim()}\n\n[à¹à¸™à¸šà¸£à¸¹à¸› ${imageCount} à¹„à¸Ÿà¸¥à¹Œ]`;
       fallbackInput.push(buildOpenAiInputMessage('user', fallbackText));
     }
     response = await callOpenAiResponsesApi({
@@ -3157,8 +3157,8 @@ const runAiAssistant = async ({
   const assistantText =
     assistantTextRaw ||
     (pendingAction
-      ? 'ร่างคำสั่งพร้อมแล้ว กรุณากดยืนยันเพื่อให้ระบบดำเนินการ'
-      : 'ขออภัย ระบบยังไม่สามารถสร้างคำตอบได้ในขณะนี้');
+      ? 'à¸£à¹ˆà¸²à¸‡à¸„à¸³à¸ªà¸±à¹ˆà¸‡à¸žà¸£à¹‰à¸­à¸¡à¹à¸¥à¹‰à¸§ à¸à¸£à¸¸à¸“à¸²à¸à¸”à¸¢à¸·à¸™à¸¢à¸±à¸™à¹€à¸žà¸·à¹ˆà¸­à¹ƒà¸«à¹‰à¸£à¸°à¸šà¸šà¸”à¸³à¹€à¸™à¸´à¸™à¸à¸²à¸£'
+      : 'à¸‚à¸­à¸­à¸ à¸±à¸¢ à¸£à¸°à¸šà¸šà¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸ªà¸£à¹‰à¸²à¸‡à¸„à¸³à¸•à¸­à¸šà¹„à¸”à¹‰à¹ƒà¸™à¸‚à¸“à¸°à¸™à¸µà¹‰');
   return {
     assistantText: sanitizeAiMessageContent(assistantText, 12000),
     pendingAction,
@@ -3570,10 +3570,10 @@ const sendOtpEmail = async (email, code) => {
   await mailer.sendMail({
     from: process.env.OTP_FROM_EMAIL,
     to: email,
-    subject: 'Your PM Calendar OTP Code',
+    subject: 'Your PAMDA OTP Code',
     text: `Your OTP code is ${code}. It will expire in ${OTP_TTL_MINUTES} minutes.`,
     html: `<div style="font-family:Arial,sans-serif">
-      <h2>PM Calendar Email Verification</h2>
+      <h2>PAMDA Email Verification</h2>
       <p>Your OTP code is:</p>
       <p style="font-size:28px;font-weight:bold;letter-spacing:4px">${code}</p>
       <p>This code expires in ${OTP_TTL_MINUTES} minutes.</p>
@@ -3656,8 +3656,8 @@ const sendTaskCommentNotificationEmail = async ({
     .slice(0, TASK_COMMENT_NOTIFY_MAX_TEXT_LENGTH);
   const isReply = normalizeTaskCommentNotifyMode(mode) === 'reply';
   const subject = isReply
-    ? `[PM Calendar] Reply on task: ${safeTaskTitle}`
-    : `[PM Calendar] New comment on task: ${safeTaskTitle}`;
+    ? `[PAMDA] Reply on task: ${safeTaskTitle}`
+    : `[PAMDA] New comment on task: ${safeTaskTitle}`;
   const headline = isReply ? 'You have a new reply on a task comment.' : 'You have a new task comment.';
   await mailer.sendMail({
     from: process.env.OTP_FROM_EMAIL,
@@ -3938,7 +3938,7 @@ app.post('/auth/google', async (req, res) => {
     if (!user) {
       if (authMode === 'login') {
         return res.status(404).json({
-          message: 'No PM Calendar account found for this Google email. Please register first.',
+          message: 'No PAMDA account found for this Google email. Please register first.',
           code: 'ACCOUNT_NOT_FOUND',
         });
       }
@@ -4103,7 +4103,7 @@ app.get('/google/calendar/callback', async (req, res) => {
     if (userSnapshot.empty) {
       return sendGoogleCalendarPopupResponse(res, {
         ok: false,
-        message: 'Invalid or expired Google Calendar linking state. Please close this window and start linking again from PM Calendar.',
+        message: 'Invalid or expired Google Calendar linking state. Please close this window and start linking again from PAMDA.',
       });
     }
 
@@ -4121,7 +4121,7 @@ app.get('/google/calendar/callback', async (req, res) => {
       );
       return sendGoogleCalendarPopupResponse(res, {
         ok: false,
-        message: 'Google Calendar linking request expired. Please close this window and try linking again from PM Calendar.',
+        message: 'Google Calendar linking request expired. Please close this window and try linking again from PAMDA.',
       });
     }
 
@@ -5840,7 +5840,7 @@ app.post('/line/webhook', async (req, res) => {
         isLineGroupIdCommand(messageText);
       if (shouldReplyGroupId && event?.replyToken) {
         const helperText = [
-          'PM Calendar LINE Group ID',
+          'PAMDA LINE Group ID',
           groupId,
           '',
           'Paste this value into Manage Project > Announcements > LINE Reminder.',
@@ -6457,19 +6457,19 @@ app.post('/ai/threads/:threadId/confirm-action', requireAuth, async (req, res) =
     let assistantText = '';
     let actionResult = null;
     if (decision === 'cancel') {
-      assistantText = 'ยกเลิกคำสั่งเรียบร้อยแล้ว';
+      assistantText = 'à¸¢à¸à¹€à¸¥à¸´à¸à¸„à¸³à¸ªà¸±à¹ˆà¸‡à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§';
     } else if (pendingAction.type === AI_ACTION_TYPES.CREATE_TASK) {
       actionResult = await executeAiCreateTaskAction({
         userId,
         actionPayload: pendingAction.payload,
       });
-      assistantText = `สร้าง Task "${actionResult?.task?.title || ''}" เรียบร้อยแล้ว`;
+      assistantText = `à¸ªà¸£à¹‰à¸²à¸‡ Task "${actionResult?.task?.title || ''}" à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§`;
     } else if (pendingAction.type === AI_ACTION_TYPES.DELETE_EVENT) {
       actionResult = await executeAiDeleteEventAction({
         userId,
         actionPayload: pendingAction.payload,
       });
-      assistantText = `ลบรายการ "${actionResult?.removed?.title || ''}" เรียบร้อยแล้ว`;
+      assistantText = `à¸¥à¸šà¸£à¸²à¸¢à¸à¸²à¸£ "${actionResult?.removed?.title || ''}" à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§`;
     } else if (pendingAction.type === AI_ACTION_TYPES.NOTIFY_OPEN_TASKS) {
       actionResult = await sendLineOpenTaskDigestForProject({
         userId,
@@ -6478,8 +6478,8 @@ app.post('/ai/threads/:threadId/confirm-action', requireAuth, async (req, res) =
       });
       assistantText =
         actionResult?.openTaskCount > 0
-          ? `ส่ง LINE open task summary แล้ว (${actionResult.openTaskCount} tasks)`
-          : 'ยังไม่มี Open task ที่ต้องส่งในตอนนี้';
+          ? `à¸ªà¹ˆà¸‡ LINE open task summary à¹à¸¥à¹‰à¸§ (${actionResult.openTaskCount} tasks)`
+          : 'à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µ Open task à¸—à¸µà¹ˆà¸•à¹‰à¸­à¸‡à¸ªà¹ˆà¸‡à¹ƒà¸™à¸•à¸­à¸™à¸™à¸µà¹‰';
     } else {
       throw new Error('Unsupported pending action type.');
     }
@@ -6726,3 +6726,4 @@ const port = Number(process.env.PORT || 8080);
 app.listen(port, () => {
   console.log(`Auth server listening on port ${port}`);
 });
+

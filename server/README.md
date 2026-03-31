@@ -1,4 +1,4 @@
-# PM Calendar Auth Server (Production)
+﻿# PAMDA Auth Server (Production)
 
 Backend service for:
 1. Email OTP verification (Gmail App Password)
@@ -206,3 +206,4 @@ gcloud run services update pm-calendar-auth \
   --region asia-southeast1 \
   --set-secrets=GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest
 ```
+
