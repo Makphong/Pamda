@@ -9446,12 +9446,15 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
   const [isAiLoadingThreads, setIsAiLoadingThreads] = useState(false);
   const [isAiLoadingMessages, setIsAiLoadingMessages] = useState(false);
   const [isAiSending, setIsAiSending] = useState(false);
+  const [isAiTypingIndicatorVisible, setIsAiTypingIndicatorVisible] = useState(false);
   const [isAiConfirming, setIsAiConfirming] = useState(false);
   const [deletingAiThreadId, setDeletingAiThreadId] = useState('');
   const aiThreadDropdownRef = useRef(null);
   const aiProjectScopePopupRef = useRef(null);
   const aiAttachmentInputRef = useRef(null);
   const aiMessagesEndRef = useRef(null);
+  const aiTypingIndicatorTimerRef = useRef(null);
+  const aiSendingStartedAtRef = useRef(0);
   const aiAssistantBubbleDragRef = useRef({
     pointerId: null,
     startX: 0,
@@ -10155,6 +10158,12 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       messageText ||
       `ช่วยวิเคราะห์ไฟล์แนบ ${attachmentPayload.length} ไฟล์ และสรุปสาระสำคัญแบบกระชับ`;
     setAiErrorMessage('');
+    if (aiTypingIndicatorTimerRef.current) {
+      window.clearTimeout(aiTypingIndicatorTimerRef.current);
+      aiTypingIndicatorTimerRef.current = null;
+    }
+    aiSendingStartedAtRef.current = Date.now();
+    setIsAiTypingIndicatorVisible(true);
     setIsAiSending(true);
     setAiInput('');
     setAiInputAttachments([]);
@@ -10216,6 +10225,16 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       setAiMessages((prev) => prev.filter((msg) => !String(msg.id || '').startsWith('temp-user-')));
     } finally {
       setIsAiSending(false);
+      const elapsedMs = Math.max(0, Date.now() - aiSendingStartedAtRef.current);
+      const remainingMs = Math.max(0, 700 - elapsedMs);
+      if (remainingMs > 0) {
+        aiTypingIndicatorTimerRef.current = window.setTimeout(() => {
+          setIsAiTypingIndicatorVisible(false);
+          aiTypingIndicatorTimerRef.current = null;
+        }, remainingMs);
+      } else {
+        setIsAiTypingIndicatorVisible(false);
+      }
     }
   }, [
     activeAiThreadId,
@@ -10336,7 +10355,16 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!isAiAssistantOpen) return;
     if (!aiMessagesEndRef.current) return;
     aiMessagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [isAiAssistantOpen, aiMessages, aiPendingAction, isAiSending, isAiConfirming]);
+  }, [isAiAssistantOpen, aiMessages, aiPendingAction, isAiSending, isAiConfirming, isAiTypingIndicatorVisible]);
+
+  useEffect(() => {
+    return () => {
+      if (aiTypingIndicatorTimerRef.current) {
+        window.clearTimeout(aiTypingIndicatorTimerRef.current);
+        aiTypingIndicatorTimerRef.current = null;
+      }
+    };
+  }, []);
   const handleAiAssistantBubblePointerDown = useCallback((event) => {
     if (!event) return;
     if (typeof event.button === 'number' && event.button !== 0) return;
@@ -14789,7 +14817,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 	                );
 	              })
 	            )}
-            {isAiSending && (
+            {isAiTypingIndicatorVisible && (
               <div className="flex justify-start">
                 <div className="inline-flex items-center gap-1 rounded-2xl border border-gray-200 bg-white px-3 py-2">
                   <span
