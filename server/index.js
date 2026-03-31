@@ -1568,11 +1568,70 @@ const sendLineReplyMessages = async ({ replyToken, message, messages }) => {
 const sendLineReplyMessage = async ({ replyToken, message, messages }) =>
   sendLineReplyMessages({ replyToken, message, messages });
 
+const LINE_CHAT_LOADING_DEBUG_MAX_USERS = 300;
+const lineChatLoadingDebugByUserId = new Map();
+const setLineChatLoadingDebugState = (chatIdInput, payloadInput = {}) => {
+  const chatId = String(chatIdInput || '').trim();
+  if (!chatId) return;
+  const payload =
+    payloadInput && typeof payloadInput === 'object' && !Array.isArray(payloadInput)
+      ? payloadInput
+      : {};
+  lineChatLoadingDebugByUserId.set(chatId, {
+    chatId,
+    ok: payload.ok === true,
+    status: Number.parseInt(String(payload.status || 0), 10) || 0,
+    reason: String(payload.reason || '').trim(),
+    detail: String(payload.detail || '').trim().slice(0, 300),
+    loadingSeconds: Number.parseInt(String(payload.loadingSeconds || 0), 10) || 0,
+    attemptedAt: new Date().toISOString(),
+  });
+  if (lineChatLoadingDebugByUserId.size > LINE_CHAT_LOADING_DEBUG_MAX_USERS) {
+    const oldestKey = lineChatLoadingDebugByUserId.keys().next().value;
+    if (oldestKey) {
+      lineChatLoadingDebugByUserId.delete(oldestKey);
+    }
+  }
+};
+const getLineChatLoadingDebugState = (chatIdInput) => {
+  const chatId = String(chatIdInput || '').trim();
+  if (!chatId) return null;
+  return lineChatLoadingDebugByUserId.get(chatId) || null;
+};
+const buildLineChatLoadingDebugMessage = (chatIdInput) => {
+  const chatId = String(chatIdInput || '').trim();
+  const state = getLineChatLoadingDebugState(chatId);
+  if (!state) {
+    return [
+      'LINE Loading Debug',
+      'no_data: ยังไม่มีประวัติการเรียก loading/start สำหรับผู้ใช้นี้',
+      '',
+      'ลองส่งข้อความธรรมดาอีก 1 ข้อความ แล้วพิมพ์ /loadingdebug ใหม่',
+    ].join('\n');
+  }
+  return [
+    'LINE Loading Debug',
+    `ok: ${state.ok ? 'true' : 'false'}`,
+    `status: ${state.status || '-'}`,
+    `reason: ${state.reason || '-'}`,
+    `loadingSeconds: ${state.loadingSeconds || '-'}`,
+    `attemptedAt: ${state.attemptedAt || '-'}`,
+    `detail: ${state.detail || '-'}`,
+  ].join('\n');
+};
+
 const startLineChatLoading = async ({ chatId, loadingSeconds = 8 }) => {
   const token = String(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || '').trim();
   const safeChatId = String(chatId || '').trim();
   const seconds = Math.max(5, Math.min(60, Number.parseInt(String(loadingSeconds || 8), 10) || 8));
-  if (!token || !safeChatId) return false;
+  if (!token || !safeChatId) {
+    setLineChatLoadingDebugState(safeChatId, {
+      ok: false,
+      reason: !token ? 'missing_channel_access_token' : 'missing_chat_id',
+      loadingSeconds: seconds,
+    });
+    return false;
+  }
   try {
     const response = await fetch('https://api.line.me/v2/bot/chat/loading/start', {
       method: 'POST',
@@ -1587,6 +1646,13 @@ const startLineChatLoading = async ({ chatId, loadingSeconds = 8 }) => {
     });
     if (!response.ok) {
       const responseText = String(await response.text()).trim();
+      setLineChatLoadingDebugState(safeChatId, {
+        ok: false,
+        status: response.status,
+        reason: 'line_api_error',
+        detail: responseText,
+        loadingSeconds: seconds,
+      });
       console.warn(
         `LINE chat loading start failed (${response.status})${
           responseText ? `: ${responseText.slice(0, 220)}` : ''
@@ -1594,8 +1660,20 @@ const startLineChatLoading = async ({ chatId, loadingSeconds = 8 }) => {
       );
       return false;
     }
+    setLineChatLoadingDebugState(safeChatId, {
+      ok: true,
+      status: response.status,
+      reason: 'ok',
+      loadingSeconds: seconds,
+    });
     return true;
   } catch (error) {
+    setLineChatLoadingDebugState(safeChatId, {
+      ok: false,
+      reason: 'request_error',
+      detail: String(error?.message || error || '').trim(),
+      loadingSeconds: seconds,
+    });
     console.warn('LINE chat loading start request error:', error?.message || error);
     // Best effort only.
     return false;
@@ -1619,6 +1697,20 @@ const isLineGroupIdCommand = (value) => {
     'linegroupid',
     '/gid',
     'gid',
+  ]).has(normalized);
+};
+
+const isLineLoadingDebugCommand = (value) => {
+  const normalized = normalizeLineCommandText(value);
+  return new Set([
+    '/loadingdebug',
+    'loadingdebug',
+    '/loading-debug',
+    'loading-debug',
+    '/debugloading',
+    'debugloading',
+    '/loadingstatus',
+    'loadingstatus',
   ]).has(normalized);
 };
 
@@ -7334,6 +7426,16 @@ const handleLineOaPrivateTextMessage = async ({
 }) => {
   const replyToken = String(event?.replyToken || '').trim();
   if (!replyToken || !lineUserId) return;
+
+  if (isLineLoadingDebugCommand(messageText)) {
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [{ type: 'text', text: buildLineChatLoadingDebugMessage(lineUserId) }],
+    });
+    return;
+  }
+
   const config = normalizeLineOaConfigRecord(lineOaConfig);
   if (!config.enabled) {
     await replyLineEventWithFallback({
