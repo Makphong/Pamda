@@ -3800,6 +3800,13 @@ const GOOGLE_CLIENT_ID = String(
     import.meta.env.VITE_GOOGLE_CLIENT_ID ||
     ''
 ).trim();
+const LINE_LIFF_ID = String(
+  RUNTIME_CONFIG.VITE_LINE_LIFF_ID ||
+    RUNTIME_CONFIG.LINE_LIFF_ID ||
+    import.meta.env.VITE_LINE_LIFF_ID ||
+    import.meta.env.VITE_LIFF_ID ||
+    ''
+).trim();
 const GOOGLE_CLIENT_ID_PATTERN = /^[0-9]+-[a-z0-9._-]+\.apps\.googleusercontent\.com$/i;
 const getGoogleClientConfigError = (clientId) => {
   const normalizedClientId = String(clientId || '').trim();
@@ -3907,6 +3914,104 @@ const getLineLinkTokenFromLocationUrl = (urlInput) =>
   readQueryValueFromLocationUrl(urlInput, LINE_LINK_TOKEN_QUERY_KEY);
 const getLineBridgeModeFromLocationUrl = (urlInput) =>
   readQueryValueFromLocationUrl(urlInput, LINE_GOOGLE_BRIDGE_QUERY_KEY) === '1';
+const LINE_LIFF_URL_ID_PATTERN = /liff\.line\.me\/([A-Za-z0-9_-]+)/i;
+const LINE_LIFF_SDK_SCRIPT_URL = 'https://static.line-scdn.net/liff/edge/2/sdk.js';
+const resolveLineLiffIdFromLocationUrl = (urlInput) => {
+  const url = urlInput instanceof URL ? urlInput : null;
+  const idFromConfig = String(LINE_LIFF_ID || '').trim();
+  if (!url) return idFromConfig;
+
+  const idFromQuery =
+    readQueryValueFromLocationUrl(url, 'liffId') ||
+    readQueryValueFromLocationUrl(url, 'liff_id') ||
+    '';
+  if (idFromQuery) return idFromQuery;
+
+  const referrerRaw =
+    readQueryValueFromLocationUrl(url, 'liff.referrer') ||
+    String(url.searchParams.get('liff.referrer') || '').trim();
+  if (referrerRaw) {
+    const decodedReferrer = safelyDecodeUriComponent(referrerRaw);
+    const referrerMatch = decodedReferrer.match(LINE_LIFF_URL_ID_PATTERN);
+    if (referrerMatch?.[1]) return String(referrerMatch[1]).trim();
+  }
+
+  const hrefMatch = String(url.href || '').match(LINE_LIFF_URL_ID_PATTERN);
+  if (hrefMatch?.[1]) return String(hrefMatch[1]).trim();
+
+  if (String(url.hostname || '').toLowerCase() === 'liff.line.me') {
+    const firstPathSegment = String(url.pathname || '')
+      .split('/')
+      .map((segment) => String(segment || '').trim())
+      .filter(Boolean)[0];
+    if (firstPathSegment) return firstPathSegment;
+  }
+
+  return idFromConfig;
+};
+const loadLineLiffSdk = async () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+  if (window.liff) return window.liff;
+
+  await new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${LINE_LIFF_SDK_SCRIPT_URL}"]`);
+    if (existing) {
+      if (window.liff) {
+        resolve();
+        return;
+      }
+      const readyState = String(existing.readyState || '').toLowerCase();
+      if (readyState === 'complete' || readyState === 'loaded') {
+        resolve();
+        return;
+      }
+      existing.addEventListener('load', resolve, { once: true });
+      existing.addEventListener('error', () => reject(new Error('Failed to load LINE LIFF SDK.')), {
+        once: true,
+      });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = LINE_LIFF_SDK_SCRIPT_URL;
+    script.async = true;
+    script.defer = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('Failed to load LINE LIFF SDK.'));
+    document.head.appendChild(script);
+  });
+
+  return window.liff || null;
+};
+const openUrlInLineExternalBrowser = async (urlInput) => {
+  if (typeof window === 'undefined') return false;
+  const targetUrl = String(urlInput || '').trim();
+  if (!targetUrl) return false;
+
+  try {
+    const liff = await loadLineLiffSdk();
+    const liffId = resolveLineLiffIdFromLocationUrl(getCurrentLocationUrl());
+    if (liff?.init && liffId) {
+      try {
+        await liff.init({ liffId });
+      } catch {}
+    }
+    if (liff?.openWindow) {
+      liff.openWindow({
+        url: targetUrl,
+        external: true,
+      });
+      return true;
+    }
+  } catch {}
+
+  try {
+    window.location.assign(`https://line.me/R/openurl/?url=${encodeURIComponent(targetUrl)}`);
+    return true;
+  } catch {}
+
+  return false;
+};
 const GOOGLE_CALENDAR_PROJECT_ID = '__google_calendar__';
 const GOOGLE_CALENDAR_PROJECT_META = {
   id: GOOGLE_CALENDAR_PROJECT_ID,
@@ -6056,7 +6161,7 @@ function AuthScreen({ onAuthSuccess }) {
     });
   }, [replaceUrlSearchParams]);
 
-  const openLineBridgeInExternalBrowser = useCallback(() => {
+  const openLineBridgeInExternalBrowser = useCallback(async () => {
     if (typeof window === 'undefined') return false;
     const externalUrl = getCurrentLocationUrl();
     if (!externalUrl) return false;
@@ -6064,20 +6169,8 @@ function AuthScreen({ onAuthSuccess }) {
     externalUrl.searchParams.set(LINE_EXTERNAL_QUERY_KEY, '1');
     const href = externalUrl.toString();
 
-    if (window.liff?.openWindow) {
-      try {
-        window.liff.openWindow({
-          url: href,
-          external: true,
-        });
-        return true;
-      } catch {}
-    }
-
-    try {
-      window.location.href = `https://line.me/R/openurl/?url=${encodeURIComponent(href)}`;
-      return true;
-    } catch {}
+    const openedByLine = await openUrlInLineExternalBrowser(href);
+    if (openedByLine) return true;
 
     const openedWindow = window.open(href, '_blank', 'noopener,noreferrer');
     if (openedWindow) return true;
@@ -6351,7 +6444,7 @@ function AuthScreen({ onAuthSuccess }) {
     await handleGoogleAuthPayload({ idToken });
   };
 
-  const handleGoogleButtonClick = () => {
+  const handleGoogleButtonClick = async () => {
     setError('');
     setSuccess('');
 
@@ -6362,7 +6455,7 @@ function AuthScreen({ onAuthSuccess }) {
       if (!isLoginMode) {
         setIsLoginMode(true);
       }
-      const opened = openLineBridgeInExternalBrowser();
+      const opened = await openLineBridgeInExternalBrowser();
       if (!opened) {
         setError('Unable to open external browser. Please allow popups and try again.');
       }
@@ -6591,13 +6684,13 @@ function AuthScreen({ onAuthSuccess }) {
     if (!isLineGoogleBridgeFlow) return;
     if (!lineLinkIsLinked) {
       if (isLineBrowser) {
-        const opened = openLineBridgeInExternalBrowser();
+        const opened = await openLineBridgeInExternalBrowser();
         if (!opened) {
           setError('Unable to open external browser. Please allow popups and try again.');
         }
         return;
       }
-      handleGoogleButtonClick();
+      await handleGoogleButtonClick();
       return;
     }
     if (isLineBrowser) {
