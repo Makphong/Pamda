@@ -1572,9 +1572,9 @@ const startLineChatLoading = async ({ chatId, loadingSeconds = 8 }) => {
   const token = String(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || '').trim();
   const safeChatId = String(chatId || '').trim();
   const seconds = Math.max(5, Math.min(60, Number.parseInt(String(loadingSeconds || 8), 10) || 8));
-  if (!token || !safeChatId) return;
+  if (!token || !safeChatId) return false;
   try {
-    await fetch('https://api.line.me/v2/bot/chat/loading/start', {
+    const response = await fetch('https://api.line.me/v2/bot/chat/loading/start', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -1585,8 +1585,20 @@ const startLineChatLoading = async ({ chatId, loadingSeconds = 8 }) => {
         loadingSeconds: seconds,
       }),
     });
-  } catch {
+    if (!response.ok) {
+      const responseText = String(await response.text()).trim();
+      console.warn(
+        `LINE chat loading start failed (${response.status})${
+          responseText ? `: ${responseText.slice(0, 220)}` : ''
+        }`
+      );
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn('LINE chat loading start request error:', error?.message || error);
     // Best effort only.
+    return false;
   }
 };
 
