@@ -3845,6 +3845,8 @@ const LINE_LINK_ACTION_QUERY_KEY = 'pamdaLineAction';
 const LINE_BRIDGE_ID_QUERY_KEY = 'pamdaLineBridgeId';
 const LINE_GOOGLE_BRIDGE_QUERY_KEY = 'pamdaLineGoogleBridge';
 const LINE_EXTERNAL_QUERY_KEY = 'pamdaLineExternal';
+const LINE_EXTERNAL_OPEN_FAILED_MESSAGE =
+  'LINE could not open your external browser from LIFF. Update LINE and enable "Open links in default browser" in LINE settings, then try again.';
 const WEB_APP_BASE_URL = String(
   RUNTIME_CONFIG.VITE_WEB_APP_BASE_URL ||
     RUNTIME_CONFIG.WEB_APP_BASE_URL ||
@@ -3858,10 +3860,6 @@ const isLineInAppBrowser = () => {
   if (typeof window === 'undefined') return false;
   const userAgent = String(window.navigator?.userAgent || '');
   return LINE_IN_APP_USER_AGENT_PATTERN.test(userAgent);
-};
-const isAndroidDevice = () => {
-  if (typeof window === 'undefined') return false;
-  return /\bAndroid\b/i.test(String(window.navigator?.userAgent || ''));
 };
 const getCurrentLocationUrl = () => {
   if (typeof window === 'undefined') return null;
@@ -3959,24 +3957,8 @@ const resolveLineBridgeBaseUrl = (urlInput) => {
   } catch {}
   const fallbackFromApiBase = getBridgeBaseUrlFromAuthApiBase();
   if (fallbackFromApiBase) return fallbackFromApiBase;
+  if (isLineLiffHostname(currentBaseUrl.hostname)) return null;
   return currentBaseUrl;
-};
-const buildLineOpenUrlLink = (urlInput) => {
-  const rawUrl = String(urlInput || '').trim();
-  if (!rawUrl) return '';
-  return `https://line.me/R/openurl/?url=${encodeURIComponent(rawUrl)}`;
-};
-const buildAndroidBrowserIntentLink = (urlInput) => {
-  const rawUrl = String(urlInput || '').trim();
-  if (!rawUrl) return '';
-  try {
-    const parsed = new URL(rawUrl);
-    const scheme = String(parsed.protocol || 'https:').replace(':', '') || 'https';
-    const pathWithQueryAndHash = `${parsed.pathname}${parsed.search}${parsed.hash}`;
-    return `intent://${parsed.host}${pathWithQueryAndHash}#Intent;scheme=${scheme};action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;end`;
-  } catch {
-    return '';
-  }
 };
 const readQueryValueFromLocationUrl = (urlInput, keyInput) => {
   const url = urlInput instanceof URL ? urlInput : null;
@@ -4093,7 +4075,6 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
   if (typeof window === 'undefined') return false;
   const targetUrl = String(urlInput || '').trim();
   if (!targetUrl) return false;
-  const isAndroid = isAndroidDevice();
   const withLineExternalBrowserHint = (rawUrlInput) => {
     const rawUrl = String(rawUrlInput || '').trim();
     if (!rawUrl) return '';
@@ -4108,14 +4089,6 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
   };
   const hintedUrl = withLineExternalBrowserHint(targetUrl);
   const candidateUrls = hintedUrl && hintedUrl !== targetUrl ? [targetUrl, hintedUrl] : [targetUrl];
-  const lineOpenUrlCandidates = candidateUrls
-    .map((candidateUrl) => buildLineOpenUrlLink(candidateUrl))
-    .filter(Boolean);
-  const androidIntentCandidates = isAndroid
-    ? candidateUrls
-        .map((candidateUrl) => buildAndroidBrowserIntentLink(candidateUrl))
-        .filter(Boolean)
-    : [];
 
   try {
     const liff = await loadLineLiffSdk();
@@ -4137,33 +4110,8 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
           return true;
         } catch {}
       }
-      for (const openUrlCandidate of lineOpenUrlCandidates) {
-        try {
-          await Promise.resolve(
-            liff.openWindow({
-              url: openUrlCandidate,
-              external: false,
-            })
-          );
-          return true;
-        } catch {}
-      }
     }
   } catch {}
-
-  for (const openUrlCandidate of lineOpenUrlCandidates) {
-    try {
-      window.location.assign(openUrlCandidate);
-      return true;
-    } catch {}
-  }
-
-  for (const intentCandidate of androidIntentCandidates) {
-    try {
-      window.location.assign(intentCandidate);
-      return true;
-    } catch {}
-  }
 
   try {
     const opened = window.open(targetUrl, '_blank', 'noopener,noreferrer');
@@ -6393,8 +6341,31 @@ function AuthScreen({ onAuthSuccess }) {
     return bridgeId;
   }, [lineLinkToken]);
 
+  const getLineBridgePrecheckError = useCallback(() => {
+    const currentUrl = getCurrentLocationUrl();
+    if (!currentUrl) {
+      return 'Unable to read current LIFF URL. Please reopen this page from LINE.';
+    }
+    const effectiveLineLiffId = resolveLineLiffIdFromLocationUrl(currentUrl);
+    if (!effectiveLineLiffId) {
+      return 'LINE LIFF ID is missing. Set VITE_LINE_LIFF_ID (or LINE_LIFF_ID) in runtime-config.js and redeploy.';
+    }
+    const effectiveLineLinkToken = String(lineLinkToken || '').trim();
+    const effectiveBridgeId = String(lineBridgeId || '').trim();
+    if (!effectiveLineLinkToken && !effectiveBridgeId) {
+      return 'LINE link token is missing. Please reopen login from LINE OA and try again.';
+    }
+    const bridgeUrl = buildLineBridgeExternalUrl(currentUrl, effectiveBridgeId, effectiveLineLinkToken);
+    if (!bridgeUrl) {
+      return 'Cannot resolve external web URL from LIFF. Set VITE_WEB_APP_BASE_URL in runtime-config.js (example: https://www.pamda.space).';
+    }
+    return '';
+  }, [lineBridgeId, lineLinkToken]);
+
   const openLineBridgeInExternalBrowser = useCallback(async () => {
     if (typeof window === 'undefined') return false;
+    const precheckError = getLineBridgePrecheckError();
+    if (precheckError) return false;
     const currentUrl = getCurrentLocationUrl();
     if (!currentUrl) return false;
     const effectiveLineLinkToken = String(lineLinkToken || '').trim();
@@ -6442,7 +6413,13 @@ function AuthScreen({ onAuthSuccess }) {
     } catch {
       return false;
     }
-  }, [lineBridgeId, lineLinkToken, createLineBridgeSessionId, replaceUrlSearchParams]);
+  }, [
+    lineBridgeId,
+    lineLinkToken,
+    createLineBridgeSessionId,
+    replaceUrlSearchParams,
+    getLineBridgePrecheckError,
+  ]);
 
   useEffect(() => {
     const effectiveBridgeId = String(lineBridgeId || '').trim();
@@ -6751,9 +6728,14 @@ function AuthScreen({ onAuthSuccess }) {
       if (!isLoginMode) {
         setIsLoginMode(true);
       }
+      const lineBridgePrecheckError = getLineBridgePrecheckError();
+      if (lineBridgePrecheckError) {
+        setError(lineBridgePrecheckError);
+        return;
+      }
       const opened = await openLineBridgeInExternalBrowser();
       if (!opened) {
-        setError('Unable to open external browser. Please check popup permission and deploy /line/oa/bridge-session on API.');
+        setError(LINE_EXTERNAL_OPEN_FAILED_MESSAGE);
       }
       return;
     }
@@ -6980,9 +6962,14 @@ function AuthScreen({ onAuthSuccess }) {
     if (!isLineGoogleBridgeFlow) return;
     if (!lineLinkIsLinked) {
       if (isLineBrowser) {
+        const lineBridgePrecheckError = getLineBridgePrecheckError();
+        if (lineBridgePrecheckError) {
+          setError(lineBridgePrecheckError);
+          return;
+        }
         const opened = await openLineBridgeInExternalBrowser();
         if (!opened) {
-          setError('Unable to open external browser. Please check popup permission and deploy /line/oa/bridge-session on API.');
+          setError(LINE_EXTERNAL_OPEN_FAILED_MESSAGE);
         }
         return;
       }
