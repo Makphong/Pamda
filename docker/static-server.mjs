@@ -82,7 +82,8 @@ const sendFile = async (req, res, filePath) => {
     'Content-Type': contentType,
   };
 
-  if (extension === '.html') {
+  const normalizedBaseName = path.basename(filePath).toLowerCase();
+  if (extension === '.html' || normalizedBaseName === 'runtime-config.js') {
     headers['Cache-Control'] = 'no-store';
   }
 
