@@ -1748,7 +1748,38 @@ const LINE_OA_INTERNAL_MESSAGES = Object.freeze({
   LOGOUT: '__PAMDA_LOGOUT__',
   FILTER_MERGE: '__PAMDA_FILTER_MERGE__',
   FILTER_PROJECT_PREFIX: '__PAMDA_FILTER_PROJECT__::',
+  CHAT_PROJECT_PREFIX: '__PAMDA_CHAT_PROJECT__::',
 });
+const LINE_OA_CHAT_PROJECT_DEFAULT_CODE = 'P0';
+const LINE_OA_CHAT_PROJECT_CODE_PATTERN = /^P\d+$/i;
+const normalizeLineOaChatProjectCode = (valueInput, fallbackInput = LINE_OA_CHAT_PROJECT_DEFAULT_CODE) => {
+  const fallback = LINE_OA_CHAT_PROJECT_CODE_PATTERN.test(String(fallbackInput || '').trim())
+    ? String(fallbackInput || '').trim().toUpperCase()
+    : LINE_OA_CHAT_PROJECT_DEFAULT_CODE;
+  const raw = String(valueInput || '').trim().toUpperCase();
+  if (!LINE_OA_CHAT_PROJECT_CODE_PATTERN.test(raw)) return fallback;
+  const numericPart = Number.parseInt(raw.slice(1), 10);
+  if (!Number.isInteger(numericPart) || numericPart < 0) return fallback;
+  return `P${numericPart}`;
+};
+const normalizeLineOaChatProjectCodeMap = (codeMapInput) =>
+  (Array.isArray(codeMapInput) ? codeMapInput : [])
+    .map((entryInput) => {
+      const entry = entryInput && typeof entryInput === 'object' && !Array.isArray(entryInput)
+        ? entryInput
+        : {};
+      const code = normalizeLineOaChatProjectCode(entry.code, '');
+      const projectId = String(entry.projectId || '').trim();
+      const projectName = clampLineMultilineText(String(entry.projectName || '').trim(), 160);
+      if (!code || !projectId || code === LINE_OA_CHAT_PROJECT_DEFAULT_CODE) return null;
+      return {
+        code,
+        projectId,
+        projectName,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 40);
 const DEFAULT_LINE_OA_COMMAND_MAP = Object.freeze({
   [LINE_OA_ACTIONS.A]: 'เข้า PAMDA',
   [LINE_OA_ACTIONS.B]: 'เช็คTask',
@@ -1883,6 +1914,8 @@ const normalizeLineOaChatSessionRecord = (recordInput) => {
     expiresAt: String(record.expiresAt || '').trim() || null,
     updatedAt: String(record.updatedAt || '').trim() || null,
     timeoutNotifiedAt: String(record.timeoutNotifiedAt || '').trim() || null,
+    chatProjectCode: normalizeLineOaChatProjectCode(record.chatProjectCode),
+    chatProjectMap: normalizeLineOaChatProjectCodeMap(record.chatProjectMap),
   };
 };
 const createLineOaLinkToken = ({ lineUserId, nextAction = '' }) => {
@@ -2066,6 +2099,9 @@ const resolveLineOaActionFromMessage = ({ config, messageText }) => {
   if (normalized.startsWith(normalizeLineCommandText(LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX))) {
     return LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX;
   }
+  if (normalized.startsWith(normalizeLineCommandText(LINE_OA_INTERNAL_MESSAGES.CHAT_PROJECT_PREFIX))) {
+    return LINE_OA_INTERNAL_MESSAGES.CHAT_PROJECT_PREFIX;
+  }
   const commandMap = normalizeLineOaCommandMap(config?.commands);
   for (const [actionKey, actionLabel] of Object.entries(commandMap)) {
     if (!actionLabel) continue;
@@ -2079,6 +2115,28 @@ const parseLineOaFilterProjectToggleMessage = (messageTextInput) => {
   const messageText = String(messageTextInput || '').trim();
   if (!messageText.startsWith(LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX)) return '';
   return String(messageText.slice(LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX.length) || '').trim();
+};
+const parseLineOaChatProjectSelectMessage = (messageTextInput) => {
+  const messageText = String(messageTextInput || '').trim();
+  if (!messageText.startsWith(LINE_OA_INTERNAL_MESSAGES.CHAT_PROJECT_PREFIX)) return '';
+  return normalizeLineOaChatProjectCode(
+    String(messageText.slice(LINE_OA_INTERNAL_MESSAGES.CHAT_PROJECT_PREFIX.length) || '').trim(),
+    ''
+  );
+};
+const extractLineOaChatProjectCodeFromMessage = (messageTextInput) => {
+  const messageText = String(messageTextInput || '').trim().toUpperCase();
+  if (!messageText) return '';
+  const matches = messageText.match(/\bP\d+\b/g);
+  if (!Array.isArray(matches) || matches.length === 0) return '';
+  return normalizeLineOaChatProjectCode(matches[matches.length - 1], '');
+};
+const isLineOaChatProjectSwitchOnlyMessage = (messageTextInput, codeInput = '') => {
+  const code = normalizeLineOaChatProjectCode(codeInput, '');
+  if (!code) return false;
+  const messageText = String(messageTextInput || '').trim().toUpperCase();
+  if (!messageText) return false;
+  return new RegExp(`^(?:เลือก|ใช้|SWITCH|SET)?\\s*${code}\\s*$`, 'i').test(messageText);
 };
 
 const normalizeGoogleEventColorId = (value) => {
@@ -2788,6 +2846,57 @@ const getPayloadProjects = (payloadInput) =>
 
 const getPayloadEvents = (payloadInput) => (Array.isArray(payloadInput?.events) ? payloadInput.events : []);
 
+const buildLineOaChatProjectCodeMapFromPayload = (payloadInput) =>
+  getPayloadProjects(payloadInput)
+    .map((project, index) => {
+      const projectId = String(project?.id || '').trim();
+      if (!projectId) return null;
+      return {
+        code: `P${index + 1}`,
+        projectId,
+        projectName: String(project?.name || projectId).trim() || projectId,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 40);
+
+const resolveLineOaChatProjectSelection = ({ payload, sessionRecord, preferredCodeInput = '' }) => {
+  const safePayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  const normalizedSession = normalizeLineOaChatSessionRecord(sessionRecord);
+  const projectMap = buildLineOaChatProjectCodeMapFromPayload(safePayload);
+  const mapByCode = new Map(projectMap.map((entry) => [entry.code, entry]));
+  const preferredCode = normalizeLineOaChatProjectCode(preferredCodeInput, '');
+  let selectedCode = preferredCode || normalizeLineOaChatProjectCode(normalizedSession.chatProjectCode);
+  if (selectedCode !== LINE_OA_CHAT_PROJECT_DEFAULT_CODE && !mapByCode.has(selectedCode)) {
+    selectedCode = LINE_OA_CHAT_PROJECT_DEFAULT_CODE;
+  }
+  const selectedProject = selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE
+    ? null
+    : getProjectByIdFromPayload(safePayload, mapByCode.get(selectedCode)?.projectId);
+  const selectedProjectId = String(selectedProject?.id || '').trim();
+  const selectedProjectName = String(selectedProject?.name || selectedProjectId || '').trim();
+  return {
+    projectMap,
+    selectedCode,
+    selectedProjectId,
+    selectedProjectName,
+    isMergeView: selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || !selectedProjectId,
+  };
+};
+
+const applyLineOaChatProjectSelectionToPayload = ({ payload, selection }) => {
+  const safePayload = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+  const selectedProjectId = String(selection?.selectedProjectId || '').trim();
+  if (!selectedProjectId || selection?.isMergeView) return safePayload;
+  return applyAiProjectScopeToPayload({
+    payload: safePayload,
+    scope: {
+      mode: AI_PROJECT_SCOPE_MODES.SELECTED,
+      projectIds: [selectedProjectId],
+    },
+  });
+};
+
 const getProjectByIdFromPayload = (payloadInput, projectIdInput) => {
   const projectId = String(projectIdInput || '').trim();
   if (!projectId) return null;
@@ -3378,6 +3487,27 @@ const buildAiRequestContextNote = ({ payload, scope, attachments }) => {
     });
   }
   return sanitizeAiMessageContent(lines.join('\n'), 12000);
+};
+
+const buildLineOaChatProjectContextNote = (selectionInput) => {
+  const selection = selectionInput && typeof selectionInput === 'object' ? selectionInput : {};
+  const selectedCode = normalizeLineOaChatProjectCode(selection.selectedCode);
+  const lines = [
+    'LINE chat project-code mode is enabled.',
+    `Current active code: ${selectedCode}`,
+    `${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} means merge view (overall context across multiple projects).`,
+  ];
+  if (selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || selection.isMergeView) {
+    lines.push(
+      'Mutation policy: in P0, do not create/update/delete task or event. Ask user to choose P1 or above first.'
+    );
+  } else if (selection.selectedProjectId) {
+    lines.push(
+      `Current scoped project: ${selection.selectedProjectId} (${String(selection.selectedProjectName || '').trim() || 'project'})`
+    );
+    lines.push('When user asks action without project id, treat current scoped project as default target.');
+  }
+  return sanitizeAiMessageContent(lines.join('\n'), 2000);
 };
 
 const toDateTimeMs = (dateInput, timeInput, endOfDayFallback = false) => {
@@ -4347,7 +4477,29 @@ const runLineOaGeminiAssistant = async ({
   userMessage,
   history = [],
   authUsername = '',
+  chatProjectSelection = null,
+  allowMutatingActions = true,
 }) => {
+  const selection = chatProjectSelection && typeof chatProjectSelection === 'object'
+    ? chatProjectSelection
+    : {};
+  const selectionCode = normalizeLineOaChatProjectCode(selection.selectedCode);
+  const selectionScopeLine =
+    selectionCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || selection.isMergeView
+      ? `${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} (merge view)`
+      : `${selectionCode} (${String(selection.selectedProjectName || selection.selectedProjectId || '').trim() || 'selected project'})`;
+  const projectCodeLines = [
+    `${LINE_OA_CHAT_PROJECT_DEFAULT_CODE}=Merge view`,
+    ...(Array.isArray(selection.projectMap) ? selection.projectMap : [])
+      .map((entry) => {
+        const code = normalizeLineOaChatProjectCode(entry?.code, '');
+        const projectId = String(entry?.projectId || '').trim();
+        const projectName = String(entry?.projectName || '').trim();
+        if (!code || !projectId) return '';
+        return `${code}=${projectName || projectId} (${projectId})`;
+      })
+      .filter(Boolean),
+  ].join(' | ');
   const contextSummary = buildAiContextSummary({
     payload,
     userId,
@@ -4357,11 +4509,17 @@ const runLineOaGeminiAssistant = async ({
     'You are PAMDA LINE OA private assistant.',
     'Always answer in Thai.',
     'Return strict JSON object only with this shape:',
-    '{"replyText":"string","action":{"type":"none|create_task|delete_event|notify_open_tasks","payload":{}}}',
+    '{"replyText":"string","action":{"type":"none|create_task|create_event|delete_event|notify_open_tasks","payload":{}}}',
     'If no action is needed, set action.type = "none".',
     'If user asks to create a task, include create_task payload with projectId or projectHint and title.',
+    'If user asks to create an event, include create_event payload with title (+ startDate/startTime/endDate/endTime when known).',
     'If user asks to delete/remove task/event, include delete_event payload with eventId or titleContains (+projectId when known).',
     'If user asks to notify LINE group open tasks, include notify_open_tasks payload with projectId.',
+    `Project code mode is enabled. Active code: ${selectionScopeLine}.`,
+    `Project code map: ${projectCodeLines}`,
+    allowMutatingActions
+      ? 'Mutation actions are allowed in current scope.'
+      : `Mutation guard: action type create_task/create_event/delete_event is forbidden when active code is ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE}.`,
     'Never fabricate ids. If unsure, ask follow-up in replyText and keep action.type as "none".',
     'Context summary JSON:',
     JSON.stringify(contextSummary),
@@ -4379,12 +4537,21 @@ const runLineOaGeminiAssistant = async ({
   const actionPayload = action.payload && typeof action.payload === 'object' ? action.payload : {};
   let actionResult = null;
   let actionErrorMessage = '';
+  const isMutationAction = actionType === 'create_task' || actionType === 'create_event' || actionType === 'delete_event';
+  const fallbackProjectFromScope = (() => {
+    const projects = getPayloadProjects(payload);
+    if (projects.length !== 1) return null;
+    return projects[0];
+  })();
 
   try {
-    if (actionType === 'create_task') {
+    if (!allowMutatingActions && isMutationAction) {
+      actionErrorMessage = `โหมด ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} ใช้ดูภาพรวมเท่านั้น กรุณาเลือกโปรเจกต์ P1, P2, ... ก่อนสั่งเพิ่ม/ลบข้อมูล`;
+    } else if (actionType === 'create_task') {
       const matchedProject =
         getProjectByIdFromPayload(payload, actionPayload.projectId) ||
-        resolveAiProjectByHint(payload, actionPayload.projectHint);
+        resolveAiProjectByHint(payload, actionPayload.projectHint) ||
+        fallbackProjectFromScope;
       const title = sanitizeAiMessageContent(actionPayload.title, 220);
       if (!matchedProject || !title) {
         actionErrorMessage = !matchedProject
@@ -4392,6 +4559,26 @@ const runLineOaGeminiAssistant = async ({
           : 'ยังไม่มีชื่องานที่ชัดเจน';
       } else {
         actionResult = await executeAiCreateTaskAction({
+          userId,
+          actionPayload: {
+            ...actionPayload,
+            projectId: String(matchedProject.id || '').trim(),
+            title,
+          },
+        });
+      }
+    } else if (actionType === 'create_event') {
+      const matchedProject =
+        getProjectByIdFromPayload(payload, actionPayload.projectId) ||
+        resolveAiProjectByHint(payload, actionPayload.projectHint) ||
+        fallbackProjectFromScope;
+      const title = sanitizeAiMessageContent(actionPayload.title, 220);
+      if (!matchedProject || !title) {
+        actionErrorMessage = !matchedProject
+          ? 'ยังไม่พบโปรเจกต์ที่ต้องการสร้าง Event'
+          : 'ยังไม่มีชื่อ Event ที่ชัดเจน';
+      } else {
+        actionResult = await executeAiCreateEventAction({
           userId,
           actionPayload: {
             ...actionPayload,
@@ -4438,6 +4625,8 @@ const runLineOaGeminiAssistant = async ({
   let assistantText = replyText || 'รับทราบครับ';
   if (actionResult?.task?.title) {
     assistantText = `${assistantText}\n\nสร้าง Task "${actionResult.task.title}" เรียบร้อยแล้ว`;
+  } else if (actionResult?.event?.title) {
+    assistantText = `${assistantText}\n\nสร้าง Event "${actionResult.event.title}" เรียบร้อยแล้ว`;
   } else if (actionResult?.removed?.title) {
     assistantText = `${assistantText}\n\nลบรายการ "${actionResult.removed.title}" เรียบร้อยแล้ว`;
   } else if (actionResult?.openTaskCount >= 0) {
@@ -4604,6 +4793,98 @@ const executeAiCreateTaskAction = async ({ userId, actionPayload }) => {
       title,
       projectId,
       projectName: String(targetProject?.name || projectId).trim(),
+      endDate,
+      endTime,
+    },
+  };
+};
+
+const executeAiCreateEventAction = async ({ userId, actionPayload }) => {
+  const payload = await readAccountPayloadFromStore(userId);
+  const projects = getPayloadProjects(payload);
+  const events = getPayloadEvents(payload);
+  const projectId = String(actionPayload?.projectId || '').trim();
+  const targetProject = projects.find((project) => String(project?.id || '').trim() === projectId);
+  if (!targetProject) {
+    throw new Error('Project not found for event creation.');
+  }
+  const nowIso = new Date().toISOString();
+  const title = sanitizeAiMessageContent(actionPayload?.title, 220);
+  if (!title) {
+    throw new Error('Event title is required.');
+  }
+  const todayIso = getIsoDateInTimeZone(new Date(), DEFAULT_LINE_REMINDER_TIMEZONE);
+  const startDate = normalizeIsoDate(actionPayload?.startDate) || todayIso;
+  let endDate = normalizeIsoDate(actionPayload?.endDate) || startDate;
+  let startTime = normalizeIsoTime(actionPayload?.startTime) || '09:00';
+  let endTime = normalizeIsoTime(actionPayload?.endTime) || '10:00';
+  if (endDate < startDate) {
+    endDate = startDate;
+  }
+  if (endDate === startDate && endTime <= startTime) {
+    const startHour = Number.parseInt(startTime.slice(0, 2), 10);
+    const startMinute = Number.parseInt(startTime.slice(3, 5), 10);
+    const fallbackEnd = new Date(Date.UTC(2000, 0, 1, startHour, startMinute, 0, 0) + 60 * 60000);
+    const hh = String(fallbackEnd.getUTCHours()).padStart(2, '0');
+    const mm = String(fallbackEnd.getUTCMinutes()).padStart(2, '0');
+    endTime = `${hh}:${mm}`;
+    if (endTime <= startTime) {
+      endDate = shiftIsoDateByDays(startDate, 1) || startDate;
+    }
+  }
+
+  const eventId = buildAiId();
+  const eventRecord = {
+    id: eventId,
+    recordType: 'event',
+    projectId,
+    title,
+    description: sanitizeAiMessageContent(actionPayload?.description, 2000),
+    location: sanitizeAiMessageContent(actionPayload?.location, 200),
+    startDate,
+    startTime,
+    endDate,
+    endTime,
+    department: String(actionPayload?.department || '').trim(),
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+  const nextEvents = [...events, eventRecord];
+  const nextProjects = projects.map((project) => {
+    if (String(project?.id || '').trim() !== projectId) return project;
+    const feed = Array.isArray(project?.changeFeed) ? project.changeFeed : [];
+    const nextFeed = [
+      {
+        id: buildAiId(),
+        type: 'event_created',
+        title,
+        message: 'AI assistant created an event.',
+        actorUsername: 'pm_ai',
+        actorId: 'pm_ai',
+        createdAt: nowIso,
+      },
+      ...feed,
+    ].slice(0, 160);
+    return {
+      ...project,
+      changeFeed: nextFeed,
+      updatedAt: nowIso,
+    };
+  });
+  const nextPayload = {
+    ...payload,
+    projects: nextProjects,
+    events: nextEvents,
+  };
+  await writeAccountPayloadToStore(userId, nextPayload);
+  return {
+    event: {
+      id: eventId,
+      title,
+      projectId,
+      projectName: String(targetProject?.name || projectId).trim(),
+      startDate,
+      startTime,
       endDate,
       endTime,
     },
@@ -7197,6 +7478,8 @@ app.post('/line/oa/link', requireAuth, async (req, res) => {
       history: [],
       expiresAt: null,
       timeoutNotifiedAt: null,
+      chatProjectCode: LINE_OA_CHAT_PROJECT_DEFAULT_CODE,
+      chatProjectMap: [],
     });
     clearLineOaSessionTimeoutTimer(context.lineUserId);
     return res.json({
@@ -7375,7 +7658,123 @@ const buildLineOaDailyUpdatesMessage = ({ payload, scope }) => {
   });
 };
 
-const buildLineOaChatModeEnabledMessage = ({ timeoutMs = LINE_OA_CHAT_TIMEOUT_MS }) =>
+const buildLineOaChatProjectScopeLabel = (selectionInput) => {
+  const selection = selectionInput && typeof selectionInput === 'object' ? selectionInput : {};
+  const selectedCode = normalizeLineOaChatProjectCode(selection.selectedCode);
+  if (selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || selection.isMergeView) {
+    return `${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} = Merge view (ภาพรวมทุกโปรเจกต์)`;
+  }
+  const name = String(selection.selectedProjectName || '').trim();
+  return `${selectedCode} = ${name || 'Selected project'}`;
+};
+
+const buildLineOaChatProjectSummaryLines = (selectionInput, maxLines = 14) => {
+  const selection = selectionInput && typeof selectionInput === 'object' ? selectionInput : {};
+  const safeMax = Math.max(4, Math.min(30, Number.parseInt(String(maxLines || 14), 10) || 14));
+  const lines = [`${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} = Merge view (ดูรวมทุกโปรเจกต์)`];
+  const projectMap = Array.isArray(selection.projectMap) ? selection.projectMap : [];
+  projectMap.slice(0, safeMax - 1).forEach((entry) => {
+    const code = normalizeLineOaChatProjectCode(entry?.code, '');
+    const projectName = String(entry?.projectName || entry?.projectId || '').trim();
+    if (!code || !projectName) return;
+    lines.push(`${code} = ${projectName}`);
+  });
+  if (projectMap.length > safeMax - 1) {
+    lines.push(`...และอีก ${projectMap.length - (safeMax - 1)} โปรเจกต์ (พิมพ์โค้ดเช่น P11 ได้)`);
+  }
+  return lines.join('\n');
+};
+
+const buildLineOaChatProjectPickerMessage = ({ selectionInput }) => {
+  const selection = selectionInput && typeof selectionInput === 'object' ? selectionInput : {};
+  const selectedCode = normalizeLineOaChatProjectCode(selection.selectedCode);
+  const allProjectButtons = [
+    {
+      code: LINE_OA_CHAT_PROJECT_DEFAULT_CODE,
+      label: `${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} Merge view`,
+    },
+    ...(Array.isArray(selection.projectMap) ? selection.projectMap : []).map((entry) => ({
+      code: normalizeLineOaChatProjectCode(entry?.code, ''),
+      label: `${normalizeLineOaChatProjectCode(entry?.code, '')} ${String(entry?.projectName || '').trim()}`,
+    })),
+  ].filter((entry) => entry.code && entry.label);
+  const buttonItems = allProjectButtons.slice(0, 10).map((entry) => ({
+    type: 'button',
+    style: entry.code === selectedCode ? 'primary' : 'secondary',
+    color: entry.code === selectedCode ? '#2563eb' : '#94a3b8',
+    action: {
+      type: 'message',
+      label: clampLineText(entry.label, 20),
+      text: `${LINE_OA_INTERNAL_MESSAGES.CHAT_PROJECT_PREFIX}${entry.code}`,
+    },
+    margin: 'sm',
+  }));
+
+  return {
+    type: 'flex',
+    altText: '[PAMDA] Chat project selector',
+    contents: {
+      type: 'bubble',
+      size: 'mega',
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: '10px',
+        contents: [
+          {
+            type: 'text',
+            text: 'เลือก Project สำหรับแชท',
+            size: 'lg',
+            weight: 'bold',
+            color: '#0f172a',
+          },
+          {
+            type: 'text',
+            text: `Current: ${buildLineOaChatProjectScopeLabel(selection)}`,
+            size: 'sm',
+            color: '#475569',
+            wrap: true,
+          },
+          {
+            type: 'text',
+            text: clampLineMultilineText(
+              buildLineOaChatProjectSummaryLines(selection, 12),
+              1500
+            ),
+            size: 'xs',
+            color: '#334155',
+            wrap: true,
+          },
+          {
+            type: 'text',
+            text: 'Tip: พิมพ์โค้ดในข้อความได้ เช่น "เพิ่มอีเวนต์ใน P1 ..."',
+            size: 'xs',
+            color: '#64748b',
+            wrap: true,
+          },
+          ...(buttonItems.length > 0
+            ? [
+                {
+                  type: 'separator',
+                  margin: 'md',
+                },
+                ...buttonItems,
+              ]
+            : [
+                {
+                  type: 'text',
+                  text: 'ยังไม่มีโปรเจกต์ให้เลือก',
+                  size: 'sm',
+                  color: '#64748b',
+                },
+              ]),
+        ],
+      },
+    },
+  };
+};
+
+const buildLineOaChatModeEnabledMessage = ({ timeoutMs = LINE_OA_CHAT_TIMEOUT_MS, selectionInput = null }) =>
   buildLineCardFlexMessage({
     headerLabel: 'PAMDA',
     altText: '[PAMDA] Chat mode enabled',
@@ -7387,8 +7786,15 @@ const buildLineOaChatModeEnabledMessage = ({ timeoutMs = LINE_OA_CHAT_TIMEOUT_MS
         {
           title: 'หากไม่มีการคุยเกิน 2 นาที ระบบจะปิดโหมดแชทอัตโนมัติ',
         },
+        ...(selectionInput
+          ? [
+              {
+                title: `Current scope: ${buildLineOaChatProjectScopeLabel(selectionInput)}`,
+              },
+            ]
+          : []),
       ],
-      { max: 1 }
+      { max: 2 }
     ),
   });
 
@@ -7475,8 +7881,11 @@ const handleLineOaPrivateTextMessage = async ({
   }
 
   const parsedProjectToggleId = parseLineOaFilterProjectToggleMessage(messageText);
+  const parsedChatProjectCode = parseLineOaChatProjectSelectMessage(messageText);
   const actionToken = parsedProjectToggleId
     ? LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX
+    : parsedChatProjectCode
+      ? LINE_OA_INTERNAL_MESSAGES.CHAT_PROJECT_PREFIX
     : resolveLineOaActionFromMessage({ config, messageText });
   const requiresLinkedAccount =
     actionToken === LINE_OA_ACTIONS.B ||
@@ -7485,7 +7894,8 @@ const handleLineOaPrivateTextMessage = async ({
     actionToken === LINE_OA_ACTIONS.E ||
     actionToken === LINE_OA_ACTIONS.F ||
     actionToken === LINE_OA_INTERNAL_MESSAGES.FILTER_MERGE ||
-    actionToken === LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX;
+    actionToken === LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX ||
+    actionToken === LINE_OA_INTERNAL_MESSAGES.CHAT_PROJECT_PREFIX;
 
   const existingLinkRecord = await getLineOaLinkByLineUserId(lineUserId);
   const linkedRecord = existingLinkRecord?.data || null;
@@ -7501,6 +7911,8 @@ const handleLineOaPrivateTextMessage = async ({
       history: [],
       expiresAt: null,
       timeoutNotifiedAt: new Date().toISOString(),
+      chatProjectCode: LINE_OA_CHAT_PROJECT_DEFAULT_CODE,
+      chatProjectMap: [],
     });
     await replyLineEventWithFallback({
       event,
@@ -7576,7 +7988,12 @@ const handleLineOaPrivateTextMessage = async ({
     filterInput: filter,
   });
   const scopedPayload = filtered.payload;
-  const scopedProjects = getPayloadProjects(scopedPayload);
+  const existingSession = await getLineOaChatSession(lineUserId);
+  const sessionRecord = normalizeLineOaChatSessionRecord(existingSession?.data || {});
+  const initialChatSelection = resolveLineOaChatProjectSelection({
+    payload: scopedPayload,
+    sessionRecord,
+  });
 
   if (actionToken === LINE_OA_INTERNAL_MESSAGES.FILTER_MERGE && linkedUserId) {
     const nextFilter = normalizeLineOaFilterConfig({
@@ -7711,23 +8128,28 @@ const handleLineOaPrivateTextMessage = async ({
     return;
   }
 
-  const existingSession = await getLineOaChatSession(lineUserId);
-  const sessionRecord = normalizeLineOaChatSessionRecord(existingSession?.data || {});
-  const nowMs = Date.now();
-  const sessionExpiresMs = new Date(String(sessionRecord.expiresAt || '')).getTime();
-  const timeoutMs = Math.max(30 * 1000, Math.min(30 * 60 * 1000, Number(config.chatTimeoutMs || LINE_OA_CHAT_TIMEOUT_MS)));
-  const sessionIsExpired =
-    !sessionRecord.active || !Number.isFinite(sessionExpiresMs) || nowMs > sessionExpiresMs;
-
-  if (actionToken === LINE_OA_ACTIONS.E) {
-    const expiresAt = new Date(nowMs + timeoutMs).toISOString();
-    const nextSession = await saveLineOaChatSession(lineUserId, {
+  if (actionToken === LINE_OA_INTERNAL_MESSAGES.CHAT_PROJECT_PREFIX) {
+    const timeoutMs = Math.max(
+      30 * 1000,
+      Math.min(30 * 60 * 1000, Number(config.chatTimeoutMs || LINE_OA_CHAT_TIMEOUT_MS))
+    );
+    const requestedCode = normalizeLineOaChatProjectCode(parsedChatProjectCode, '');
+    const chatSelectionFromSession = resolveLineOaChatProjectSelection({
+      payload: scopedPayload,
+      sessionRecord,
+      preferredCodeInput: requestedCode || initialChatSelection.selectedCode,
+    });
+    const nowMs = Date.now();
+    const nextExpiresAt = new Date(nowMs + timeoutMs).toISOString();
+    await saveLineOaChatSession(lineUserId, {
       ...sessionRecord,
       lineUserId,
       userId: linkedUserId,
       active: true,
-      expiresAt,
+      expiresAt: nextExpiresAt,
       timeoutNotifiedAt: null,
+      chatProjectCode: chatSelectionFromSession.selectedCode,
+      chatProjectMap: chatSelectionFromSession.projectMap,
     });
     scheduleLineOaSessionTimeoutNotice({
       lineUserId,
@@ -7736,7 +8158,58 @@ const handleLineOaPrivateTextMessage = async ({
     await replyLineEventWithFallback({
       event,
       fallbackTarget: lineUserId,
-      messages: [buildLineOaChatModeEnabledMessage({ timeoutMs })],
+      messages: [
+        buildLineOaChatModeEnabledMessage({
+          timeoutMs,
+          selectionInput: chatSelectionFromSession,
+        }),
+        buildLineOaChatProjectPickerMessage({
+          selectionInput: chatSelectionFromSession,
+        }),
+      ],
+    });
+    return;
+  }
+
+  const nowMs = Date.now();
+  const sessionExpiresMs = new Date(String(sessionRecord.expiresAt || '')).getTime();
+  const timeoutMs = Math.max(30 * 1000, Math.min(30 * 60 * 1000, Number(config.chatTimeoutMs || LINE_OA_CHAT_TIMEOUT_MS)));
+  const sessionIsExpired =
+    !sessionRecord.active || !Number.isFinite(sessionExpiresMs) || nowMs > sessionExpiresMs;
+
+  if (actionToken === LINE_OA_ACTIONS.E) {
+    const chatSelectionForStart = resolveLineOaChatProjectSelection({
+      payload: scopedPayload,
+      sessionRecord,
+      preferredCodeInput: LINE_OA_CHAT_PROJECT_DEFAULT_CODE,
+    });
+    const expiresAt = new Date(nowMs + timeoutMs).toISOString();
+    await saveLineOaChatSession(lineUserId, {
+      ...sessionRecord,
+      lineUserId,
+      userId: linkedUserId,
+      active: true,
+      expiresAt,
+      timeoutNotifiedAt: null,
+      chatProjectCode: chatSelectionForStart.selectedCode,
+      chatProjectMap: chatSelectionForStart.projectMap,
+    });
+    scheduleLineOaSessionTimeoutNotice({
+      lineUserId,
+      timeoutMs,
+    });
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaChatModeEnabledMessage({
+          timeoutMs,
+          selectionInput: chatSelectionForStart,
+        }),
+        buildLineOaChatProjectPickerMessage({
+          selectionInput: chatSelectionForStart,
+        }),
+      ],
     });
     return;
   }
@@ -7764,22 +8237,84 @@ const handleLineOaPrivateTextMessage = async ({
     return;
   }
 
+  const inlineProjectCode = extractLineOaChatProjectCodeFromMessage(messageText);
+  const activeChatSelection = resolveLineOaChatProjectSelection({
+    payload: scopedPayload,
+    sessionRecord,
+    preferredCodeInput: inlineProjectCode || sessionRecord.chatProjectCode,
+  });
+  const hasInlineCodeSelection = Boolean(inlineProjectCode && inlineProjectCode === activeChatSelection.selectedCode);
+  if (hasInlineCodeSelection && isLineOaChatProjectSwitchOnlyMessage(messageText, inlineProjectCode)) {
+    const nextExpiresAt = new Date(nowMs + timeoutMs).toISOString();
+    await saveLineOaChatSession(lineUserId, {
+      ...sessionRecord,
+      lineUserId,
+      userId: linkedUserId,
+      active: true,
+      expiresAt: nextExpiresAt,
+      timeoutNotifiedAt: null,
+      chatProjectCode: activeChatSelection.selectedCode,
+      chatProjectMap: activeChatSelection.projectMap,
+    });
+    scheduleLineOaSessionTimeoutNotice({
+      lineUserId,
+      timeoutMs,
+    });
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        buildLineOaChatModeEnabledMessage({
+          timeoutMs,
+          selectionInput: activeChatSelection,
+        }),
+        buildLineOaChatProjectPickerMessage({
+          selectionInput: activeChatSelection,
+        }),
+      ],
+    });
+    return;
+  }
+
+  const aiScopedPayload = applyLineOaChatProjectSelectionToPayload({
+    payload: scopedPayload,
+    selection: activeChatSelection,
+  });
+  const aiScopeForNote = activeChatSelection.isMergeView
+    ? filtered.scope
+    : {
+        mode: AI_PROJECT_SCOPE_MODES.SELECTED,
+        projectIds: activeChatSelection.selectedProjectId ? [activeChatSelection.selectedProjectId] : [],
+      };
+  const aiContextNote = [
+    buildAiRequestContextNote({
+      payload: aiScopedPayload,
+      scope: aiScopeForNote,
+      attachments: [],
+    }),
+    buildLineOaChatProjectContextNote(activeChatSelection),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
   let assistantText = '';
   try {
     const sessionHistory = normalizeLineOaChatHistory(sessionRecord.history);
     if (GEMINI_API_KEY) {
       const geminiResult = await runLineOaGeminiAssistant({
-        payload: scopedPayload,
+        payload: aiScopedPayload,
         userId: linkedUserId,
         username: linkedRecord?.username || '',
         userMessage: messageText,
         history: sessionHistory,
         authUsername: linkedRecord?.username || '',
+        chatProjectSelection: activeChatSelection,
+        allowMutatingActions: !activeChatSelection.isMergeView,
       });
       assistantText = sanitizeAiMessageContent(geminiResult.assistantText, 4000);
     } else if (OPENAI_API_KEY) {
       const aiResult = await runAiAssistant({
-        payload: scopedPayload,
+        payload: aiScopedPayload,
         threadMessages: sessionHistory.map((entry) => ({
           role: entry.role,
           content: entry.text,
@@ -7787,11 +8322,7 @@ const handleLineOaPrivateTextMessage = async ({
         userMessage: messageText,
         userId: linkedUserId,
         username: linkedRecord?.username || '',
-        userContextNote: buildAiRequestContextNote({
-          payload: scopedPayload,
-          scope: filtered.scope,
-          attachments: [],
-        }),
+        userContextNote: aiContextNote,
         attachments: [],
       });
       assistantText = sanitizeAiMessageContent(aiResult.assistantText, 4000);
@@ -7826,6 +8357,8 @@ const handleLineOaPrivateTextMessage = async ({
     history: nextHistory,
     expiresAt: nextExpiresAt,
     timeoutNotifiedAt: null,
+    chatProjectCode: activeChatSelection.selectedCode,
+    chatProjectMap: activeChatSelection.projectMap,
   });
   scheduleLineOaSessionTimeoutNotice({
     lineUserId,
