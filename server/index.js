@@ -1752,11 +1752,15 @@ const LINE_OA_INTERNAL_MESSAGES = Object.freeze({
 });
 const LINE_OA_CHAT_PROJECT_DEFAULT_CODE = 'P0';
 const LINE_OA_CHAT_PROJECT_CODE_PATTERN = /^P\d+$/i;
-const normalizeLineOaChatProjectCode = (valueInput, fallbackInput = LINE_OA_CHAT_PROJECT_DEFAULT_CODE) => {
-  const fallback = LINE_OA_CHAT_PROJECT_CODE_PATTERN.test(String(fallbackInput || '').trim())
-    ? String(fallbackInput || '').trim().toUpperCase()
-    : LINE_OA_CHAT_PROJECT_DEFAULT_CODE;
+const normalizeLineOaChatProjectCode = (valueInput, fallbackInput = '') => {
+  const fallbackRaw = String(fallbackInput || '').trim().toUpperCase();
+  const fallback = fallbackRaw
+    ? LINE_OA_CHAT_PROJECT_CODE_PATTERN.test(fallbackRaw)
+      ? `P${Number.parseInt(fallbackRaw.slice(1), 10)}`
+      : LINE_OA_CHAT_PROJECT_DEFAULT_CODE
+    : '';
   const raw = String(valueInput || '').trim().toUpperCase();
+  if (!raw) return fallback;
   if (!LINE_OA_CHAT_PROJECT_CODE_PATTERN.test(raw)) return fallback;
   const numericPart = Number.parseInt(raw.slice(1), 10);
   if (!Number.isInteger(numericPart) || numericPart < 0) return fallback;
@@ -2085,6 +2089,7 @@ const buildLineOaLiffUrl = ({ config, lineUserId, nextAction = '' }) => {
   return appendQueryToUrl(baseUrl, {
     pamdaLineLinkToken: linkToken,
     pamdaLineAction: String(nextAction || '').trim().toUpperCase(),
+    pamdaLineGoogleBridge: '1',
   });
 };
 const resolveLineOaActionFromMessage = ({ config, messageText }) => {
@@ -2867,20 +2872,24 @@ const resolveLineOaChatProjectSelection = ({ payload, sessionRecord, preferredCo
   const mapByCode = new Map(projectMap.map((entry) => [entry.code, entry]));
   const preferredCode = normalizeLineOaChatProjectCode(preferredCodeInput, '');
   let selectedCode = preferredCode || normalizeLineOaChatProjectCode(normalizedSession.chatProjectCode);
-  if (selectedCode !== LINE_OA_CHAT_PROJECT_DEFAULT_CODE && !mapByCode.has(selectedCode)) {
-    selectedCode = LINE_OA_CHAT_PROJECT_DEFAULT_CODE;
+  if (selectedCode && selectedCode !== LINE_OA_CHAT_PROJECT_DEFAULT_CODE && !mapByCode.has(selectedCode)) {
+    selectedCode = '';
   }
-  const selectedProject = selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE
+  const selectedProject = !selectedCode || selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE
     ? null
     : getProjectByIdFromPayload(safePayload, mapByCode.get(selectedCode)?.projectId);
   const selectedProjectId = String(selectedProject?.id || '').trim();
   const selectedProjectName = String(selectedProject?.name || selectedProjectId || '').trim();
+  const hasSelection = Boolean(selectedCode);
+  const isMergeView = selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE;
   return {
     projectMap,
     selectedCode,
     selectedProjectId,
     selectedProjectName,
-    isMergeView: selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || !selectedProjectId,
+    hasSelection,
+    isMergeView,
+    allowMutatingActions: Boolean(selectedProjectId) && !isMergeView,
   };
 };
 
@@ -3213,8 +3222,13 @@ const buildLineOaLoginRequiredMessage = ({ liffUrl = '', actionName = '' }) => {
   };
 };
 
-const buildLineOaEntryMenuMessage = ({ liffUrl = '', logoutCommand = LINE_OA_INTERNAL_MESSAGES.LOGOUT }) => {
+const buildLineOaEntryMenuMessage = ({
+  liffUrl = '',
+  logoutCommand = LINE_OA_INTERNAL_MESSAGES.LOGOUT,
+  showLogout = true,
+}) => {
   const canOpenLiff = isSafeHttpUrl(liffUrl);
+  const canShowLogout = showLogout === true;
   return {
     type: 'flex',
     altText: '[PAMDA] Open menu',
@@ -3234,7 +3248,9 @@ const buildLineOaEntryMenuMessage = ({ liffUrl = '', logoutCommand = LINE_OA_INT
           },
           {
             type: 'text',
-            text: 'Open PAMDA LIFF or logout your linked account from LINE OA.',
+            text: canShowLogout
+              ? 'Open PAMDA LIFF or logout your linked account from LINE OA.'
+              : 'Open PAMDA LIFF.',
             size: 'sm',
             color: '#475569',
             wrap: true,
@@ -3262,15 +3278,19 @@ const buildLineOaEntryMenuMessage = ({ liffUrl = '', logoutCommand = LINE_OA_INT
                   text: 'LIFF URL is not configured yet.',
                 },
           },
-          {
-            type: 'button',
-            style: 'secondary',
-            action: {
-              type: 'message',
-              label: 'Logout linked account',
-              text: logoutCommand,
-            },
-          },
+          ...(canShowLogout
+            ? [
+                {
+                  type: 'button',
+                  style: 'secondary',
+                  action: {
+                    type: 'message',
+                    label: 'Logout linked account',
+                    text: logoutCommand,
+                  },
+                },
+              ]
+            : []),
         ],
       },
     },
@@ -3491,13 +3511,18 @@ const buildAiRequestContextNote = ({ payload, scope, attachments }) => {
 
 const buildLineOaChatProjectContextNote = (selectionInput) => {
   const selection = selectionInput && typeof selectionInput === 'object' ? selectionInput : {};
-  const selectedCode = normalizeLineOaChatProjectCode(selection.selectedCode);
+  const selectedCode = normalizeLineOaChatProjectCode(selection.selectedCode, '');
   const lines = [
     'LINE chat project-code mode is enabled.',
-    `Current active code: ${selectedCode}`,
+    `Current active code: ${selectedCode || '(none)'}`,
     `${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} means merge view (overall context across multiple projects).`,
   ];
-  if (selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || selection.isMergeView) {
+  if (!selectedCode) {
+    lines.push('No project selected yet.');
+    lines.push(
+      'Mutation policy: when no project is selected, do not create/update/delete task or event. Ask user to choose P1 or above first.'
+    );
+  } else if (selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || selection.isMergeView) {
     lines.push(
       'Mutation policy: in P0, do not create/update/delete task or event. Ask user to choose P1 or above first.'
     );
@@ -4483,9 +4508,11 @@ const runLineOaGeminiAssistant = async ({
   const selection = chatProjectSelection && typeof chatProjectSelection === 'object'
     ? chatProjectSelection
     : {};
-  const selectionCode = normalizeLineOaChatProjectCode(selection.selectedCode);
+  const selectionCode = normalizeLineOaChatProjectCode(selection.selectedCode, '');
   const selectionScopeLine =
-    selectionCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || selection.isMergeView
+    !selectionCode
+      ? '(none)'
+      : selectionCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || selection.isMergeView
       ? `${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} (merge view)`
       : `${selectionCode} (${String(selection.selectedProjectName || selection.selectedProjectId || '').trim() || 'selected project'})`;
   const projectCodeLines = [
@@ -4519,7 +4546,7 @@ const runLineOaGeminiAssistant = async ({
     `Project code map: ${projectCodeLines}`,
     allowMutatingActions
       ? 'Mutation actions are allowed in current scope.'
-      : `Mutation guard: action type create_task/create_event/delete_event is forbidden when active code is ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE}.`,
+      : `Mutation guard: action type create_task/create_event/delete_event is forbidden when active code is ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} or no project is selected.`,
     'Never fabricate ids. If unsure, ask follow-up in replyText and keep action.type as "none".',
     'Context summary JSON:',
     JSON.stringify(contextSummary),
@@ -4546,7 +4573,7 @@ const runLineOaGeminiAssistant = async ({
 
   try {
     if (!allowMutatingActions && isMutationAction) {
-      actionErrorMessage = `โหมด ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} ใช้ดูภาพรวมเท่านั้น กรุณาเลือกโปรเจกต์ P1, P2, ... ก่อนสั่งเพิ่ม/ลบข้อมูล`;
+      actionErrorMessage = `ยังไม่ได้เลือกโปรเจกต์ หรืออยู่ในโหมด ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} กรุณาเลือกโปรเจกต์ P1, P2, ... ก่อนสั่งเพิ่ม/ลบข้อมูล`;
     } else if (actionType === 'create_task') {
       const matchedProject =
         getProjectByIdFromPayload(payload, actionPayload.projectId) ||
@@ -7478,7 +7505,7 @@ app.post('/line/oa/link', requireAuth, async (req, res) => {
       history: [],
       expiresAt: null,
       timeoutNotifiedAt: null,
-      chatProjectCode: LINE_OA_CHAT_PROJECT_DEFAULT_CODE,
+      chatProjectCode: '',
       chatProjectMap: [],
     });
     clearLineOaSessionTimeoutTimer(context.lineUserId);
@@ -7658,36 +7685,9 @@ const buildLineOaDailyUpdatesMessage = ({ payload, scope }) => {
   });
 };
 
-const buildLineOaChatProjectScopeLabel = (selectionInput) => {
-  const selection = selectionInput && typeof selectionInput === 'object' ? selectionInput : {};
-  const selectedCode = normalizeLineOaChatProjectCode(selection.selectedCode);
-  if (selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || selection.isMergeView) {
-    return `${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} = Merge view (ภาพรวมทุกโปรเจกต์)`;
-  }
-  const name = String(selection.selectedProjectName || '').trim();
-  return `${selectedCode} = ${name || 'Selected project'}`;
-};
-
-const buildLineOaChatProjectSummaryLines = (selectionInput, maxLines = 14) => {
-  const selection = selectionInput && typeof selectionInput === 'object' ? selectionInput : {};
-  const safeMax = Math.max(4, Math.min(30, Number.parseInt(String(maxLines || 14), 10) || 14));
-  const lines = [`${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} = Merge view (ดูรวมทุกโปรเจกต์)`];
-  const projectMap = Array.isArray(selection.projectMap) ? selection.projectMap : [];
-  projectMap.slice(0, safeMax - 1).forEach((entry) => {
-    const code = normalizeLineOaChatProjectCode(entry?.code, '');
-    const projectName = String(entry?.projectName || entry?.projectId || '').trim();
-    if (!code || !projectName) return;
-    lines.push(`${code} = ${projectName}`);
-  });
-  if (projectMap.length > safeMax - 1) {
-    lines.push(`...และอีก ${projectMap.length - (safeMax - 1)} โปรเจกต์ (พิมพ์โค้ดเช่น P11 ได้)`);
-  }
-  return lines.join('\n');
-};
-
 const buildLineOaChatProjectPickerMessage = ({ selectionInput }) => {
   const selection = selectionInput && typeof selectionInput === 'object' ? selectionInput : {};
-  const selectedCode = normalizeLineOaChatProjectCode(selection.selectedCode);
+  const selectedCode = normalizeLineOaChatProjectCode(selection.selectedCode, '');
   const allProjectButtons = [
     {
       code: LINE_OA_CHAT_PROJECT_DEFAULT_CODE,
@@ -7728,30 +7728,6 @@ const buildLineOaChatProjectPickerMessage = ({ selectionInput }) => {
             weight: 'bold',
             color: '#0f172a',
           },
-          {
-            type: 'text',
-            text: `Current: ${buildLineOaChatProjectScopeLabel(selection)}`,
-            size: 'sm',
-            color: '#475569',
-            wrap: true,
-          },
-          {
-            type: 'text',
-            text: clampLineMultilineText(
-              buildLineOaChatProjectSummaryLines(selection, 12),
-              1500
-            ),
-            size: 'xs',
-            color: '#334155',
-            wrap: true,
-          },
-          {
-            type: 'text',
-            text: 'Tip: พิมพ์โค้ดในข้อความได้ เช่น "เพิ่มอีเวนต์ใน P1 ..."',
-            size: 'xs',
-            color: '#64748b',
-            wrap: true,
-          },
           ...(buttonItems.length > 0
             ? [
                 {
@@ -7774,7 +7750,7 @@ const buildLineOaChatProjectPickerMessage = ({ selectionInput }) => {
   };
 };
 
-const buildLineOaChatModeEnabledMessage = ({ timeoutMs = LINE_OA_CHAT_TIMEOUT_MS, selectionInput = null }) =>
+const buildLineOaChatModeEnabledMessage = ({ timeoutMs = LINE_OA_CHAT_TIMEOUT_MS }) =>
   buildLineCardFlexMessage({
     headerLabel: 'PAMDA',
     altText: '[PAMDA] Chat mode enabled',
@@ -7786,15 +7762,8 @@ const buildLineOaChatModeEnabledMessage = ({ timeoutMs = LINE_OA_CHAT_TIMEOUT_MS
         {
           title: 'หากไม่มีการคุยเกิน 2 นาที ระบบจะปิดโหมดแชทอัตโนมัติ',
         },
-        ...(selectionInput
-          ? [
-              {
-                title: `Current scope: ${buildLineOaChatProjectScopeLabel(selectionInput)}`,
-              },
-            ]
-          : []),
       ],
-      { max: 2 }
+      { max: 1 }
     ),
   });
 
@@ -7911,7 +7880,7 @@ const handleLineOaPrivateTextMessage = async ({
       history: [],
       expiresAt: null,
       timeoutNotifiedAt: new Date().toISOString(),
-      chatProjectCode: LINE_OA_CHAT_PROJECT_DEFAULT_CODE,
+      chatProjectCode: '',
       chatProjectMap: [],
     });
     await replyLineEventWithFallback({
@@ -7943,6 +7912,7 @@ const handleLineOaPrivateTextMessage = async ({
         buildLineOaEntryMenuMessage({
           liffUrl: openLiffUrl,
           logoutCommand: LINE_OA_INTERNAL_MESSAGES.LOGOUT,
+          showLogout: Boolean(linkedUserId),
         }),
       ],
     });
@@ -8161,7 +8131,6 @@ const handleLineOaPrivateTextMessage = async ({
       messages: [
         buildLineOaChatModeEnabledMessage({
           timeoutMs,
-          selectionInput: chatSelectionFromSession,
         }),
         buildLineOaChatProjectPickerMessage({
           selectionInput: chatSelectionFromSession,
@@ -8181,7 +8150,7 @@ const handleLineOaPrivateTextMessage = async ({
     const chatSelectionForStart = resolveLineOaChatProjectSelection({
       payload: scopedPayload,
       sessionRecord,
-      preferredCodeInput: LINE_OA_CHAT_PROJECT_DEFAULT_CODE,
+      preferredCodeInput: '',
     });
     const expiresAt = new Date(nowMs + timeoutMs).toISOString();
     await saveLineOaChatSession(lineUserId, {
@@ -8204,7 +8173,6 @@ const handleLineOaPrivateTextMessage = async ({
       messages: [
         buildLineOaChatModeEnabledMessage({
           timeoutMs,
-          selectionInput: chatSelectionForStart,
         }),
         buildLineOaChatProjectPickerMessage({
           selectionInput: chatSelectionForStart,
@@ -8266,7 +8234,6 @@ const handleLineOaPrivateTextMessage = async ({
       messages: [
         buildLineOaChatModeEnabledMessage({
           timeoutMs,
-          selectionInput: activeChatSelection,
         }),
         buildLineOaChatProjectPickerMessage({
           selectionInput: activeChatSelection,
@@ -8309,7 +8276,7 @@ const handleLineOaPrivateTextMessage = async ({
         history: sessionHistory,
         authUsername: linkedRecord?.username || '',
         chatProjectSelection: activeChatSelection,
-        allowMutatingActions: !activeChatSelection.isMergeView,
+        allowMutatingActions: activeChatSelection.allowMutatingActions === true,
       });
       assistantText = sanitizeAiMessageContent(geminiResult.assistantText, 4000);
     } else if (OPENAI_API_KEY) {

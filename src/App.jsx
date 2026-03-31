@@ -6087,7 +6087,6 @@ export default function App() {
   const shouldForceAuthScreenForLineBridge = (() => {
     const url = getCurrentLocationUrl();
     if (!url) return false;
-    if (!getLineBridgeModeFromLocationUrl(url)) return false;
     return Boolean(getLineLinkTokenFromLocationUrl(url) || getLineBridgeIdFromLocationUrl(url));
   })();
 
@@ -9781,6 +9780,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     if (!AUTH_API_BASE_URL || !isAccountDataHydrated || !currentUser?.id) return;
     if (typeof window === 'undefined') return;
     const url = new URL(window.location.href);
+    if (!getLineBridgeModeFromLocationUrl(url)) return;
     const linkToken = String(url.searchParams.get('pamdaLineLinkToken') || '').trim();
     if (!linkToken || handledLineLinkTokenRef.current === linkToken) return;
     handledLineLinkTokenRef.current = linkToken;
