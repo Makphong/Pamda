@@ -48,12 +48,12 @@ gcloud run deploy pm-calendar-frontend \
   --image gcr.io/YOUR_PROJECT_ID/pm-calendar-frontend \
   --region asia-southeast1 \
   --allow-unauthenticated \
-  --set-env-vars AUTH_API_BASE_URL=https://YOUR_AUTH_URL,GOOGLE_CLIENT_ID=YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com
+  --set-env-vars AUTH_API_BASE_URL=https://YOUR_AUTH_URL,GOOGLE_CLIENT_ID=YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com,LINE_LIFF_ID=YOUR_LINE_LIFF_ID,WEB_APP_BASE_URL=https://YOUR_FRONTEND_URL
 ```
 
 Notes:
 1. Frontend now supports runtime env via `runtime-config.js` generated at container startup.
-2. You can still use `VITE_AUTH_API_BASE_URL` and `VITE_GOOGLE_CLIENT_ID`, but runtime env above is recommended for Cloud Run.
+2. You can still use `VITE_AUTH_API_BASE_URL`, `VITE_GOOGLE_CLIENT_ID`, `VITE_LINE_LIFF_ID`, and `VITE_WEB_APP_BASE_URL`, but runtime env above is recommended for Cloud Run.
 3. No Secret Manager mount is required on frontend service.
 
 ## 3) Google OAuth Console Settings
@@ -71,7 +71,7 @@ For auth service account:
 
 ## 5) Quick Debug Checklist (If Login/Google button still fails)
 
-1. Frontend service env has `AUTH_API_BASE_URL` and `GOOGLE_CLIENT_ID`.
+1. Frontend service env has `AUTH_API_BASE_URL`, `GOOGLE_CLIENT_ID`, `LINE_LIFF_ID`, and `WEB_APP_BASE_URL`.
 2. Auth `/health` returns `ok: true`, `googleClientConfigured: true`, `googleCalendarOAuthConfigured: true`.
 3. `CLIENT_ORIGIN` on auth exactly matches frontend URL.
 4. OAuth `Authorized JavaScript origins` exactly matches frontend URL.
