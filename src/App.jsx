@@ -3839,15 +3839,29 @@ const getGoogleOAuthErrorMessage = (errorCodeInput) => {
   return errorCodeInput ? String(errorCodeInput) : 'Google sign-in failed.';
 };
 const LINE_IN_APP_USER_AGENT_PATTERN = /\bLine\/|LIFF/i;
+const LINE_LIFF_HOST_PATTERN = /(^|\.)liff\.line\.me$/i;
 const LINE_LINK_TOKEN_QUERY_KEY = 'pamdaLineLinkToken';
 const LINE_LINK_ACTION_QUERY_KEY = 'pamdaLineAction';
 const LINE_BRIDGE_ID_QUERY_KEY = 'pamdaLineBridgeId';
 const LINE_GOOGLE_BRIDGE_QUERY_KEY = 'pamdaLineGoogleBridge';
 const LINE_EXTERNAL_QUERY_KEY = 'pamdaLineExternal';
+const WEB_APP_BASE_URL = String(
+  RUNTIME_CONFIG.VITE_WEB_APP_BASE_URL ||
+    RUNTIME_CONFIG.WEB_APP_BASE_URL ||
+    RUNTIME_CONFIG.APP_BASE_URL ||
+    import.meta.env.VITE_WEB_APP_BASE_URL ||
+    ''
+)
+  .trim()
+  .replace(/\/+$/, '');
 const isLineInAppBrowser = () => {
   if (typeof window === 'undefined') return false;
   const userAgent = String(window.navigator?.userAgent || '');
   return LINE_IN_APP_USER_AGENT_PATTERN.test(userAgent);
+};
+const isAndroidDevice = () => {
+  if (typeof window === 'undefined') return false;
+  return /\bAndroid\b/i.test(String(window.navigator?.userAgent || ''));
 };
 const getCurrentLocationUrl = () => {
   if (typeof window === 'undefined') return null;
@@ -3877,6 +3891,92 @@ const safelyDecodeUriComponent = (valueInput, depth = 2) => {
     }
   }
   return value;
+};
+const isLineLiffHostname = (hostnameInput) => {
+  const hostname = String(hostnameInput || '').trim().toLowerCase();
+  if (!hostname) return false;
+  return LINE_LIFF_HOST_PATTERN.test(hostname);
+};
+const normalizeUrlToOriginPath = (urlInput) => {
+  const parsed = urlInput instanceof URL ? urlInput : null;
+  if (!parsed) return null;
+  return new URL(`${parsed.origin}${parsed.pathname}`);
+};
+const collectHttpUrlsFromText = (textInput) => {
+  const text = String(textInput || '');
+  if (!text) return [];
+  const matchList = text.match(/https?:\/\/[^\s"'<>]+/gi) || [];
+  return matchList.map((entry) => String(entry || '').trim()).filter(Boolean);
+};
+const getBridgeBaseUrlFromConfiguredWebBase = () => {
+  if (!WEB_APP_BASE_URL) return null;
+  try {
+    const configuredUrl = new URL(WEB_APP_BASE_URL);
+    return normalizeUrlToOriginPath(configuredUrl);
+  } catch {
+    return null;
+  }
+};
+const getBridgeBaseUrlFromAuthApiBase = () => {
+  if (!AUTH_API_BASE_URL) return null;
+  try {
+    const apiUrl = new URL(AUTH_API_BASE_URL);
+    const mappedHost = /^api\./i.test(apiUrl.hostname)
+      ? `www.${apiUrl.hostname.slice(4)}`
+      : apiUrl.hostname;
+    return normalizeUrlToOriginPath(new URL(`${apiUrl.protocol}//${mappedHost}/`));
+  } catch {
+    return null;
+  }
+};
+const resolveLineBridgeBaseUrl = (urlInput) => {
+  const currentUrl = urlInput instanceof URL ? urlInput : null;
+  if (!currentUrl) return null;
+  const configuredBaseUrl = getBridgeBaseUrlFromConfiguredWebBase();
+  if (configuredBaseUrl) return configuredBaseUrl;
+  const currentBaseUrl = normalizeUrlToOriginPath(currentUrl);
+  if (!currentBaseUrl) return null;
+  if (!isLineLiffHostname(currentUrl.hostname)) {
+    return currentBaseUrl;
+  }
+  const liffStateRaw = String(currentUrl.searchParams.get('liff.state') || '').trim();
+  const decodedLiffState = safelyDecodeUriComponent(liffStateRaw, 3);
+  const candidateAbsoluteUrls = collectHttpUrlsFromText(decodedLiffState);
+  for (const candidate of candidateAbsoluteUrls) {
+    try {
+      const parsedCandidate = new URL(candidate);
+      if (isLineLiffHostname(parsedCandidate.hostname)) continue;
+      const normalized = normalizeUrlToOriginPath(parsedCandidate);
+      if (normalized) return normalized;
+    } catch {}
+  }
+  try {
+    const nestedUrl = new URL(decodedLiffState, currentUrl.origin);
+    if (!isLineLiffHostname(nestedUrl.hostname)) {
+      const normalizedNested = normalizeUrlToOriginPath(nestedUrl);
+      if (normalizedNested) return normalizedNested;
+    }
+  } catch {}
+  const fallbackFromApiBase = getBridgeBaseUrlFromAuthApiBase();
+  if (fallbackFromApiBase) return fallbackFromApiBase;
+  return currentBaseUrl;
+};
+const buildLineOpenUrlLink = (urlInput) => {
+  const rawUrl = String(urlInput || '').trim();
+  if (!rawUrl) return '';
+  return `https://line.me/R/openurl/?url=${encodeURIComponent(rawUrl)}`;
+};
+const buildAndroidBrowserIntentLink = (urlInput) => {
+  const rawUrl = String(urlInput || '').trim();
+  if (!rawUrl) return '';
+  try {
+    const parsed = new URL(rawUrl);
+    const scheme = String(parsed.protocol || 'https:').replace(':', '') || 'https';
+    const pathWithQueryAndHash = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return `intent://${parsed.host}${pathWithQueryAndHash}#Intent;scheme=${scheme};action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;end`;
+  } catch {
+    return '';
+  }
 };
 const readQueryValueFromLocationUrl = (urlInput, keyInput) => {
   const url = urlInput instanceof URL ? urlInput : null;
@@ -3993,6 +4093,7 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
   if (typeof window === 'undefined') return false;
   const targetUrl = String(urlInput || '').trim();
   if (!targetUrl) return false;
+  const isAndroid = isAndroidDevice();
   const withLineExternalBrowserHint = (rawUrlInput) => {
     const rawUrl = String(rawUrlInput || '').trim();
     if (!rawUrl) return '';
@@ -4007,6 +4108,14 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
   };
   const hintedUrl = withLineExternalBrowserHint(targetUrl);
   const candidateUrls = hintedUrl && hintedUrl !== targetUrl ? [targetUrl, hintedUrl] : [targetUrl];
+  const lineOpenUrlCandidates = candidateUrls
+    .map((candidateUrl) => buildLineOpenUrlLink(candidateUrl))
+    .filter(Boolean);
+  const androidIntentCandidates = isAndroid
+    ? candidateUrls
+        .map((candidateUrl) => buildAndroidBrowserIntentLink(candidateUrl))
+        .filter(Boolean)
+    : [];
 
   try {
     const liff = await loadLineLiffSdk();
@@ -4028,8 +4137,33 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
           return true;
         } catch {}
       }
+      for (const openUrlCandidate of lineOpenUrlCandidates) {
+        try {
+          await Promise.resolve(
+            liff.openWindow({
+              url: openUrlCandidate,
+              external: false,
+            })
+          );
+          return true;
+        } catch {}
+      }
     }
   } catch {}
+
+  for (const openUrlCandidate of lineOpenUrlCandidates) {
+    try {
+      window.location.assign(openUrlCandidate);
+      return true;
+    } catch {}
+  }
+
+  for (const intentCandidate of androidIntentCandidates) {
+    try {
+      window.location.assign(intentCandidate);
+      return true;
+    } catch {}
+  }
 
   try {
     const opened = window.open(targetUrl, '_blank', 'noopener,noreferrer');
@@ -4057,7 +4191,9 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
 const buildLineBridgeExternalUrl = (urlInput, bridgeIdInput = '', linkTokenInput = '') => {
   const currentUrl = urlInput instanceof URL ? urlInput : null;
   if (!currentUrl) return '';
-  const nextUrl = new URL(`${currentUrl.origin}${currentUrl.pathname}`);
+  const baseUrl = resolveLineBridgeBaseUrl(currentUrl);
+  if (!baseUrl) return '';
+  const nextUrl = new URL(baseUrl.toString());
   const lineAction = getLineLinkActionFromLocationUrl(currentUrl);
   const bridgeId = String(bridgeIdInput || '').trim() || getLineBridgeIdFromLocationUrl(currentUrl);
   const linkToken = String(linkTokenInput || '').trim() || getLineLinkTokenFromLocationUrl(currentUrl);
@@ -6306,6 +6442,31 @@ function AuthScreen({ onAuthSuccess }) {
     } catch {
       return false;
     }
+  }, [lineBridgeId, lineLinkToken, createLineBridgeSessionId, replaceUrlSearchParams]);
+
+  useEffect(() => {
+    const effectiveBridgeId = String(lineBridgeId || '').trim();
+    const effectiveLineLinkToken = String(lineLinkToken || '').trim();
+    if (effectiveBridgeId || !effectiveLineLinkToken) return undefined;
+    let isCancelled = false;
+    void createLineBridgeSessionId()
+      .then((nextBridgeId) => {
+        if (isCancelled) return;
+        const normalizedBridgeId = String(nextBridgeId || '').trim();
+        if (!normalizedBridgeId) return;
+        setLineBridgeId(normalizedBridgeId);
+        replaceUrlSearchParams((searchParams) => {
+          searchParams.set(LINE_BRIDGE_ID_QUERY_KEY, normalizedBridgeId);
+          searchParams.delete(LINE_LINK_TOKEN_QUERY_KEY);
+        });
+      })
+      .catch((bridgeError) => {
+        if (isCancelled) return;
+        console.warn('Failed to pre-create LINE bridge session:', bridgeError?.message || bridgeError);
+      });
+    return () => {
+      isCancelled = true;
+    };
   }, [lineBridgeId, lineLinkToken, createLineBridgeSessionId, replaceUrlSearchParams]);
 
   useEffect(() => {
