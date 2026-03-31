@@ -6886,6 +6886,36 @@ app.put('/data/project-invites', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/line/oa/link-status', async (req, res) => {
+  try {
+    res.set({
+      'Cache-Control': 'no-store, max-age=0',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    const linkToken = String(req.query?.linkToken || '').trim();
+    if (!linkToken) {
+      return res.status(400).json({ message: 'linkToken is required.' });
+    }
+    const decoded = parseLineOaLinkToken(linkToken);
+    if (!decoded?.lineUserId) {
+      return res.status(400).json({ message: 'Invalid or expired line link token.' });
+    }
+    const linkedRecord = await getLineOaLinkByLineUserId(decoded.lineUserId);
+    const linkedUserId = sanitizeUserId(linkedRecord?.data?.userId);
+    return res.json({
+      ok: true,
+      linked: Boolean(linkedUserId),
+      lineUserId: decoded.lineUserId,
+      userId: linkedUserId,
+      username: sanitizeUsername(linkedRecord?.data?.username),
+      nextAction: decoded.nextAction || '',
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to get LINE OA link status.' });
+  }
+});
+
 app.post('/line/oa/link', requireAuth, async (req, res) => {
   try {
     const authUserId = sanitizeUserId(req.authUser?.sub);
@@ -6928,6 +6958,58 @@ app.post('/line/oa/link', requireAuth, async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to link LINE OA account.' });
+  }
+});
+
+app.post('/line/oa/login', async (req, res) => {
+  try {
+    const linkToken = String(req.body?.linkToken || '').trim();
+    if (!linkToken) {
+      return res.status(400).json({ message: 'linkToken is required.' });
+    }
+    const decoded = parseLineOaLinkToken(linkToken);
+    if (!decoded?.lineUserId) {
+      return res.status(400).json({ message: 'Invalid or expired line link token.' });
+    }
+
+    const linkedRecord = await getLineOaLinkByLineUserId(decoded.lineUserId);
+    const linkedUserId = sanitizeUserId(linkedRecord?.data?.userId);
+    if (!linkedUserId) {
+      return res.status(404).json({
+        message: 'LINE OA account is not linked yet. Please login with Google first.',
+        code: 'LINE_OA_NOT_LINKED',
+      });
+    }
+
+    const userRecord = await getAuthUserRecord(linkedUserId);
+    if (!userRecord) {
+      return res.status(404).json({ message: 'Linked PAMDA user not found.' });
+    }
+
+    const loginAtIso = new Date().toISOString();
+    await usersRef.doc(linkedUserId).set(
+      {
+        lastLoginAt: loginAtIso,
+        updatedAt: loginAtIso,
+      },
+      { merge: true }
+    );
+    const publicUser = toPublicUser({
+      ...userRecord,
+      id: linkedUserId,
+      lastLoginAt: loginAtIso,
+      updatedAt: loginAtIso,
+    });
+    return res.json({
+      ok: true,
+      message: 'LINE OA login successful.',
+      user: publicUser,
+      token: createAuthToken(publicUser),
+      lineUserId: decoded.lineUserId,
+      nextAction: decoded.nextAction || '',
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to login with LINE OA link token.' });
   }
 });
 

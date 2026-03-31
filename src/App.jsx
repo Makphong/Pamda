@@ -3831,6 +3831,23 @@ const getGoogleOAuthErrorMessage = (errorCodeInput) => {
   }
   return errorCodeInput ? String(errorCodeInput) : 'Google sign-in failed.';
 };
+const LINE_IN_APP_USER_AGENT_PATTERN = /\bLine\//i;
+const LINE_LINK_TOKEN_QUERY_KEY = 'pamdaLineLinkToken';
+const LINE_GOOGLE_BRIDGE_QUERY_KEY = 'pamdaLineGoogleBridge';
+const LINE_EXTERNAL_QUERY_KEY = 'pamdaLineExternal';
+const isLineInAppBrowser = () => {
+  if (typeof window === 'undefined') return false;
+  const userAgent = String(window.navigator?.userAgent || '');
+  return LINE_IN_APP_USER_AGENT_PATTERN.test(userAgent);
+};
+const getCurrentLocationUrl = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return new URL(window.location.href);
+  } catch {
+    return null;
+  }
+};
 const GOOGLE_CALENDAR_PROJECT_ID = '__google_calendar__';
 const GOOGLE_CALENDAR_PROJECT_META = {
   id: GOOGLE_CALENDAR_PROJECT_ID,
@@ -5933,6 +5950,84 @@ function AuthScreen({ onAuthSuccess }) {
   const googleButtonRef = useRef(null);
   const googleTokenClientRef = useRef(null);
   const legalScrollContainerRef = useRef(null);
+  const [lineLinkToken, setLineLinkToken] = useState(() => {
+    const url = getCurrentLocationUrl();
+    return String(url?.searchParams.get(LINE_LINK_TOKEN_QUERY_KEY) || '').trim();
+  });
+  const [lineBridgeMode, setLineBridgeMode] = useState(() => {
+    const url = getCurrentLocationUrl();
+    return String(url?.searchParams.get(LINE_GOOGLE_BRIDGE_QUERY_KEY) || '').trim() === '1';
+  });
+  const [isLineBrowser, setIsLineBrowser] = useState(() => isLineInAppBrowser());
+  const [lineLinkIsLinked, setLineLinkIsLinked] = useState(false);
+  const [isLineLinkStatusLoading, setIsLineLinkStatusLoading] = useState(false);
+
+  const syncLineFlowFromUrl = useCallback(() => {
+    const url = getCurrentLocationUrl();
+    setLineLinkToken(String(url?.searchParams.get(LINE_LINK_TOKEN_QUERY_KEY) || '').trim());
+    setLineBridgeMode(String(url?.searchParams.get(LINE_GOOGLE_BRIDGE_QUERY_KEY) || '').trim() === '1');
+    setIsLineBrowser(isLineInAppBrowser());
+  }, []);
+
+  const replaceUrlSearchParams = useCallback(
+    (mutator) => {
+      if (typeof window === 'undefined') return;
+      const nextUrl = getCurrentLocationUrl();
+      if (!nextUrl) return;
+      if (typeof mutator === 'function') {
+        mutator(nextUrl.searchParams);
+      }
+      window.history.replaceState({}, '', `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+      syncLineFlowFromUrl();
+    },
+    [syncLineFlowFromUrl]
+  );
+
+  const activateLineBridgeMode = useCallback(() => {
+    replaceUrlSearchParams((searchParams) => {
+      searchParams.set(LINE_GOOGLE_BRIDGE_QUERY_KEY, '1');
+      searchParams.delete(LINE_EXTERNAL_QUERY_KEY);
+    });
+  }, [replaceUrlSearchParams]);
+
+  const clearLineBridgeQueryFlags = useCallback(() => {
+    replaceUrlSearchParams((searchParams) => {
+      searchParams.delete(LINE_GOOGLE_BRIDGE_QUERY_KEY);
+      searchParams.delete(LINE_EXTERNAL_QUERY_KEY);
+    });
+  }, [replaceUrlSearchParams]);
+
+  const openLineBridgeInExternalBrowser = useCallback(() => {
+    if (typeof window === 'undefined') return false;
+    const externalUrl = getCurrentLocationUrl();
+    if (!externalUrl) return false;
+    externalUrl.searchParams.set(LINE_GOOGLE_BRIDGE_QUERY_KEY, '1');
+    externalUrl.searchParams.set(LINE_EXTERNAL_QUERY_KEY, '1');
+    const href = externalUrl.toString();
+    const openedWindow = window.open(href, '_blank', 'noopener,noreferrer');
+    if (openedWindow) return true;
+    try {
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    syncLineFlowFromUrl();
+    if (typeof window === 'undefined') return undefined;
+    window.addEventListener('popstate', syncLineFlowFromUrl);
+    return () => {
+      window.removeEventListener('popstate', syncLineFlowFromUrl);
+    };
+  }, [syncLineFlowFromUrl]);
 
   const resetForm = () => {
     setUsername('');
@@ -5959,6 +6054,56 @@ function AuthScreen({ onAuthSuccess }) {
   const showConfirmPasswordMismatch =
     !isLoginMode && Boolean(confirmPassword) && Boolean(password) && password !== confirmPassword;
   const activeLegalDocument = LEGAL_DOCS[activeLegalDoc] || LEGAL_DOCS.terms;
+  const isLineGoogleBridgeFlow = lineBridgeMode && Boolean(lineLinkToken);
+
+  useEffect(() => {
+    if (!isLineGoogleBridgeFlow || !AUTH_API_BASE_URL) {
+      setLineLinkIsLinked(false);
+      setIsLineLinkStatusLoading(false);
+      return undefined;
+    }
+    let isCancelled = false;
+    const requestLinkStatus = async (isBackground = false) => {
+      if (!AUTH_API_BASE_URL || !lineLinkToken) return;
+      if (!isBackground && !isCancelled) {
+        setIsLineLinkStatusLoading(true);
+      }
+      try {
+        const response = await fetch(
+          `${AUTH_API_BASE_URL}/line/oa/link-status?linkToken=${encodeURIComponent(lineLinkToken)}`,
+          {
+            cache: 'no-store',
+          }
+        );
+        let result = null;
+        try {
+          result = await response.json();
+        } catch {
+          result = null;
+        }
+        if (!response.ok || isCancelled) return;
+        setLineLinkIsLinked(result?.linked === true);
+      } catch {
+        if (!isBackground && !isCancelled) {
+          setLineLinkIsLinked(false);
+        }
+      } finally {
+        if (!isBackground && !isCancelled) {
+          setIsLineLinkStatusLoading(false);
+        }
+      }
+    };
+
+    void requestLinkStatus(false);
+    const statusIntervalId = window.setInterval(() => {
+      void requestLinkStatus(true);
+    }, 3000);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(statusIntervalId);
+    };
+  }, [isLineGoogleBridgeFlow, lineLinkToken]);
 
   const openLegalModal = (docKey = 'terms') => {
     const normalizedDoc = LEGAL_DOCS[docKey] ? docKey : 'terms';
@@ -6003,7 +6148,71 @@ function AuthScreen({ onAuthSuccess }) {
     }
   };
 
-  const authenticateWithGoogle = async (payload, authMode = isLoginMode ? 'login' : 'register') => {
+  const linkLineOaAccountWithAuthToken = async (authTokenInput) => {
+    const authToken = String(authTokenInput || '').trim();
+    if (!AUTH_API_BASE_URL || !lineLinkToken || !authToken) return null;
+    const response = await fetch(`${AUTH_API_BASE_URL}/line/oa/link`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({
+        linkToken: lineLinkToken,
+      }),
+      cache: 'no-store',
+    });
+    let result = null;
+    try {
+      result = await response.json();
+    } catch {
+      result = null;
+    }
+    if (!response.ok) {
+      throw new Error(result?.message || 'Failed to link LINE OA account.');
+    }
+    setLineLinkIsLinked(true);
+    return result;
+  };
+
+  const loginWithLineLinkToken = async () => {
+    if (!lineLinkToken) {
+      setError('LINE link token is missing.');
+      return;
+    }
+    setIsSubmitting(true);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await postAuthApi('/line/oa/login', {
+        linkToken: lineLinkToken,
+      });
+      const authenticatedUser = composeAuthUserWithToken(result.user, result.token);
+      syncUserToLocalCache(authenticatedUser);
+      clearLineBridgeQueryFlags();
+      onAuthSuccess(authenticatedUser);
+    } catch (err) {
+      setError(err.message || 'Unable to login with LINE link token.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const returnToLineApp = () => {
+    if (typeof window === 'undefined') return;
+    window.location.href = 'line://app';
+  };
+
+  const authenticateWithGoogle = async (
+    payload,
+    authMode = isLoginMode ? 'login' : 'register',
+    options = {}
+  ) => {
+    const effectiveAuthMode = String(options?.authMode || authMode || 'register')
+      .trim()
+      .toLowerCase();
+    const shouldFinalizeSession = options?.finalizeSession !== false;
+    const onAuthenticated = typeof options?.onAuthenticated === 'function' ? options.onAuthenticated : null;
     setIsSubmitting(true);
     setError('');
     setSuccess('');
@@ -6011,15 +6220,23 @@ function AuthScreen({ onAuthSuccess }) {
     try {
       const result = await postAuthApi('/auth/google', {
         ...payload,
-        mode: authMode,
+        mode: effectiveAuthMode,
       });
       const authenticatedUser = composeAuthUserWithToken(result.user, result.token);
       syncUserToLocalCache(authenticatedUser);
-      onAuthSuccess(authenticatedUser);
+      if (onAuthenticated) {
+        await Promise.resolve(onAuthenticated(authenticatedUser));
+      }
+      if (shouldFinalizeSession) {
+        onAuthSuccess(authenticatedUser);
+      }
+      return authenticatedUser;
     } catch (err) {
       const errorCode = String(err?.payload?.code || '').trim().toUpperCase();
-      if (authMode === 'login' && Number(err?.status || 0) === 404 && errorCode === 'ACCOUNT_NOT_FOUND') {
-        switchMode(false);
+      if (effectiveAuthMode === 'login' && Number(err?.status || 0) === 404 && errorCode === 'ACCOUNT_NOT_FOUND') {
+        if (shouldFinalizeSession) {
+          switchMode(false);
+        }
         setSuccess('No account found for this Google email. Please register first.');
         void popup.alert({
           title: 'Please Register First',
@@ -6033,6 +6250,22 @@ function AuthScreen({ onAuthSuccess }) {
     }
   };
 
+  const handleGoogleAuthPayload = async (payload) => {
+    if (isLineGoogleBridgeFlow) {
+      await authenticateWithGoogle(payload, 'login', {
+        authMode: 'login',
+        finalizeSession: false,
+        onAuthenticated: async (authenticatedUser) => {
+          const linkResult = await linkLineOaAccountWithAuthToken(authenticatedUser?.authToken);
+          setSuccess(linkResult?.message || 'Login complete. You can return to LINE now.');
+        },
+      });
+      return;
+    }
+
+    await authenticateWithGoogle(payload, isLoginMode ? 'login' : 'register');
+  };
+
   const handleGoogleCredential = async (response) => {
     const idToken = String(response?.credential || '').trim();
     if (!idToken) {
@@ -6040,19 +6273,33 @@ function AuthScreen({ onAuthSuccess }) {
       return;
     }
 
-    await authenticateWithGoogle({ idToken }, isLoginMode ? 'login' : 'register');
+    await handleGoogleAuthPayload({ idToken });
   };
 
   const handleGoogleButtonClick = () => {
     setError('');
     setSuccess('');
 
-    if (!isLoginMode && !acceptTerms) {
+    if (!isLoginMode && !acceptTerms && !isLineGoogleBridgeFlow) {
       void popup.alert({
         title: 'Please Accept Terms First',
         message: 'Please read Terms of Service and Privacy Policy, then tick I accept before registering with Google.',
       });
       openLegalModal('terms');
+      return;
+    }
+
+    if (isLineBrowser && lineLinkToken) {
+      if (!lineBridgeMode) {
+        activateLineBridgeMode();
+      }
+      if (!isLoginMode) {
+        setIsLoginMode(true);
+      }
+      const opened = openLineBridgeInExternalBrowser();
+      if (!opened) {
+        setError('Unable to open external browser. Please allow popups and try again.');
+      }
       return;
     }
 
@@ -6111,7 +6358,7 @@ function AuthScreen({ onAuthSuccess }) {
               return;
             }
 
-            void authenticateWithGoogle({ accessToken }, isLoginMode ? 'login' : 'register');
+            void handleGoogleAuthPayload({ accessToken });
           },
           error_callback: (errorResponse) => {
             setError(
@@ -6265,6 +6512,37 @@ function AuthScreen({ onAuthSuccess }) {
       setIsSubmitting(false);
     }
   };
+  const handleLineBridgePrimaryAction = async () => {
+    if (!isLineGoogleBridgeFlow) return;
+    if (!lineLinkIsLinked) {
+      if (isLineBrowser) {
+        const opened = openLineBridgeInExternalBrowser();
+        if (!opened) {
+          setError('Unable to open external browser. Please allow popups and try again.');
+        }
+        return;
+      }
+      handleGoogleButtonClick();
+      return;
+    }
+    if (isLineBrowser) {
+      await loginWithLineLinkToken();
+      return;
+    }
+    returnToLineApp();
+  };
+  const lineBridgeStatusTitle = lineLinkIsLinked ? 'Login เสร็จสิ้น' : 'รอ Login with Google';
+  const lineBridgeStatusDetail = lineLinkIsLinked
+    ? 'บัญชี PAMDA เชื่อมกับ LINE OA แล้ว'
+    : isLineBrowser
+      ? 'กรุณากดปุ่มด้านล่างเพื่อเปิดเบราว์เซอร์นอกและล็อกอิน Google'
+      : 'กรุณากด Login with Google ด้านล่างเพื่อดำเนินการต่อ';
+  const lineBridgeButtonLabel = lineLinkIsLinked
+    ? isLineBrowser
+      ? 'เข้าสู่เว็บ'
+      : 'กลับสู่ไลน์'
+    : 'Login with Google';
+  const lineBridgeButtonBusyLabel = lineLinkIsLinked ? 'กำลังเข้าสู่ระบบ...' : 'กำลังดำเนินการ...';
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-100 via-slate-100 to-cyan-100 flex items-center justify-center p-4">
@@ -6287,188 +6565,230 @@ function AuthScreen({ onAuthSuccess }) {
         </div>
 
         <div className="p-6">
-          <div className="grid grid-cols-2 rounded-lg bg-gray-100 p-1 mb-4">
-            <button
-              type="button"
-              onClick={() => switchMode(true)}
-              className={`py-2 rounded-md text-sm font-medium transition-colors ${
-                isLoginMode ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'
-              }`}
-            >
-              Login
-            </button>
-            <button
-              type="button"
-              onClick={() => switchMode(false)}
-              className={`py-2 rounded-md text-sm font-medium transition-colors ${
-                !isLoginMode ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'
-              }`}
-            >
-              Register
-            </button>
-          </div>
+          <div ref={googleButtonRef} className="hidden" />
 
-          <div className="space-y-2 mb-4">
-            <div ref={googleButtonRef} className="hidden" />
-            <button
-              type="button"
-              onClick={handleGoogleButtonClick}
-              disabled={isSubmitting}
-              className={`w-full h-11 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium flex items-center justify-center gap-2 transition-colors ${
-                isSubmitting
-                  ? 'opacity-60 cursor-not-allowed'
-                  : 'hover:bg-gray-50'
-              }`}
-            >
-              <svg className="w-4 h-4" viewBox="0 0 18 18" aria-hidden="true">
-                <path
-                  fill="#4285F4"
-                  d="M17.64 9.2045c0-.638-.0573-1.2518-.1636-1.8409H9v3.4818h4.8436c-.2087 1.125-.8427 2.0782-1.7964 2.7164v2.2582h2.9082c1.7018-1.5664 2.6846-3.8727 2.6846-6.6155z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M9 18c2.43 0 4.4673-.8064 5.9564-2.1791l-2.9082-2.2582c-.8064.54-1.8409.8591-3.0482.8591-2.3441 0-4.3282-1.5827-5.0364-3.7091H.9573v2.3327C2.4382 15.9836 5.4818 18 9 18z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M3.9636 10.7127c-.18-.54-.2836-1.1168-.2836-1.7127s.1036-1.1727.2836-1.7127V4.9545H.9573C.3477 6.1691 0 7.5409 0 9s.3477 2.8309.9573 4.0455l3.0063-2.3328z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M9 3.5795c1.3214 0 2.5078.4541 3.4405 1.3459l2.5814-2.5814C13.4632.8918 11.4268 0 9 0 5.4818 0 2.4382 2.0164.9573 4.9545l3.0063 2.3328c.7082-2.1264 2.6923-3.7091 5.0364-3.7091z"
-                />
-              </svg>
-              <span>{isLoginMode ? 'Login with Google' : 'Register with Google'}</span>
-            </button>
-          </div>
+          {isLineGoogleBridgeFlow ? (
+            <div className="space-y-4">
+              <section className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Status</p>
+                <p className="text-lg font-semibold text-blue-900 mt-1">{lineBridgeStatusTitle}</p>
+                <p className="text-sm text-blue-800 mt-1">{lineBridgeStatusDetail}</p>
+              </section>
 
-          <div className="flex items-center gap-2 mb-4">
-            <div className="h-px bg-gray-200 flex-1" />
-            <span className="text-[11px] text-gray-400 uppercase tracking-wider">or</span>
-            <div className="h-px bg-gray-200 flex-1" />
-          </div>
+              <section className="rounded-xl border border-gray-200 bg-white px-4 py-3 space-y-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Action</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleLineBridgePrimaryAction();
+                  }}
+                  disabled={isSubmitting || isLineLinkStatusLoading}
+                  className={`w-full h-11 rounded-lg font-semibold inline-flex items-center justify-center gap-2 transition-colors ${
+                    isSubmitting || isLineLinkStatusLoading
+                      ? 'bg-blue-300 text-white cursor-not-allowed'
+                      : 'bg-blue-600 text-white hover:bg-blue-700'
+                  }`}
+                >
+                  {(isSubmitting || isLineLinkStatusLoading) && <Loader2 className="w-4 h-4 animate-spin" />}
+                  <span>{isSubmitting || isLineLinkStatusLoading ? lineBridgeButtonBusyLabel : lineBridgeButtonLabel}</span>
+                </button>
+              </section>
 
-          <form onSubmit={handleSubmit} noValidate className="space-y-3">
-            {isLoginMode ? (
-              <>
-                <input
-                  type="text"
-                  value={identifier}
-                  onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="Email or Username"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Password"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </>
-            ) : (
-              <>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Username"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Email"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Password"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-                <input
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Confirm password"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-                {showConfirmPasswordMismatch && (
-                  <p className="text-xs text-red-600 -mt-1">Confirm password does not match Password.</p>
-                )}
-                <div className="grid grid-cols-[1fr,auto] gap-2">
-                  <input
-                    type="text"
-                    value={otpCode}
-                    onChange={(e) => setOtpCode(e.target.value)}
-                    placeholder="OTP Code"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSendOtp}
-                    disabled={isSendingOtp || isSubmitting}
-                    className="px-4 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 disabled:opacity-60"
-                  >
-                    {isSendingOtp ? 'Sending...' : isOtpSent ? 'Resend OTP' : 'Send OTP'}
-                  </button>
-                </div>
-                <div className="space-y-1">
-                  <label className="inline-flex items-center gap-2 text-sm text-gray-600">
-                    <input
-                      type="checkbox"
-                      checked={acceptTerms}
-                      onChange={(e) => setAcceptTerms(e.target.checked)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              {error && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  {error}
+                </p>
+              )}
+
+              {success && (
+                <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                  {success}
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 rounded-lg bg-gray-100 p-1 mb-4">
+                <button
+                  type="button"
+                  onClick={() => switchMode(true)}
+                  className={`py-2 rounded-md text-sm font-medium transition-colors ${
+                    isLoginMode ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'
+                  }`}
+                >
+                  Login
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchMode(false)}
+                  className={`py-2 rounded-md text-sm font-medium transition-colors ${
+                    !isLoginMode ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'
+                  }`}
+                >
+                  Register
+                </button>
+              </div>
+
+              <div className="space-y-2 mb-4">
+                <button
+                  type="button"
+                  onClick={handleGoogleButtonClick}
+                  disabled={isSubmitting}
+                  className={`w-full h-11 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium flex items-center justify-center gap-2 transition-colors ${
+                    isSubmitting ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'
+                  }`}
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 18 18" aria-hidden="true">
+                    <path
+                      fill="#4285F4"
+                      d="M17.64 9.2045c0-.638-.0573-1.2518-.1636-1.8409H9v3.4818h4.8436c-.2087 1.125-.8427 2.0782-1.7964 2.7164v2.2582h2.9082c1.7018-1.5664 2.6846-3.8727 2.6846-6.6155z"
                     />
-                    <span>
-                      I accept{' '}
+                    <path
+                      fill="#34A853"
+                      d="M9 18c2.43 0 4.4673-.8064 5.9564-2.1791l-2.9082-2.2582c-.8064.54-1.8409.8591-3.0482.8591-2.3441 0-4.3282-1.5827-5.0364-3.7091H.9573v2.3327C2.4382 15.9836 5.4818 18 9 18z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M3.9636 10.7127c-.18-.54-.2836-1.1168-.2836-1.7127s.1036-1.1727.2836-1.7127V4.9545H.9573C.3477 6.1691 0 7.5409 0 9s.3477 2.8309.9573 4.0455l3.0063-2.3328z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M9 3.5795c1.3214 0 2.5078.4541 3.4405 1.3459l2.5814-2.5814C13.4632.8918 11.4268 0 9 0 5.4818 0 2.4382 2.0164.9573 4.9545l3.0063 2.3328c.7082-2.1264 2.6923-3.7091 5.0364-3.7091z"
+                    />
+                  </svg>
+                  <span>{isLoginMode ? 'Login with Google' : 'Register with Google'}</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 mb-4">
+                <div className="h-px bg-gray-200 flex-1" />
+                <span className="text-[11px] text-gray-400 uppercase tracking-wider">or</span>
+                <div className="h-px bg-gray-200 flex-1" />
+              </div>
+
+              <form onSubmit={handleSubmit} noValidate className="space-y-3">
+                {isLoginMode ? (
+                  <>
+                    <input
+                      type="text"
+                      value={identifier}
+                      onChange={(e) => setIdentifier(e.target.value)}
+                      placeholder="Email or Username"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Password"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="Username"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="Email"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Password"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Confirm password"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    {showConfirmPasswordMismatch && (
+                      <p className="text-xs text-red-600 -mt-1">Confirm password does not match Password.</p>
+                    )}
+                    <div className="grid grid-cols-[1fr,auto] gap-2">
+                      <input
+                        type="text"
+                        value={otpCode}
+                        onChange={(e) => setOtpCode(e.target.value)}
+                        placeholder="OTP Code"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2.5 outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
                       <button
                         type="button"
-                        onClick={() => openLegalModal('terms')}
-                        className="text-blue-700 hover:text-blue-900 underline font-medium"
+                        onClick={handleSendOtp}
+                        disabled={isSendingOtp || isSubmitting}
+                        className="px-4 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 disabled:opacity-60"
                       >
-                        Terms of Service
-                      </button>{' '}
-                      and{' '}
-                      <button
-                        type="button"
-                        onClick={() => openLegalModal('privacy')}
-                        className="text-blue-700 hover:text-blue-900 underline font-medium"
-                      >
-                        Privacy Policy
+                        {isSendingOtp ? 'Sending...' : isOtpSent ? 'Resend OTP' : 'Send OTP'}
                       </button>
-                      .
-                    </span>
-                  </label>
-                </div>
-              </>
-            )}
+                    </div>
+                    <div className="space-y-1">
+                      <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                        <input
+                          type="checkbox"
+                          checked={acceptTerms}
+                          onChange={(e) => setAcceptTerms(e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span>
+                          I accept{' '}
+                          <button
+                            type="button"
+                            onClick={() => openLegalModal('terms')}
+                            className="text-blue-700 hover:text-blue-900 underline font-medium"
+                          >
+                            Terms of Service
+                          </button>{' '}
+                          and{' '}
+                          <button
+                            type="button"
+                            onClick={() => openLegalModal('privacy')}
+                            className="text-blue-700 hover:text-blue-900 underline font-medium"
+                          >
+                            Privacy Policy
+                          </button>
+                          .
+                        </span>
+                      </label>
+                    </div>
+                  </>
+                )}
 
-            {error && (
-              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                {error}
-              </p>
-            )}
+                {error && (
+                  <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {error}
+                  </p>
+                )}
 
-            {success && (
-              <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-                {success}
-              </p>
-            )}
+                {success && (
+                  <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                    {success}
+                  </p>
+                )}
 
-            <button
-              type="submit"
-              disabled={isSubmitting || isSendingOtp}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold rounded-lg py-2.5 transition-colors inline-flex items-center justify-center gap-2"
-            >
-              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-              {isLoginMode ? 'Login' : 'Create account'}
-            </button>
-          </form>
+                <button
+                  type="submit"
+                  disabled={isSubmitting || isSendingOtp}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-semibold rounded-lg py-2.5 transition-colors inline-flex items-center justify-center gap-2"
+                >
+                  {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {isLoginMode ? 'Login' : 'Create account'}
+                </button>
+              </form>
+            </>
+          )}
         </div>
       </div>
 
