@@ -1570,6 +1570,17 @@ const sendLineReplyMessage = async ({ replyToken, message, messages }) =>
 
 const LINE_CHAT_LOADING_DEBUG_MAX_USERS = 300;
 const lineChatLoadingDebugByUserId = new Map();
+const LINE_LOADING_SECONDS_ALLOWED = Object.freeze([5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]);
+const normalizeLineLoadingSeconds = (valueInput, fallbackInput = 20) => {
+  const fallback = Number.parseInt(String(fallbackInput || 20), 10);
+  const fallbackSeconds = LINE_LOADING_SECONDS_ALLOWED.includes(fallback) ? fallback : 20;
+  const value = Number.parseInt(String(valueInput || ''), 10);
+  if (!Number.isFinite(value)) return fallbackSeconds;
+  if (LINE_LOADING_SECONDS_ALLOWED.includes(value)) return value;
+  if (value < 5) return 5;
+  if (value > 60) return 60;
+  return Math.ceil(value / 5) * 5;
+};
 const setLineChatLoadingDebugState = (chatIdInput, payloadInput = {}) => {
   const chatId = String(chatIdInput || '').trim();
   if (!chatId) return;
@@ -1617,13 +1628,17 @@ const buildLineChatLoadingDebugMessage = (chatIdInput) => {
     `loadingSeconds: ${state.loadingSeconds || '-'}`,
     `attemptedAt: ${state.attemptedAt || '-'}`,
     `detail: ${state.detail || '-'}`,
+    '',
+    state.ok
+      ? 'note: ถ้า ok=true แต่ไม่เห็น animation ให้เช็คว่าเปิดหน้าแชต OA นี้ค้างอยู่, เป็นแชตแบบ 1:1, และแอป LINE เวอร์ชัน 13.16.0+'
+      : 'note: ถ้า ok=false ให้ส่งข้อความนี้ให้แอดมินเพื่อตรวจ token/chatId/รูปแบบ request',
   ].join('\n');
 };
 
-const startLineChatLoading = async ({ chatId, loadingSeconds = 8 }) => {
+const startLineChatLoading = async ({ chatId, loadingSeconds = 20 }) => {
   const token = String(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN || '').trim();
   const safeChatId = String(chatId || '').trim();
-  const seconds = Math.max(5, Math.min(60, Number.parseInt(String(loadingSeconds || 8), 10) || 8));
+  const seconds = normalizeLineLoadingSeconds(loadingSeconds, 20);
   if (!token || !safeChatId) {
     setLineChatLoadingDebugState(safeChatId, {
       ok: false,
@@ -1644,13 +1659,14 @@ const startLineChatLoading = async ({ chatId, loadingSeconds = 8 }) => {
         loadingSeconds: seconds,
       }),
     });
+    const lineRequestId = String(response.headers.get('x-line-request-id') || '').trim();
     if (!response.ok) {
       const responseText = String(await response.text()).trim();
       setLineChatLoadingDebugState(safeChatId, {
         ok: false,
         status: response.status,
         reason: 'line_api_error',
-        detail: responseText,
+        detail: [lineRequestId ? `requestId=${lineRequestId}` : '', responseText].filter(Boolean).join(' | '),
         loadingSeconds: seconds,
       });
       console.warn(
@@ -1664,6 +1680,7 @@ const startLineChatLoading = async ({ chatId, loadingSeconds = 8 }) => {
       ok: true,
       status: response.status,
       reason: 'ok',
+      detail: lineRequestId ? `requestId=${lineRequestId}` : '',
       loadingSeconds: seconds,
     });
     return true;
@@ -5007,6 +5024,9 @@ app.get('/health', (_req, res) => {
     lineWebhookReplyConfigured: Boolean(LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN),
     lineOaLoginTokenConfigured: Boolean(LINE_OA_LOGIN_TOKEN_SECRET),
     lineOaDefaultChatTimeoutMs: LINE_OA_CHAT_TIMEOUT_MS,
+    lineLoadingDebugCommandEnabled: true,
+    lineLoadingSecondsAllowed: LINE_LOADING_SECONDS_ALLOWED,
+    lineLoadingSecondsDefault: 20,
     openAiConfigured: Boolean(OPENAI_API_KEY),
     openAiModel: OPENAI_MODEL,
     openAiReasoningEffort: OPENAI_REASONING_EFFORT,
@@ -7893,7 +7913,7 @@ app.post('/line/webhook', async (req, res) => {
       if (isPrivateUserText) {
         await startLineChatLoading({
           chatId: userId,
-          loadingSeconds: 8,
+          loadingSeconds: 10,
         });
         await handleLineOaPrivateTextMessage({
           event,
