@@ -3993,6 +3993,20 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
   if (typeof window === 'undefined') return false;
   const targetUrl = String(urlInput || '').trim();
   if (!targetUrl) return false;
+  const withLineExternalBrowserHint = (rawUrlInput) => {
+    const rawUrl = String(rawUrlInput || '').trim();
+    if (!rawUrl) return '';
+    try {
+      const parsed = new URL(rawUrl);
+      parsed.searchParams.set('openExternalBrowser', '1');
+      parsed.searchParams.set('openInAppBrowser', '0');
+      return parsed.toString();
+    } catch {
+      return rawUrl;
+    }
+  };
+  const hintedUrl = withLineExternalBrowserHint(targetUrl);
+  const candidateUrls = hintedUrl && hintedUrl !== targetUrl ? [targetUrl, hintedUrl] : [targetUrl];
 
   try {
     const liff = await loadLineLiffSdk();
@@ -4003,28 +4017,50 @@ const openUrlInLineExternalBrowser = async (urlInput) => {
       } catch {}
     }
     if (liff?.openWindow) {
-      liff.openWindow({
-        url: targetUrl,
-        external: true,
-      });
-      return true;
+      for (const candidateUrl of candidateUrls) {
+        try {
+          await Promise.resolve(
+            liff.openWindow({
+              url: candidateUrl,
+              external: true,
+            })
+          );
+          return true;
+        } catch {}
+      }
     }
   } catch {}
 
   try {
-    window.location.assign(`https://line.me/R/openurl/?url=${encodeURIComponent(targetUrl)}`);
+    const opened = window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    if (opened) return true;
+  } catch {}
+
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = targetUrl;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    return true;
+  } catch {}
+
+  try {
+    window.location.assign(targetUrl);
     return true;
   } catch {}
 
   return false;
 };
-const buildLineBridgeExternalUrl = (urlInput, bridgeIdInput = '') => {
+const buildLineBridgeExternalUrl = (urlInput, bridgeIdInput = '', linkTokenInput = '') => {
   const currentUrl = urlInput instanceof URL ? urlInput : null;
   if (!currentUrl) return '';
   const nextUrl = new URL(`${currentUrl.origin}${currentUrl.pathname}`);
   const lineAction = getLineLinkActionFromLocationUrl(currentUrl);
   const bridgeId = String(bridgeIdInput || '').trim() || getLineBridgeIdFromLocationUrl(currentUrl);
-  const linkToken = getLineLinkTokenFromLocationUrl(currentUrl);
+  const linkToken = String(linkTokenInput || '').trim() || getLineLinkTokenFromLocationUrl(currentUrl);
   if (bridgeId) {
     nextUrl.searchParams.set(LINE_BRIDGE_ID_QUERY_KEY, bridgeId);
   } else if (linkToken) {
@@ -6225,25 +6261,39 @@ function AuthScreen({ onAuthSuccess }) {
     if (typeof window === 'undefined') return false;
     const currentUrl = getCurrentLocationUrl();
     if (!currentUrl) return false;
+    const effectiveLineLinkToken = String(lineLinkToken || '').trim();
     let effectiveBridgeId = String(lineBridgeId || '').trim();
-    if (!effectiveBridgeId) {
-      try {
-        effectiveBridgeId = await createLineBridgeSessionId();
-      } catch (bridgeError) {
-        console.warn('Failed to create LINE bridge session:', bridgeError?.message || bridgeError);
-      }
-    }
-    if (!effectiveBridgeId) {
+    if (!effectiveBridgeId && !effectiveLineLinkToken) {
       return false;
     }
-    const href = buildLineBridgeExternalUrl(currentUrl, effectiveBridgeId);
+    const persistBridgeSessionInBackground = () => {
+      if (effectiveBridgeId || !effectiveLineLinkToken) return;
+      void createLineBridgeSessionId()
+        .then((nextBridgeId) => {
+          const normalizedBridgeId = String(nextBridgeId || '').trim();
+          if (!normalizedBridgeId) return;
+          setLineBridgeId(normalizedBridgeId);
+          replaceUrlSearchParams((searchParams) => {
+            searchParams.set(LINE_BRIDGE_ID_QUERY_KEY, normalizedBridgeId);
+            searchParams.delete(LINE_LINK_TOKEN_QUERY_KEY);
+          });
+        })
+        .catch((bridgeError) => {
+          console.warn('Failed to create LINE bridge session:', bridgeError?.message || bridgeError);
+        });
+    };
+    const markOpenSuccess = () => {
+      persistBridgeSessionInBackground();
+      return true;
+    };
+    const href = buildLineBridgeExternalUrl(currentUrl, effectiveBridgeId, effectiveLineLinkToken);
     if (!href) return false;
 
     const openedByLine = await openUrlInLineExternalBrowser(href);
-    if (openedByLine) return true;
+    if (openedByLine) return markOpenSuccess();
 
     const openedWindow = window.open(href, '_blank', 'noopener,noreferrer');
-    if (openedWindow) return true;
+    if (openedWindow) return markOpenSuccess();
     try {
       const anchor = document.createElement('a');
       anchor.href = href;
@@ -6252,11 +6302,11 @@ function AuthScreen({ onAuthSuccess }) {
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
-      return true;
+      return markOpenSuccess();
     } catch {
       return false;
     }
-  }, [lineBridgeId, createLineBridgeSessionId]);
+  }, [lineBridgeId, lineLinkToken, createLineBridgeSessionId, replaceUrlSearchParams]);
 
   useEffect(() => {
     syncLineFlowFromUrl();
