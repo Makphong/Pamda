@@ -6084,6 +6084,12 @@ export default function App() {
 
   const pathname = String(typeof window !== 'undefined' ? window.location.pathname : '').trim().toLowerCase();
   const isStandalonePrivacyPath = pathname === '/privacy' || pathname === '/privacy/';
+  const shouldForceAuthScreenForLineBridge = (() => {
+    const url = getCurrentLocationUrl();
+    if (!url) return false;
+    if (!getLineBridgeModeFromLocationUrl(url)) return false;
+    return Boolean(getLineLinkTokenFromLocationUrl(url) || getLineBridgeIdFromLocationUrl(url));
+  })();
 
   if (isStandalonePrivacyPath) {
     return <LegalPrivacyTermsPage />;
@@ -6091,7 +6097,7 @@ export default function App() {
 
   return (
     <PopupProvider>
-      {!currentUser ? (
+      {!currentUser || shouldForceAuthScreenForLineBridge ? (
         <AuthScreen onAuthSuccess={handleAuthSuccess} />
       ) : (
         <CalendarApp
@@ -6761,7 +6767,9 @@ function AuthScreen({ onAuthSuccess }) {
     }
 
     if (googleTokenClientRef.current?.requestAccessToken) {
-      googleTokenClientRef.current.requestAccessToken({ prompt: 'select_account' });
+      googleTokenClientRef.current.requestAccessToken({
+        prompt: isLineGoogleBridgeFlow ? 'consent select_account' : 'select_account',
+      });
       return;
     }
 
