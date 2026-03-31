@@ -1247,7 +1247,7 @@ const buildLineTaskRowsForFlex = (tasksInput, options = {}) => {
           ? [
               {
                 type: 'text',
-                text: clampLineText(`Task à¹ƒà¸«à¸à¹ˆ: ${parentTaskTitle}`, 180),
+                text: clampLineText(`Task ใหญ่: ${parentTaskTitle}`, 180),
                 size: 'xs',
                 color: '#64748b',
                 wrap: true,
@@ -1615,9 +1615,9 @@ const buildLineChatLoadingDebugMessage = (chatIdInput) => {
   if (!state) {
     return [
       'LINE Loading Debug',
-      'no_data: ยังไม่มีประวัติการเรียก loading/start สำหรับผู้ใช้นี้',
+      'no_data: no loading/start attempt has been recorded yet for this chat.',
       '',
-      'ลองส่งข้อความธรรมดาอีก 1 ข้อความ แล้วพิมพ์ /loadingdebug ใหม่',
+      'Send a normal message to the OA first, then run /loadingdebug again.',
     ].join('\n');
   }
   return [
@@ -1630,8 +1630,8 @@ const buildLineChatLoadingDebugMessage = (chatIdInput) => {
     `detail: ${state.detail || '-'}`,
     '',
     state.ok
-      ? 'note: ถ้า ok=true แต่ไม่เห็น animation ให้เช็คว่าเปิดหน้าแชต OA นี้ค้างอยู่, เป็นแชตแบบ 1:1, และแอป LINE เวอร์ชัน 13.16.0+'
-      : 'note: ถ้า ok=false ให้ส่งข้อความนี้ให้แอดมินเพื่อตรวจ token/chatId/รูปแบบ request',
+      ? 'note: if ok=true but animation is still not visible, verify OA is 1:1 chat and LINE app is 13.16.0+'
+      : 'note: if ok=false, inspect token/chatId and request payload on the server.',
   ].join('\n');
 };
 
@@ -1731,6 +1731,37 @@ const isLineLoadingDebugCommand = (value) => {
   ]).has(normalized);
 };
 
+const resolveLineOaPendingActionDecision = (valueInput) => {
+  const normalized = normalizeLineCommandText(valueInput);
+  if (
+    new Set([
+      '\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19',
+      '/\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19',
+      'confirm',
+      '/confirm',
+      'ok',
+      '/ok',
+      '\u0e15\u0e01\u0e25\u0e07',
+      '/\u0e15\u0e01\u0e25\u0e07',
+    ]).has(normalized)
+  ) {
+    return 'confirm';
+  }
+  if (
+    new Set([
+      '\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01',
+      '/\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01',
+      'cancel',
+      '/cancel',
+      '\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e04\u0e33\u0e2a\u0e31\u0e48\u0e07',
+      '/\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e04\u0e33\u0e2a\u0e31\u0e48\u0e07',
+    ]).has(normalized)
+  ) {
+    return 'cancel';
+  }
+  return '';
+};
+
 const LINE_OA_ACTIONS = Object.freeze({
   A: 'A',
   B: 'B',
@@ -1785,12 +1816,12 @@ const normalizeLineOaChatProjectCodeMap = (codeMapInput) =>
     .filter(Boolean)
     .slice(0, 40);
 const DEFAULT_LINE_OA_COMMAND_MAP = Object.freeze({
-  [LINE_OA_ACTIONS.A]: 'เข้า PAMDA',
-  [LINE_OA_ACTIONS.B]: 'เช็คTask',
-  [LINE_OA_ACTIONS.C]: 'เช็คEvent',
-  [LINE_OA_ACTIONS.D]: 'สรุปรายวัน',
-  [LINE_OA_ACTIONS.E]: 'แชทกับบอท',
-  [LINE_OA_ACTIONS.F]: 'ตั้งค่าข้อความ',
+  [LINE_OA_ACTIONS.A]: 'Open PAMDA',
+  [LINE_OA_ACTIONS.B]: 'Check Task',
+  [LINE_OA_ACTIONS.C]: 'Check Event',
+  [LINE_OA_ACTIONS.D]: 'Daily Summary',
+  [LINE_OA_ACTIONS.E]: 'Chat with bot',
+  [LINE_OA_ACTIONS.F]: 'Settings',
 });
 const normalizeLineOaFilterMode = (modeInput) => {
   const mode = String(modeInput || '').trim().toLowerCase();
@@ -1920,6 +1951,7 @@ const normalizeLineOaChatSessionRecord = (recordInput) => {
     timeoutNotifiedAt: String(record.timeoutNotifiedAt || '').trim() || null,
     chatProjectCode: normalizeLineOaChatProjectCode(record.chatProjectCode),
     chatProjectMap: normalizeLineOaChatProjectCodeMap(record.chatProjectMap),
+    pendingAction: normalizeAiPendingAction(record.pendingAction),
   };
 };
 const createLineOaLinkToken = ({ lineUserId, nextAction = '' }) => {
@@ -2141,7 +2173,7 @@ const isLineOaChatProjectSwitchOnlyMessage = (messageTextInput, codeInput = '') 
   if (!code) return false;
   const messageText = String(messageTextInput || '').trim().toUpperCase();
   if (!messageText) return false;
-  return new RegExp(`^(?:เลือก|ใช้|SWITCH|SET)?\\s*${code}\\s*$`, 'i').test(messageText);
+  return new RegExp(`^(?:SELECT|CHOOSE|USE|SWITCH|SET)?\\s*${code}\\s*$`, 'i').test(messageText);
 };
 
 const normalizeGoogleEventColorId = (value) => {
@@ -2653,7 +2685,9 @@ const writeAccountPayloadToStore = async (userId, payload, options = {}) => {
 
 const AI_ACTION_TYPES = {
   CREATE_TASK: 'create_task',
+  CREATE_EVENT: 'create_event',
   DELETE_EVENT: 'delete_event',
+  DELETE_PROJECT: 'delete_project',
   NOTIFY_OPEN_TASKS: 'notify_open_tasks',
 };
 const AI_VALID_ACTION_TYPES = new Set(Object.values(AI_ACTION_TYPES));
@@ -3302,12 +3336,12 @@ const buildLineOaSessionSleepMessage = () =>
     headerLabel: 'PAMDA',
     altText: '[PAMDA] Chat session closed',
     title: 'Chat mode ended',
-    subtitle: 'น้อง PAMDA ขอตัวไปพักก่อนนะคั้บ',
+    subtitle: 'Your PAMDA chat session timed out.',
     accentColor: '#0ea5e9',
     rows: buildLineOaSimpleRows(
       [
         {
-          title: 'Tap "แชทกับบอท" in rich menu to start again.',
+          title: 'Tap "Chat with bot" in Rich Menu to start again.',
         },
       ],
       { max: 1 }
@@ -3328,7 +3362,7 @@ const buildLineOaFilterMessage = ({ payload, filterInput }) => {
       action: {
         type: 'message',
         label: clampLineText(
-          `${selected ? '✓ ' : ''}${String(project?.name || projectId || 'Project').trim()}`,
+          `${selected ? '? ' : ''}${String(project?.name || projectId || 'Project').trim()}`,
           20
         ),
         text: `${LINE_OA_INTERNAL_MESSAGES.FILTER_PROJECT_PREFIX}${projectId}`,
@@ -3430,6 +3464,7 @@ const scheduleLineOaSessionTimeoutNotice = ({ lineUserId, timeoutMs = LINE_OA_CH
         active: false,
         timeoutNotifiedAt: nowIso,
         updatedAt: nowIso,
+        pendingAction: null,
       });
       await sendLinePushMessage({
         channelAccessToken: LINE_WEBHOOK_CHANNEL_ACCESS_TOKEN,
@@ -3786,6 +3821,63 @@ const resolveAiProjectByHint = (payload, hintInput) => {
   );
 };
 
+const normalizeProjectMemberUsernameList = (projectInput) => {
+  const project = projectInput && typeof projectInput === 'object' && !Array.isArray(projectInput)
+    ? projectInput
+    : {};
+  const memberUsernames = (Array.isArray(project.members) ? project.members : [])
+    .map((member) => String(member || '').trim().toLowerCase())
+    .filter(Boolean);
+  const teamMemberUsernames = (Array.isArray(project.teamMembers) ? project.teamMembers : [])
+    .map((member) => {
+      const value = member && typeof member === 'object' && !Array.isArray(member) ? member : {};
+      return String(value.username || value.name || '').trim().toLowerCase();
+    })
+    .filter(Boolean);
+  return Array.from(new Set([...memberUsernames, ...teamMemberUsernames]));
+};
+
+const resolveAiProjectPermission = ({ project, userId, username }) => {
+  const safeProject = project && typeof project === 'object' && !Array.isArray(project) ? project : {};
+  const safeUserId = sanitizeUserId(userId);
+  const safeUsername = sanitizeUsername(username);
+  const ownerId = sanitizeUserId(safeProject.ownerId);
+  const ownerUsername = sanitizeUsername(safeProject.ownerUsername);
+  const isOwner =
+    (safeUserId && ownerId && safeUserId === ownerId) ||
+    (safeUsername && ownerUsername && safeUsername === ownerUsername);
+  const memberNames = normalizeProjectMemberUsernameList(safeProject);
+  const isMember = safeUsername ? memberNames.includes(safeUsername) : false;
+  const canAccess = isOwner || isMember || (!ownerId && !ownerUsername);
+  return {
+    isOwner,
+    isMember,
+    canAccess,
+    canMutate: canAccess,
+  };
+};
+
+const assertAiProjectMutationPermission = ({
+  project,
+  userId,
+  username,
+  requireOwner = false,
+  actionName = 'perform this action',
+}) => {
+  const permission = resolveAiProjectPermission({ project, userId, username });
+  if (!permission.canMutate) {
+    const error = new Error(`You do not have permission to ${actionName} in this project.`);
+    error.status = 403;
+    throw error;
+  }
+  if (requireOwner && !permission.isOwner) {
+    const error = new Error(`Only project host can ${actionName} in this project.`);
+    error.status = 403;
+    throw error;
+  }
+  return permission;
+};
+
 const resolveAiEventForDeletion = ({ payload, eventId, projectId, titleContains }) => {
   const normalizedEventId = String(eventId || '').trim();
   const normalizedProjectId = String(projectId || '').trim();
@@ -4129,7 +4221,7 @@ const getAiImageInputPartsFromAttachments = (attachmentsInput) => {
 const buildOpenAiUserMessageWithAttachments = ({ textInput, attachmentsInput }) => {
   const text =
     sanitizeAiMessageContent(textInput, 12000) ||
-    'à¹‚à¸›à¸£à¸”à¸§à¸´à¹€à¸„à¸£à¸²à¸°à¸«à¹Œà¸£à¸¹à¸›à¸—à¸µà¹ˆà¸œà¸¹à¹‰à¹ƒà¸Šà¹‰à¹à¸™à¸šà¸¡à¸²à¸žà¸£à¹‰à¸­à¸¡à¸šà¸£à¸´à¸šà¸—à¸‚à¸­à¸‡à¹‚à¸›à¸£à¹€à¸ˆà¸à¸•à¹Œ';
+    'โปรดวิเคราะห์รูปที่ผู้ใช้แนบมาพร้อมบริบทของโปรเจกต์';
   const imageParts = getAiImageInputPartsFromAttachments(attachmentsInput);
   if (imageParts.length === 0) {
     return buildOpenAiInputMessage('user', text);
@@ -4352,7 +4444,7 @@ const runAiAssistant = async ({
     if (shouldAppendCurrentUserMessage) {
       fallbackInput.pop();
       const imageCount = attachedImageParts.length;
-      const fallbackText = `${String(userMessage || '').trim()}\n\n[à¹à¸™à¸šà¸£à¸¹à¸› ${imageCount} à¹„à¸Ÿà¸¥à¹Œ]`;
+      const fallbackText = `${String(userMessage || '').trim()}\n\n[แนบรูป ${imageCount} ไฟล์]`;
       fallbackInput.push(buildOpenAiInputMessage('user', fallbackText));
     }
     response = await callOpenAiResponsesApi({
@@ -4394,8 +4486,8 @@ const runAiAssistant = async ({
   const assistantText =
     assistantTextRaw ||
     (pendingAction
-      ? 'à¸£à¹ˆà¸²à¸‡à¸„à¸³à¸ªà¸±à¹ˆà¸‡à¸žà¸£à¹‰à¸­à¸¡à¹à¸¥à¹‰à¸§ à¸à¸£à¸¸à¸“à¸²à¸à¸”à¸¢à¸·à¸™à¸¢à¸±à¸™à¹€à¸žà¸·à¹ˆà¸­à¹ƒà¸«à¹‰à¸£à¸°à¸šà¸šà¸”à¸³à¹€à¸™à¸´à¸™à¸à¸²à¸£'
-      : 'à¸‚à¸­à¸­à¸ à¸±à¸¢ à¸£à¸°à¸šà¸šà¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¸ªà¸£à¹‰à¸²à¸‡à¸„à¸³à¸•à¸­à¸šà¹„à¸”à¹‰à¹ƒà¸™à¸‚à¸“à¸°à¸™à¸µà¹‰');
+      ? 'ร่างคำสั่งพร้อมแล้ว กรุณากดยืนยันเพื่อให้ระบบดำเนินการ'
+      : 'ขออภัย ระบบยังไม่สามารถสร้างคำตอบได้ในขณะนี้');
   return {
     assistantText: sanitizeAiMessageContent(assistantText, 12000),
     pendingAction,
@@ -4536,17 +4628,18 @@ const runLineOaGeminiAssistant = async ({
     'You are PAMDA LINE OA private assistant.',
     'Always answer in Thai.',
     'Return strict JSON object only with this shape:',
-    '{"replyText":"string","action":{"type":"none|create_task|create_event|delete_event|notify_open_tasks","payload":{}}}',
+    '{"replyText":"string","action":{"type":"none|create_task|create_event|delete_event|delete_project|notify_open_tasks","payload":{}}}',
     'If no action is needed, set action.type = "none".',
     'If user asks to create a task, include create_task payload with projectId or projectHint and title.',
     'If user asks to create an event, include create_event payload with title (+ startDate/startTime/endDate/endTime when known).',
     'If user asks to delete/remove task/event, include delete_event payload with eventId or titleContains (+projectId when known).',
+    'If user asks to delete project, include delete_project payload with projectId or projectHint.',
     'If user asks to notify LINE group open tasks, include notify_open_tasks payload with projectId.',
     `Project code mode is enabled. Active code: ${selectionScopeLine}.`,
     `Project code map: ${projectCodeLines}`,
     allowMutatingActions
       ? 'Mutation actions are allowed in current scope.'
-      : `Mutation guard: action type create_task/create_event/delete_event is forbidden when active code is ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} or no project is selected.`,
+      : `Mutation guard: action type create_task/create_event/delete_event/delete_project is forbidden when active code is ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} or no project is selected.`,
     'Never fabricate ids. If unsure, ask follow-up in replyText and keep action.type as "none".',
     'Context summary JSON:',
     JSON.stringify(contextSummary),
@@ -4563,8 +4656,13 @@ const runLineOaGeminiAssistant = async ({
   const actionType = String(action.type || '').trim().toLowerCase();
   const actionPayload = action.payload && typeof action.payload === 'object' ? action.payload : {};
   let actionResult = null;
+  let pendingAction = null;
   let actionErrorMessage = '';
-  const isMutationAction = actionType === 'create_task' || actionType === 'create_event' || actionType === 'delete_event';
+  const isMutationAction =
+    actionType === 'create_task' ||
+    actionType === 'create_event' ||
+    actionType === 'delete_event' ||
+    actionType === 'delete_project';
   const fallbackProjectFromScope = (() => {
     const projects = getPayloadProjects(payload);
     if (projects.length !== 1) return null;
@@ -4573,7 +4671,7 @@ const runLineOaGeminiAssistant = async ({
 
   try {
     if (!allowMutatingActions && isMutationAction) {
-      actionErrorMessage = `ยังไม่ได้เลือกโปรเจกต์ หรืออยู่ในโหมด ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} กรุณาเลือกโปรเจกต์ P1, P2, ... ก่อนสั่งเพิ่ม/ลบข้อมูล`;
+      actionErrorMessage = `No project selected or ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} mode is active. Please choose P1, P2, ... before add/delete actions.`;
     } else if (actionType === 'create_task') {
       const matchedProject =
         getProjectByIdFromPayload(payload, actionPayload.projectId) ||
@@ -4582,11 +4680,12 @@ const runLineOaGeminiAssistant = async ({
       const title = sanitizeAiMessageContent(actionPayload.title, 220);
       if (!matchedProject || !title) {
         actionErrorMessage = !matchedProject
-          ? 'ยังไม่พบโปรเจกต์ที่ต้องการสร้าง Task'
-          : 'ยังไม่มีชื่องานที่ชัดเจน';
+          ? 'Target project for creating task was not found.'
+          : 'Task title is missing.';
       } else {
         actionResult = await executeAiCreateTaskAction({
           userId,
+          username,
           actionPayload: {
             ...actionPayload,
             projectId: String(matchedProject.id || '').trim(),
@@ -4602,11 +4701,12 @@ const runLineOaGeminiAssistant = async ({
       const title = sanitizeAiMessageContent(actionPayload.title, 220);
       if (!matchedProject || !title) {
         actionErrorMessage = !matchedProject
-          ? 'ยังไม่พบโปรเจกต์ที่ต้องการสร้าง Event'
-          : 'ยังไม่มีชื่อ Event ที่ชัดเจน';
+          ? 'Target project for creating event was not found.'
+          : 'Event title is missing.';
       } else {
         actionResult = await executeAiCreateEventAction({
           userId,
+          username,
           actionPayload: {
             ...actionPayload,
             projectId: String(matchedProject.id || '').trim(),
@@ -4622,13 +4722,47 @@ const runLineOaGeminiAssistant = async ({
         titleContains: actionPayload.titleContains,
       });
       if (!targetEvent) {
-        actionErrorMessage = 'ยังไม่พบรายการที่ต้องการลบ';
+        actionErrorMessage = 'Target item for deletion was not found.';
       } else {
-        actionResult = await executeAiDeleteEventAction({
-          userId,
-          actionPayload: {
+        const targetProject = getProjectByIdFromPayload(payload, targetEvent.projectId);
+        if (targetProject) {
+          assertAiProjectMutationPermission({
+            project: targetProject,
+            userId,
+            username,
+            requireOwner: false,
+            actionName: 'delete item',
+          });
+        }
+        pendingAction = createAiPendingAction({
+          type: AI_ACTION_TYPES.DELETE_EVENT,
+          summary: `Delete "${String(targetEvent.title || '').trim() || 'Untitled'}"`,
+          payload: {
             eventId: String(targetEvent.id || '').trim(),
           },
+        });
+      }
+    } else if (actionType === 'delete_project') {
+      const matchedProject =
+        getProjectByIdFromPayload(payload, actionPayload.projectId) ||
+        resolveAiProjectByHint(payload, actionPayload.projectHint) ||
+        fallbackProjectFromScope;
+      if (!matchedProject) {
+        actionErrorMessage = 'Target project for deletion was not found.';
+      } else {
+        assertAiProjectMutationPermission({
+          project: matchedProject,
+          userId,
+          username,
+          requireOwner: true,
+          actionName: 'delete project',
+        });
+        pendingAction = createAiPendingAction({
+          type: AI_ACTION_TYPES.DELETE_PROJECT,
+          payload: {
+            projectId: String(matchedProject.id || '').trim(),
+          },
+          summary: `Delete project "${String(matchedProject.name || matchedProject.id || '').trim()}"`,
         });
       }
     } else if (actionType === 'notify_open_tasks') {
@@ -4636,7 +4770,7 @@ const runLineOaGeminiAssistant = async ({
         getProjectByIdFromPayload(payload, actionPayload.projectId) ||
         resolveAiProjectByHint(payload, actionPayload.projectHint);
       if (!matchedProject) {
-        actionErrorMessage = 'ยังไม่พบโปรเจกต์ที่ต้องการส่งแจ้งเตือน';
+        actionErrorMessage = 'Target project for LINE notification was not found.';
       } else {
         actionResult = await sendLineOpenTaskDigestForProject({
           userId,
@@ -4649,23 +4783,28 @@ const runLineOaGeminiAssistant = async ({
     actionErrorMessage = String(error?.message || 'Action execution failed.').trim();
   }
 
-  let assistantText = replyText || 'รับทราบครับ';
-  if (actionResult?.task?.title) {
-    assistantText = `${assistantText}\n\nสร้าง Task "${actionResult.task.title}" เรียบร้อยแล้ว`;
+  let assistantText = replyText || 'Received.';
+  if (pendingAction?.id) {
+    assistantText = `${assistantText}\n\nDelete action is pending. Reply "ยืนยัน" to proceed or "ยกเลิก" to cancel.`;
+  } else if (actionResult?.task?.title) {
+    assistantText = `${assistantText}\n\nTask "${actionResult.task.title}" has been created.`;
   } else if (actionResult?.event?.title) {
-    assistantText = `${assistantText}\n\nสร้าง Event "${actionResult.event.title}" เรียบร้อยแล้ว`;
+    assistantText = `${assistantText}\n\nEvent "${actionResult.event.title}" has been created.`;
   } else if (actionResult?.removed?.title) {
-    assistantText = `${assistantText}\n\nลบรายการ "${actionResult.removed.title}" เรียบร้อยแล้ว`;
+    assistantText = `${assistantText}\n\nItem "${actionResult.removed.title}" has been deleted.`;
+  } else if (actionResult?.removedProject?.name) {
+    assistantText = `${assistantText}\n\nProject "${actionResult.removedProject.name}" has been deleted.`;
   } else if (actionResult?.openTaskCount >= 0) {
-    assistantText = `${assistantText}\n\nส่งสรุป Open Task ไปที่ LINE กลุ่มแล้ว (${actionResult.openTaskCount} งาน)`;
+    assistantText = `${assistantText}\n\nOpen task summary sent to LINE group (${actionResult.openTaskCount} tasks).`;
   } else if (actionErrorMessage) {
-    assistantText = `${assistantText}\n\nหมายเหตุ: ${actionErrorMessage}`;
+    assistantText = `${assistantText}\n\nNote: ${actionErrorMessage}`;
   }
 
   return {
-    assistantText: sanitizeAiMessageContent(assistantText, 5000) || 'รับทราบครับ',
+    assistantText: sanitizeAiMessageContent(assistantText, 5000) || 'Received.',
     actionType,
     actionResult,
+    pendingAction,
     actionErrorMessage,
   };
 };
@@ -4724,7 +4863,7 @@ const resolveAiTaskDepartment = ({ project, requestedDepartment, assigneeIds }) 
   return 'Unassigned';
 };
 
-const executeAiCreateTaskAction = async ({ userId, actionPayload }) => {
+const executeAiCreateTaskAction = async ({ userId, username = '', actionPayload }) => {
   const payload = await readAccountPayloadFromStore(userId);
   const projects = getPayloadProjects(payload);
   const events = getPayloadEvents(payload);
@@ -4733,6 +4872,13 @@ const executeAiCreateTaskAction = async ({ userId, actionPayload }) => {
   if (!targetProject) {
     throw new Error('Project not found for task creation.');
   }
+  assertAiProjectMutationPermission({
+    project: targetProject,
+    userId,
+    username,
+    requireOwner: false,
+    actionName: 'create task',
+  });
   const nowIso = new Date().toISOString();
   const title = sanitizeAiMessageContent(actionPayload?.title, 220);
   if (!title) {
@@ -4826,7 +4972,7 @@ const executeAiCreateTaskAction = async ({ userId, actionPayload }) => {
   };
 };
 
-const executeAiCreateEventAction = async ({ userId, actionPayload }) => {
+const executeAiCreateEventAction = async ({ userId, username = '', actionPayload }) => {
   const payload = await readAccountPayloadFromStore(userId);
   const projects = getPayloadProjects(payload);
   const events = getPayloadEvents(payload);
@@ -4835,6 +4981,13 @@ const executeAiCreateEventAction = async ({ userId, actionPayload }) => {
   if (!targetProject) {
     throw new Error('Project not found for event creation.');
   }
+  assertAiProjectMutationPermission({
+    project: targetProject,
+    userId,
+    username,
+    requireOwner: false,
+    actionName: 'create event',
+  });
   const nowIso = new Date().toISOString();
   const title = sanitizeAiMessageContent(actionPayload?.title, 220);
   if (!title) {
@@ -4918,7 +5071,7 @@ const executeAiCreateEventAction = async ({ userId, actionPayload }) => {
   };
 };
 
-const executeAiDeleteEventAction = async ({ userId, actionPayload }) => {
+const executeAiDeleteEventAction = async ({ userId, username = '', actionPayload }) => {
   const payload = await readAccountPayloadFromStore(userId);
   const events = getPayloadEvents(payload);
   const projects = getPayloadProjects(payload);
@@ -4929,6 +5082,17 @@ const executeAiDeleteEventAction = async ({ userId, actionPayload }) => {
     throw new Error('Event not found.');
   }
   const projectId = String(targetEvent?.projectId || '').trim();
+  const projectRecord =
+    projects.find((project) => String(project?.id || '').trim() === projectId) || null;
+  if (projectRecord) {
+    assertAiProjectMutationPermission({
+      project: projectRecord,
+      userId,
+      username,
+      requireOwner: false,
+      actionName: 'delete item',
+    });
+  }
   const nowIso = new Date().toISOString();
   const nextEvents = events.filter((event) => String(event?.id || '').trim() !== eventId);
   const nextProjects = projects.map((project) => {
@@ -4966,6 +5130,128 @@ const executeAiDeleteEventAction = async ({ userId, actionPayload }) => {
       projectName: getProjectNameByIdFromPayload(payload, projectId),
     },
   };
+};
+
+const executeAiDeleteProjectAction = async ({ userId, username = '', actionPayload }) => {
+  const payload = await readAccountPayloadFromStore(userId);
+  const projects = getPayloadProjects(payload);
+  const events = getPayloadEvents(payload);
+  const projectId = String(actionPayload?.projectId || '').trim();
+  if (!projectId) {
+    throw new Error('projectId is required for delete project action.');
+  }
+  const targetProject = projects.find((project) => String(project?.id || '').trim() === projectId);
+  if (!targetProject) {
+    throw new Error('Project not found.');
+  }
+  assertAiProjectMutationPermission({
+    project: targetProject,
+    userId,
+    username,
+    requireOwner: true,
+    actionName: 'delete project',
+  });
+  const nowIso = new Date().toISOString();
+  const nextProjects = projects.filter((project) => String(project?.id || '').trim() !== projectId);
+  const nextEvents = events.filter((event) => String(event?.projectId || '').trim() !== projectId);
+  const projectTodosByProjectId =
+    payload?.projectTodosByProjectId &&
+    typeof payload.projectTodosByProjectId === 'object' &&
+    !Array.isArray(payload.projectTodosByProjectId)
+      ? payload.projectTodosByProjectId
+      : {};
+  const nextProjectTodosByProjectId = { ...projectTodosByProjectId };
+  if (Object.prototype.hasOwnProperty.call(nextProjectTodosByProjectId, projectId)) {
+    delete nextProjectTodosByProjectId[projectId];
+  }
+  const nextPayload = {
+    ...payload,
+    projects: nextProjects,
+    events: nextEvents,
+    projectTodosByProjectId: nextProjectTodosByProjectId,
+    updatedAt: nowIso,
+  };
+  await writeAccountPayloadToStore(userId, nextPayload);
+  return {
+    removedProject: {
+      id: projectId,
+      name: String(targetProject?.name || projectId).trim(),
+      removedEvents: Math.max(0, events.length - nextEvents.length),
+    },
+  };
+};
+
+const executeAiPendingAction = async ({
+  pendingAction,
+  userId,
+  username = '',
+  authUsername = '',
+}) => {
+  const action = normalizeAiPendingAction(pendingAction);
+  if (!action) {
+    const error = new Error('Pending action not found or expired.');
+    error.status = 404;
+    throw error;
+  }
+  if (action.type === AI_ACTION_TYPES.CREATE_TASK) {
+    const actionResult = await executeAiCreateTaskAction({
+      userId,
+      username,
+      actionPayload: action.payload,
+    });
+    return {
+      actionResult,
+      assistantText: `Task "${actionResult?.task?.title || ''}" has been created.`,
+    };
+  }
+  if (action.type === AI_ACTION_TYPES.CREATE_EVENT) {
+    const actionResult = await executeAiCreateEventAction({
+      userId,
+      username,
+      actionPayload: action.payload,
+    });
+    return {
+      actionResult,
+      assistantText: `Event "${actionResult?.event?.title || ''}" has been created.`,
+    };
+  }
+  if (action.type === AI_ACTION_TYPES.DELETE_EVENT) {
+    const actionResult = await executeAiDeleteEventAction({
+      userId,
+      username,
+      actionPayload: action.payload,
+    });
+    return {
+      actionResult,
+      assistantText: `Item "${actionResult?.removed?.title || ''}" has been deleted.`,
+    };
+  }
+  if (action.type === AI_ACTION_TYPES.DELETE_PROJECT) {
+    const actionResult = await executeAiDeleteProjectAction({
+      userId,
+      username,
+      actionPayload: action.payload,
+    });
+    return {
+      actionResult,
+      assistantText: `Project "${actionResult?.removedProject?.name || ''}" has been deleted.`,
+    };
+  }
+  if (action.type === AI_ACTION_TYPES.NOTIFY_OPEN_TASKS) {
+    const actionResult = await sendLineOpenTaskDigestForProject({
+      userId,
+      projectId: action.payload?.projectId,
+      authUsername,
+    });
+    return {
+      actionResult,
+      assistantText:
+        actionResult?.openTaskCount > 0
+          ? `LINE open-task summary has been sent (${actionResult.openTaskCount} tasks).`
+          : 'There are no open tasks to send right now.',
+    };
+  }
+  throw new Error('Unsupported pending action type.');
 };
 
 const mailer = nodemailer.createTransport({
@@ -7507,6 +7793,7 @@ app.post('/line/oa/link', requireAuth, async (req, res) => {
       timeoutNotifiedAt: null,
       chatProjectCode: '',
       chatProjectMap: [],
+      pendingAction: null,
     });
     clearLineOaSessionTimeoutTimer(context.lineUserId);
     return res.json({
@@ -7607,7 +7894,7 @@ const buildLineOaTaskDigestMessage = ({ payload, userId, scope }) => {
   return buildLineCardFlexMessage({
     headerLabel: 'PAMDA',
     altText: `[PAMDA] Your tasks (${tasks.length})`,
-    title: 'Task ที่ต้องทำ',
+    title: 'Open Tasks',
     subtitle: buildLineOaScopeLabel({ scope, payload }),
     accentColor: '#2563eb',
     statLabel: 'Open Task',
@@ -7646,7 +7933,7 @@ const buildLineOaUpcomingEventsMessage = ({ payload, scope }) => {
   return buildLineCardFlexMessage({
     headerLabel: 'PAMDA',
     altText: `[PAMDA] Upcoming events (${events.length})`,
-    title: 'Event 7 วันข้างหน้า',
+    title: 'Upcoming Events (7 days)',
     subtitle: buildLineOaScopeLabel({ scope, payload }),
     accentColor: '#0ea5e9',
     statLabel: 'Upcoming',
@@ -7672,7 +7959,7 @@ const buildLineOaDailyUpdatesMessage = ({ payload, scope }) => {
   return buildLineCardFlexMessage({
     headerLabel: 'PAMDA',
     altText: `[PAMDA] Daily summary (${flattened.length})`,
-    title: 'สรุปรายวัน (24 ชม.)',
+    title: 'Recent Updates (24h)',
     subtitle: buildLineOaScopeLabel({ scope, payload }),
     accentColor: '#16a34a',
     statLabel: 'Updates',
@@ -7723,7 +8010,7 @@ const buildLineOaChatProjectPickerMessage = ({ selectionInput }) => {
         contents: [
           {
             type: 'text',
-            text: 'เลือก Project สำหรับแชท',
+            text: 'Select a Project Scope',
             size: 'lg',
             weight: 'bold',
             color: '#0f172a',
@@ -7739,7 +8026,7 @@ const buildLineOaChatProjectPickerMessage = ({ selectionInput }) => {
             : [
                 {
                   type: 'text',
-                  text: 'ยังไม่มีโปรเจกต์ให้เลือก',
+                  text: 'No project available for selection.',
                   size: 'sm',
                   color: '#64748b',
                 },
@@ -7754,13 +8041,13 @@ const buildLineOaChatModeEnabledMessage = ({ timeoutMs = LINE_OA_CHAT_TIMEOUT_MS
   buildLineCardFlexMessage({
     headerLabel: 'PAMDA',
     altText: '[PAMDA] Chat mode enabled',
-    title: 'โหมดแชทพร้อมใช้งาน',
-    subtitle: `สามารถคุยกับบอทได้ ${Math.max(1, Math.round(timeoutMs / 60000))} นาที`,
+    title: 'Chat Mode Enabled',
+    subtitle: `Session auto-closes after ${Math.max(1, Math.round(timeoutMs / 60000))} minute(s) of inactivity`,
     accentColor: '#f59e0b',
     rows: buildLineOaSimpleRows(
       [
         {
-          title: 'หากไม่มีการคุยเกิน 2 นาที ระบบจะปิดโหมดแชทอัตโนมัติ',
+          title: 'If no conversation for 2 minutes, chat mode will close automatically.',
         },
       ],
       { max: 1 }
@@ -7771,16 +8058,28 @@ const buildLineOaDefaultHintMessage = () =>
   buildLineCardFlexMessage({
     headerLabel: 'PAMDA',
     altText: '[PAMDA] Ready',
-    title: 'พร้อมให้บริการ',
-    subtitle: 'เลือกเมนูจาก Rich Menu ได้เลย',
+    title: 'Ready to help',
+    subtitle: 'Use Rich Menu to pick an action.',
     accentColor: '#2563eb',
     rows: buildLineOaSimpleRows(
       [
-        { title: 'เช็คTask, เช็คEvent, สรุปรายวัน, แชทกับบอท, ตั้งค่าข้อความ' },
+        { title: 'Try asking: tasks, events, reminders, updates, or project summary.' },
       ],
       { max: 1 }
     ),
   });
+
+const buildLineOaPendingActionAwaitText = (pendingActionInput) => {
+  const pendingAction = normalizeAiPendingAction(pendingActionInput);
+  if (!pendingAction) return '';
+  const summary = String(pendingAction.summary || '').trim();
+  const summaryLine = summary ? `คำสั่งรอยืนยัน: ${summary}` : 'มีคำสั่งรอยืนยันอยู่';
+  return [
+    summaryLine,
+    'พิมพ์ "ยืนยัน" เพื่อดำเนินการต่อ',
+    'พิมพ์ "ยกเลิก" เพื่อยกเลิกคำสั่ง',
+  ].join('\n');
+};
 
 const replyLineEventWithFallback = async ({ event, messages, fallbackTarget = '' }) => {
   const safeReplyToken = String(event?.replyToken || '').trim();
@@ -7882,6 +8181,7 @@ const handleLineOaPrivateTextMessage = async ({
       timeoutNotifiedAt: new Date().toISOString(),
       chatProjectCode: '',
       chatProjectMap: [],
+      pendingAction: null,
     });
     await replyLineEventWithFallback({
       event,
@@ -8120,6 +8420,7 @@ const handleLineOaPrivateTextMessage = async ({
       timeoutNotifiedAt: null,
       chatProjectCode: chatSelectionFromSession.selectedCode,
       chatProjectMap: chatSelectionFromSession.projectMap,
+      pendingAction: null,
     });
     scheduleLineOaSessionTimeoutNotice({
       lineUserId,
@@ -8162,6 +8463,7 @@ const handleLineOaPrivateTextMessage = async ({
       timeoutNotifiedAt: null,
       chatProjectCode: chatSelectionForStart.selectedCode,
       chatProjectMap: chatSelectionForStart.projectMap,
+      pendingAction: null,
     });
     scheduleLineOaSessionTimeoutNotice({
       lineUserId,
@@ -8188,6 +8490,7 @@ const handleLineOaPrivateTextMessage = async ({
         ...sessionRecord,
         active: false,
         timeoutNotifiedAt: new Date().toISOString(),
+        pendingAction: null,
       });
       clearLineOaSessionTimeoutTimer(lineUserId);
       await replyLineEventWithFallback({
@@ -8201,6 +8504,83 @@ const handleLineOaPrivateTextMessage = async ({
       event,
       fallbackTarget: lineUserId,
       messages: [buildLineOaDefaultHintMessage()],
+    });
+    return;
+  }
+
+  const activePendingAction = normalizeAiPendingAction(sessionRecord.pendingAction);
+  if (activePendingAction) {
+    const pendingDecision = resolveLineOaPendingActionDecision(messageText);
+    if (!pendingDecision) {
+      await replyLineEventWithFallback({
+        event,
+        fallbackTarget: lineUserId,
+        messages: [
+          {
+            type: 'text',
+            text:
+              buildLineOaPendingActionAwaitText(activePendingAction) ||
+              'There is a pending action. Reply "ยืนยัน" to continue or "ยกเลิก" to cancel.',
+          },
+        ],
+      });
+      return;
+    }
+    let assistantText = '';
+    try {
+      if (pendingDecision === 'cancel') {
+        assistantText = 'ยกเลิกคำสั่งเรียบร้อยแล้ว';
+      } else {
+        const executionResult = await executeAiPendingAction({
+          pendingAction: activePendingAction,
+          userId: linkedUserId,
+          username: linkedRecord?.username || '',
+          authUsername: linkedRecord?.username || '',
+        });
+        assistantText = executionResult.assistantText;
+      }
+    } catch (error) {
+      assistantText = `Unable to execute action: ${String(error?.message || 'unknown error').trim()}`;
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextExpiresAt = new Date(nowMs + timeoutMs).toISOString();
+    const nextHistory = normalizeLineOaChatHistory([
+      ...(Array.isArray(sessionRecord.history) ? sessionRecord.history : []),
+      {
+        role: 'user',
+        text: messageText,
+        createdAt: nowIso,
+      },
+      {
+        role: 'assistant',
+        text: sanitizeAiMessageContent(assistantText, 4500) || 'Received.',
+        createdAt: nowIso,
+      },
+    ]);
+    await saveLineOaChatSession(lineUserId, {
+      ...sessionRecord,
+      lineUserId,
+      userId: linkedUserId,
+      active: true,
+      history: nextHistory,
+      expiresAt: nextExpiresAt,
+      timeoutNotifiedAt: null,
+      pendingAction: null,
+    });
+    scheduleLineOaSessionTimeoutNotice({
+      lineUserId,
+      timeoutMs,
+    });
+    await replyLineEventWithFallback({
+      event,
+      fallbackTarget: lineUserId,
+      messages: [
+        {
+          type: 'text',
+          text: sanitizeAiMessageContent(assistantText, 4500) || 'Received.',
+        },
+      ],
     });
     return;
   }
@@ -8223,6 +8603,7 @@ const handleLineOaPrivateTextMessage = async ({
       timeoutNotifiedAt: null,
       chatProjectCode: activeChatSelection.selectedCode,
       chatProjectMap: activeChatSelection.projectMap,
+      pendingAction: null,
     });
     scheduleLineOaSessionTimeoutNotice({
       lineUserId,
@@ -8265,6 +8646,7 @@ const handleLineOaPrivateTextMessage = async ({
     .join('\n\n');
 
   let assistantText = '';
+  let nextPendingAction = null;
   try {
     const sessionHistory = normalizeLineOaChatHistory(sessionRecord.history);
     if (GEMINI_API_KEY) {
@@ -8279,6 +8661,7 @@ const handleLineOaPrivateTextMessage = async ({
         allowMutatingActions: activeChatSelection.allowMutatingActions === true,
       });
       assistantText = sanitizeAiMessageContent(geminiResult.assistantText, 4000);
+      nextPendingAction = normalizeAiPendingAction(geminiResult.pendingAction);
     } else if (OPENAI_API_KEY) {
       const aiResult = await runAiAssistant({
         payload: aiScopedPayload,
@@ -8293,6 +8676,39 @@ const handleLineOaPrivateTextMessage = async ({
         attachments: [],
       });
       assistantText = sanitizeAiMessageContent(aiResult.assistantText, 4000);
+      const openAiPendingAction = normalizeAiPendingAction(aiResult.pendingAction);
+      if (openAiPendingAction) {
+        const isDeletePending =
+          openAiPendingAction.type === AI_ACTION_TYPES.DELETE_EVENT ||
+          openAiPendingAction.type === AI_ACTION_TYPES.DELETE_PROJECT;
+        if (isDeletePending) {
+          nextPendingAction = openAiPendingAction;
+          assistantText = sanitizeAiMessageContent(
+            `${assistantText}\n\n${buildLineOaPendingActionAwaitText(openAiPendingAction)}`,
+            4000
+          );
+        } else {
+          try {
+            const executionResult = await executeAiPendingAction({
+              pendingAction: openAiPendingAction,
+              userId: linkedUserId,
+              username: linkedRecord?.username || '',
+              authUsername: linkedRecord?.username || '',
+            });
+            assistantText = sanitizeAiMessageContent(
+              executionResult.assistantText || assistantText,
+              4000
+            );
+            nextPendingAction = null;
+          } catch (pendingError) {
+            assistantText = sanitizeAiMessageContent(
+              `${assistantText}\n\nหมายเหตุ: ${String(pendingError?.message || 'Unable to execute action').trim()}`,
+              4000
+            );
+            nextPendingAction = null;
+          }
+        }
+      }
     } else {
       assistantText =
         'ยังไม่ได้ตั้งค่า Gemini หรือ OpenAI API บนเซิร์ฟเวอร์ จึงยังไม่สามารถคุยโหมดบอทได้';
@@ -8326,6 +8742,7 @@ const handleLineOaPrivateTextMessage = async ({
     timeoutNotifiedAt: null,
     chatProjectCode: activeChatSelection.selectedCode,
     chatProjectMap: activeChatSelection.projectMap,
+    pendingAction: nextPendingAction,
   });
   scheduleLineOaSessionTimeoutNotice({
     lineUserId,
@@ -8334,7 +8751,12 @@ const handleLineOaPrivateTextMessage = async ({
   await replyLineEventWithFallback({
     event,
     fallbackTarget: lineUserId,
-    messages: [{ type: 'text', text: sanitizeAiMessageContent(assistantText, 4500) || 'รับทราบครับ' }],
+    messages: [
+      {
+        type: 'text',
+        text: sanitizeAiMessageContent(assistantText, 4500) || 'Unable to generate response.',
+      },
+    ],
   });
 };
 
@@ -9013,31 +9435,16 @@ app.post('/ai/threads/:threadId/confirm-action', requireAuth, async (req, res) =
     let assistantText = '';
     let actionResult = null;
     if (decision === 'cancel') {
-      assistantText = 'à¸¢à¸à¹€à¸¥à¸´à¸à¸„à¸³à¸ªà¸±à¹ˆà¸‡à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§';
-    } else if (pendingAction.type === AI_ACTION_TYPES.CREATE_TASK) {
-      actionResult = await executeAiCreateTaskAction({
+      assistantText = 'Action cancelled successfully.';
+    } else {
+      const executionResult = await executeAiPendingAction({
+        pendingAction,
         userId,
-        actionPayload: pendingAction.payload,
-      });
-      assistantText = `à¸ªà¸£à¹‰à¸²à¸‡ Task "${actionResult?.task?.title || ''}" à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§`;
-    } else if (pendingAction.type === AI_ACTION_TYPES.DELETE_EVENT) {
-      actionResult = await executeAiDeleteEventAction({
-        userId,
-        actionPayload: pendingAction.payload,
-      });
-      assistantText = `à¸¥à¸šà¸£à¸²à¸¢à¸à¸²à¸£ "${actionResult?.removed?.title || ''}" à¹€à¸£à¸µà¸¢à¸šà¸£à¹‰à¸­à¸¢à¹à¸¥à¹‰à¸§`;
-    } else if (pendingAction.type === AI_ACTION_TYPES.NOTIFY_OPEN_TASKS) {
-      actionResult = await sendLineOpenTaskDigestForProject({
-        userId,
-        projectId: pendingAction.payload?.projectId,
+        username: req.authUser?.username,
         authUsername: req.authUser?.username,
       });
-      assistantText =
-        actionResult?.openTaskCount > 0
-          ? `à¸ªà¹ˆà¸‡ LINE open task summary à¹à¸¥à¹‰à¸§ (${actionResult.openTaskCount} tasks)`
-          : 'à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µ Open task à¸—à¸µà¹ˆà¸•à¹‰à¸­à¸‡à¸ªà¹ˆà¸‡à¹ƒà¸™à¸•à¸­à¸™à¸™à¸µà¹‰';
-    } else {
-      throw new Error('Unsupported pending action type.');
+      actionResult = executionResult.actionResult;
+      assistantText = executionResult.assistantText;
     }
 
     await threadRecord.ref.set(
@@ -9282,4 +9689,5 @@ const port = Number(process.env.PORT || 8080);
 app.listen(port, () => {
   console.log(`Auth server listening on port ${port}`);
 });
+
 
