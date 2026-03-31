@@ -2924,6 +2924,7 @@ const resolveLineOaChatProjectSelection = ({ payload, sessionRecord, preferredCo
     hasSelection,
     isMergeView,
     allowMutatingActions: Boolean(selectedProjectId) && !isMergeView,
+    allowDeleteActions: (Boolean(selectedProjectId) && !isMergeView) || isMergeView,
   };
 };
 
@@ -3559,7 +3560,7 @@ const buildLineOaChatProjectContextNote = (selectionInput) => {
     );
   } else if (selectedCode === LINE_OA_CHAT_PROJECT_DEFAULT_CODE || selection.isMergeView) {
     lines.push(
-      'Mutation policy: in P0, do not create/update/delete task or event. Ask user to choose P1 or above first.'
+      'Mutation policy: in P0, create/update and delete project are blocked. Deleting task/event is allowed with user confirmation.'
     );
   } else if (selection.selectedProjectId) {
     lines.push(
@@ -3878,23 +3879,63 @@ const assertAiProjectMutationPermission = ({
   return permission;
 };
 
-const resolveAiEventForDeletion = ({ payload, eventId, projectId, titleContains }) => {
-  const normalizedEventId = String(eventId || '').trim();
+const normalizeAiDeleteEventIds = (valueInput) => {
+  const values = Array.isArray(valueInput) ? valueInput : [];
+  return Array.from(
+    new Set(values.map((value) => String(value || '').trim()).filter(Boolean))
+  ).slice(0, 100);
+};
+
+const resolveAiEventsForDeletion = ({
+  payload,
+  eventId,
+  eventIds,
+  projectId,
+  titleContains,
+  maxMatches = 20,
+}) => {
+  const events = getPayloadEvents(payload);
   const normalizedProjectId = String(projectId || '').trim();
   const normalizedTitle = String(titleContains || '').trim().toLowerCase();
-  const events = getPayloadEvents(payload);
-  if (normalizedEventId) {
-    const event = events.find((item) => String(item?.id || '').trim() === normalizedEventId) || null;
-    return event;
+  const normalizedIds = Array.from(
+    new Set([
+      String(eventId || '').trim(),
+      ...normalizeAiDeleteEventIds(eventIds),
+    ].filter(Boolean))
+  );
+  const safeMaxMatches = clampAiCount(maxMatches, 20, 1, 100);
+
+  if (normalizedIds.length > 0) {
+    const idSet = new Set(normalizedIds);
+    const matchedById = events.filter((event) => {
+      const id = String(event?.id || '').trim();
+      if (!idSet.has(id)) return false;
+      if (normalizedProjectId && String(event?.projectId || '').trim() !== normalizedProjectId) return false;
+      return true;
+    });
+    return matchedById.slice(0, safeMaxMatches);
   }
-  if (!normalizedTitle) return null;
-  return (
-    events.find((event) => {
+
+  if (!normalizedTitle) return [];
+  return events
+    .filter((event) => {
       if (normalizedProjectId && String(event?.projectId || '').trim() !== normalizedProjectId) return false;
       const title = String(event?.title || '').trim().toLowerCase();
       return title.includes(normalizedTitle);
-    }) || null
-  );
+    })
+    .slice(0, safeMaxMatches);
+};
+
+const resolveAiEventForDeletion = ({ payload, eventId, eventIds, projectId, titleContains }) => {
+  const matches = resolveAiEventsForDeletion({
+    payload,
+    eventId,
+    eventIds,
+    projectId,
+    titleContains,
+    maxMatches: 1,
+  });
+  return matches[0] || null;
 };
 
 const createAiPendingAction = ({ type, summary, payload }) => {
@@ -4004,8 +4045,10 @@ const AI_TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         eventId: { type: 'string' },
+        eventIds: { type: 'array', items: { type: 'string' } },
         projectId: { type: 'string' },
         titleContains: { type: 'string' },
+        maxMatches: { type: 'number' },
       },
       additionalProperties: false,
     },
@@ -4316,24 +4359,32 @@ const executeAiToolCall = async ({ payload, args, toolName }) => {
     };
   }
   if (toolName === 'draft_delete_event') {
-    const targetEvent = resolveAiEventForDeletion({
+    const targetEvents = resolveAiEventsForDeletion({
       payload,
       eventId: toolArgs.eventId,
+      eventIds: toolArgs.eventIds,
       projectId: toolArgs.projectId,
       titleContains: toolArgs.titleContains,
+      maxMatches: toolArgs.maxMatches,
     });
-    if (!targetEvent) {
+    if (targetEvents.length === 0) {
       return {
         ok: false,
         message: 'Event or task to delete was not found.',
       };
     }
+    const targetIds = targetEvents.map((event) => String(event?.id || '').trim()).filter(Boolean);
+    const firstTitle = String(targetEvents[0]?.title || '').trim() || 'Untitled';
+    const summary =
+      targetIds.length <= 1
+        ? `Delete "${firstTitle}"`
+        : `Delete ${targetIds.length} items (task/event)`;
     const pendingAction = createAiPendingAction({
       type: AI_ACTION_TYPES.DELETE_EVENT,
-      summary: `Delete "${String(targetEvent.title || '').trim() || 'Untitled'}"`,
+      summary,
       payload: {
-        eventId: String(targetEvent.id || '').trim(),
-        projectId: String(targetEvent.projectId || '').trim(),
+        eventIds: targetIds,
+        projectId: String(toolArgs.projectId || '').trim(),
       },
     });
     return {
@@ -4596,6 +4647,7 @@ const runLineOaGeminiAssistant = async ({
   authUsername = '',
   chatProjectSelection = null,
   allowMutatingActions = true,
+  allowDeleteActions = true,
 }) => {
   const selection = chatProjectSelection && typeof chatProjectSelection === 'object'
     ? chatProjectSelection
@@ -4632,14 +4684,16 @@ const runLineOaGeminiAssistant = async ({
     'If no action is needed, set action.type = "none".',
     'If user asks to create a task, include create_task payload with projectId or projectHint and title.',
     'If user asks to create an event, include create_event payload with title (+ startDate/startTime/endDate/endTime when known).',
-    'If user asks to delete/remove task/event, include delete_event payload with eventId or titleContains (+projectId when known).',
+    'If user asks to delete/remove task/event, include delete_event payload with eventId/eventIds/titleContains (+projectId when known, maxMatches optional).',
     'If user asks to delete project, include delete_project payload with projectId or projectHint.',
     'If user asks to notify LINE group open tasks, include notify_open_tasks payload with projectId.',
     `Project code mode is enabled. Active code: ${selectionScopeLine}.`,
     `Project code map: ${projectCodeLines}`,
     allowMutatingActions
       ? 'Mutation actions are allowed in current scope.'
-      : `Mutation guard: action type create_task/create_event/delete_event/delete_project is forbidden when active code is ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} or no project is selected.`,
+      : allowDeleteActions
+      ? `Mutation guard: in ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} mode only delete_event is allowed (with confirmation). create_task/create_event/delete_project are forbidden.`
+      : `Mutation guard: action type create_task/create_event/delete_event/delete_project is forbidden when no project code is selected.`,
     'Never fabricate ids. If unsure, ask follow-up in replyText and keep action.type as "none".',
     'Context summary JSON:',
     JSON.stringify(contextSummary),
@@ -4670,8 +4724,19 @@ const runLineOaGeminiAssistant = async ({
   })();
 
   try {
-    if (!allowMutatingActions && isMutationAction) {
-      actionErrorMessage = `No project selected or ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} mode is active. Please choose P1, P2, ... before add/delete actions.`;
+    const canRunMutationInScope =
+      actionType === 'delete_event'
+        ? allowDeleteActions
+        : actionType === 'create_task' ||
+            actionType === 'create_event' ||
+            actionType === 'delete_project'
+          ? allowMutatingActions
+          : true;
+    if (isMutationAction && !canRunMutationInScope) {
+      actionErrorMessage =
+        actionType === 'delete_event'
+          ? `Delete action is not allowed in current scope. Please select ${LINE_OA_CHAT_PROJECT_DEFAULT_CODE} or P1, P2, ... first.`
+          : `No editable project selected. Please choose P1, P2, ... before create/delete-project actions.`;
     } else if (actionType === 'create_task') {
       const matchedProject =
         getProjectByIdFromPayload(payload, actionPayload.projectId) ||
@@ -4715,30 +4780,44 @@ const runLineOaGeminiAssistant = async ({
         });
       }
     } else if (actionType === 'delete_event') {
-      const targetEvent = resolveAiEventForDeletion({
+      const targetEvents = resolveAiEventsForDeletion({
         payload,
         eventId: actionPayload.eventId,
+        eventIds: actionPayload.eventIds,
         projectId: actionPayload.projectId,
         titleContains: actionPayload.titleContains,
+        maxMatches: actionPayload.maxMatches,
       });
-      if (!targetEvent) {
+      if (targetEvents.length === 0) {
         actionErrorMessage = 'Target item for deletion was not found.';
       } else {
-        const targetProject = getProjectByIdFromPayload(payload, targetEvent.projectId);
-        if (targetProject) {
-          assertAiProjectMutationPermission({
-            project: targetProject,
-            userId,
-            username,
-            requireOwner: false,
-            actionName: 'delete item',
-          });
-        }
+        const checkedProjectIds = new Set();
+        targetEvents.forEach((targetEvent) => {
+          const projectId = String(targetEvent?.projectId || '').trim();
+          if (!projectId || checkedProjectIds.has(projectId)) return;
+          const targetProject = getProjectByIdFromPayload(payload, projectId);
+          if (targetProject) {
+            assertAiProjectMutationPermission({
+              project: targetProject,
+              userId,
+              username,
+              requireOwner: false,
+              actionName: 'delete item',
+            });
+          }
+          checkedProjectIds.add(projectId);
+        });
+        const targetIds = targetEvents
+          .map((targetEvent) => String(targetEvent?.id || '').trim())
+          .filter(Boolean);
+        const firstTitle = String(targetEvents[0]?.title || '').trim() || 'Untitled';
+        const summary =
+          targetIds.length <= 1 ? `Delete "${firstTitle}"` : `Delete ${targetIds.length} items (task/event)`;
         pendingAction = createAiPendingAction({
           type: AI_ACTION_TYPES.DELETE_EVENT,
-          summary: `Delete "${String(targetEvent.title || '').trim() || 'Untitled'}"`,
+          summary,
           payload: {
-            eventId: String(targetEvent.id || '').trim(),
+            eventIds: targetIds,
           },
         });
       }
@@ -5075,16 +5154,27 @@ const executeAiDeleteEventAction = async ({ userId, username = '', actionPayload
   const payload = await readAccountPayloadFromStore(userId);
   const events = getPayloadEvents(payload);
   const projects = getPayloadProjects(payload);
-  const eventId = String(actionPayload?.eventId || '').trim();
-  if (!eventId) throw new Error('eventId is required for delete action.');
-  const targetEvent = events.find((event) => String(event?.id || '').trim() === eventId);
-  if (!targetEvent) {
+  const requestedEventIds = Array.from(
+    new Set([
+      ...normalizeAiDeleteEventIds(actionPayload?.eventIds),
+      String(actionPayload?.eventId || '').trim(),
+    ].filter(Boolean))
+  );
+  if (requestedEventIds.length === 0) {
+    throw new Error('eventId or eventIds is required for delete action.');
+  }
+  const requestedIdSet = new Set(requestedEventIds);
+  const targetEvents = events.filter((event) => requestedIdSet.has(String(event?.id || '').trim()));
+  if (targetEvents.length === 0) {
     throw new Error('Event not found.');
   }
-  const projectId = String(targetEvent?.projectId || '').trim();
-  const projectRecord =
-    projects.find((project) => String(project?.id || '').trim() === projectId) || null;
-  if (projectRecord) {
+  const projectIdsToCheck = Array.from(
+    new Set(targetEvents.map((event) => String(event?.projectId || '').trim()).filter(Boolean))
+  );
+  projectIdsToCheck.forEach((projectId) => {
+    const projectRecord =
+      projects.find((project) => String(project?.id || '').trim() === projectId) || null;
+    if (!projectRecord) return;
     assertAiProjectMutationPermission({
       project: projectRecord,
       userId,
@@ -5092,18 +5182,35 @@ const executeAiDeleteEventAction = async ({ userId, username = '', actionPayload
       requireOwner: false,
       actionName: 'delete item',
     });
-  }
+  });
   const nowIso = new Date().toISOString();
-  const nextEvents = events.filter((event) => String(event?.id || '').trim() !== eventId);
+  const targetIdSet = new Set(targetEvents.map((event) => String(event?.id || '').trim()));
+  const targetByProjectId = new Map();
+  targetEvents.forEach((event) => {
+    const projectId = String(event?.projectId || '').trim();
+    if (!projectId) return;
+    const existing = targetByProjectId.get(projectId) || [];
+    existing.push(event);
+    targetByProjectId.set(projectId, existing);
+  });
+  const nextEvents = events.filter((event) => !targetIdSet.has(String(event?.id || '').trim()));
   const nextProjects = projects.map((project) => {
-    if (String(project?.id || '').trim() !== projectId) return project;
+    const projectId = String(project?.id || '').trim();
+    const removedInProject = targetByProjectId.get(projectId) || [];
+    if (removedInProject.length === 0) return project;
     const feed = Array.isArray(project?.changeFeed) ? project.changeFeed : [];
+    const isMultiDelete = removedInProject.length > 1;
+    const title = isMultiDelete
+      ? `${removedInProject.length} items removed`
+      : String(removedInProject[0]?.title || '').trim();
     const nextFeed = [
       {
         id: buildAiId(),
         type: 'event_deleted',
-        title: String(targetEvent?.title || '').trim(),
-        message: 'AI assistant deleted an event/task.',
+        title,
+        message: isMultiDelete
+          ? `AI assistant deleted ${removedInProject.length} events/tasks.`
+          : 'AI assistant deleted an event/task.',
         actorUsername: 'pm_ai',
         actorId: 'pm_ai',
         createdAt: nowIso,
@@ -5122,13 +5229,21 @@ const executeAiDeleteEventAction = async ({ userId, username = '', actionPayload
     events: nextEvents,
   };
   await writeAccountPayloadToStore(userId, nextPayload);
-  return {
-    removed: {
-      id: eventId,
+  const removedItems = targetEvents.map((targetEvent) => {
+    const projectId = String(targetEvent?.projectId || '').trim();
+    return {
+      id: String(targetEvent?.id || '').trim(),
       title: String(targetEvent?.title || '').trim() || 'Untitled',
       projectId,
       projectName: getProjectNameByIdFromPayload(payload, projectId),
-    },
+    };
+  });
+  const removed = removedItems[0] || null;
+  return {
+    removed,
+    removedItems,
+    removedCount: removedItems.length,
+    requestedCount: requestedEventIds.length,
   };
 };
 
@@ -5221,9 +5336,13 @@ const executeAiPendingAction = async ({
       username,
       actionPayload: action.payload,
     });
+    const removedCount = Number.parseInt(String(actionResult?.removedCount || 0), 10) || 0;
     return {
       actionResult,
-      assistantText: `Item "${actionResult?.removed?.title || ''}" has been deleted.`,
+      assistantText:
+        removedCount > 1
+          ? `${removedCount} items have been deleted.`
+          : `Item "${actionResult?.removed?.title || ''}" has been deleted.`,
     };
   }
   if (action.type === AI_ACTION_TYPES.DELETE_PROJECT) {
@@ -8659,6 +8778,7 @@ const handleLineOaPrivateTextMessage = async ({
         authUsername: linkedRecord?.username || '',
         chatProjectSelection: activeChatSelection,
         allowMutatingActions: activeChatSelection.allowMutatingActions === true,
+        allowDeleteActions: activeChatSelection.allowDeleteActions === true,
       });
       assistantText = sanitizeAiMessageContent(geminiResult.assistantText, 4000);
       nextPendingAction = normalizeAiPendingAction(geminiResult.pendingAction);
