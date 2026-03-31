@@ -14789,6 +14789,24 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
 	                );
 	              })
 	            )}
+            {isAiSending && (
+              <div className="flex justify-start">
+                <div className="inline-flex items-center gap-1 rounded-2xl border border-gray-200 bg-white px-3 py-2">
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-gray-400 animate-bounce"
+                    style={{ animationDelay: '0ms' }}
+                  />
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-gray-400 animate-bounce"
+                    style={{ animationDelay: '120ms' }}
+                  />
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-gray-400 animate-bounce"
+                    style={{ animationDelay: '240ms' }}
+                  />
+                </div>
+              </div>
+            )}
             <div ref={aiMessagesEndRef} />
           </div>
 
