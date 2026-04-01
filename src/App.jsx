@@ -9907,6 +9907,26 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
     return message || fallbackMessage;
   }, []);
 
+  const refreshAccountSnapshotAfterAiAction = useCallback(async () => {
+    if (!AUTH_API_BASE_URL) return;
+    try {
+      const accountPayload = await loadAccountDbPayload(currentUser.id, {
+        allowStaleWhilePendingQueue: false,
+      });
+      setProjects(
+        Array.isArray(accountPayload?.projects)
+          ? accountPayload.projects.map((project) => ensureProjectOwnershipForAccount(project, currentUser))
+          : []
+      );
+      setEvents(Array.isArray(accountPayload?.events) ? accountPayload.events : []);
+      setProjectTodosByProjectId(
+        normalizeProjectTodosByProjectId(accountPayload?.projectTodosByProjectId)
+      );
+    } catch (error) {
+      console.warn('Failed to refresh account snapshot after AI action:', error?.message || error);
+    }
+  }, [currentUser]);
+
   const aiProjectScopeOptions = useMemo(
     () =>
       (Array.isArray(projects) ? projects : [])
@@ -10284,6 +10304,54 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
         } else {
           void handleLoadAiThreads();
         }
+        if (decision === 'confirm') {
+          const pendingType = String(pending?.type || '').trim().toLowerCase();
+          const actionResult =
+            result?.actionResult && typeof result.actionResult === 'object' && !Array.isArray(result.actionResult)
+              ? result.actionResult
+              : {};
+          if (pendingType === 'delete_event') {
+            const removedIds = new Set(
+              [
+                ...(
+                  Array.isArray(actionResult?.removedItems) ? actionResult.removedItems : []
+                ).map((item) => String(item?.id || '').trim()),
+                String(actionResult?.removed?.id || '').trim(),
+              ].filter(Boolean)
+            );
+            if (removedIds.size > 0) {
+              setEvents((prevEvents) =>
+                (Array.isArray(prevEvents) ? prevEvents : []).filter(
+                  (eventItem) => !removedIds.has(String(eventItem?.id || '').trim())
+                )
+              );
+            }
+          } else if (pendingType === 'delete_project') {
+            const removedProjectId = String(actionResult?.removedProject?.id || '').trim();
+            if (removedProjectId) {
+              setProjects((prevProjects) =>
+                (Array.isArray(prevProjects) ? prevProjects : []).filter(
+                  (projectItem) => String(projectItem?.id || '').trim() !== removedProjectId
+                )
+              );
+              setEvents((prevEvents) =>
+                (Array.isArray(prevEvents) ? prevEvents : []).filter(
+                  (eventItem) => String(eventItem?.projectId || '').trim() !== removedProjectId
+                )
+              );
+              setProjectTodosByProjectId((prevTodos) => {
+                const normalizedTodos = normalizeProjectTodosByProjectId(prevTodos);
+                if (!Object.prototype.hasOwnProperty.call(normalizedTodos, removedProjectId)) {
+                  return normalizedTodos;
+                }
+                const nextTodos = { ...normalizedTodos };
+                delete nextTodos[removedProjectId];
+                return nextTodos;
+              });
+            }
+          }
+          await refreshAccountSnapshotAfterAiAction();
+        }
       } catch (error) {
         setAiErrorMessage(formatAiAssistantError(error, 'Failed to execute pending action.'));
       } finally {
@@ -10298,6 +10366,7 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       handleLoadAiThreads,
       normalizeAiMessage,
       normalizeAiPendingAction,
+      refreshAccountSnapshotAfterAiAction,
       normalizeAiThread,
     ]
   );

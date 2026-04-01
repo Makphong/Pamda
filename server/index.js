@@ -3809,6 +3809,153 @@ const buildAiProjectOverview = ({ payload, projectId }) => {
   };
 };
 
+const toAiItemSortTimestampMs = (itemInput) => {
+  const item = itemInput && typeof itemInput === 'object' ? itemInput : {};
+  const updatedAtMs = new Date(String(item.updatedAt || '').trim()).getTime();
+  if (Number.isFinite(updatedAtMs) && updatedAtMs > 0) return updatedAtMs;
+  const createdAtMs = new Date(String(item.createdAt || '').trim()).getTime();
+  if (Number.isFinite(createdAtMs) && createdAtMs > 0) return createdAtMs;
+  const fallbackDate = normalizeIsoDate(item.endDate || item.startDate || '');
+  if (!fallbackDate) return 0;
+  const fallbackTime = normalizeIsoTime(item.endTime || item.startTime || '') || '00:00';
+  const parsed = new Date(`${fallbackDate}T${fallbackTime}:00`).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const listAiProjectItems = ({
+  payload,
+  projectId = '',
+  recordType = 'all',
+  titleContains = '',
+  includeCompleted = true,
+  limit = 40,
+  offset = 0,
+}) => {
+  const safeProjectId = String(projectId || '').trim();
+  const safeRecordType = String(recordType || '').trim().toLowerCase();
+  const resolvedRecordType =
+    safeRecordType === 'task' || safeRecordType === 'event' ? safeRecordType : 'all';
+  const safeTitleContains = String(titleContains || '').trim().toLowerCase();
+  const safeIncludeCompleted = includeCompleted !== false;
+  const safeLimit = clampAiCount(limit, 40, 1, 120);
+  const safeOffset = Math.max(
+    0,
+    Math.min(2000, Number.parseInt(String(offset || 0), 10) || 0)
+  );
+  const projects = getPayloadProjects(payload);
+  const projectById = new Map(
+    projects
+      .map((project) => [String(project?.id || '').trim(), project])
+      .filter(([projectIdValue]) => Boolean(projectIdValue))
+  );
+  const events = getPayloadEvents(payload);
+  const filtered = events.filter((eventInput) => {
+    const event = eventInput && typeof eventInput === 'object' ? eventInput : {};
+    if (safeProjectId && String(event?.projectId || '').trim() !== safeProjectId) return false;
+    const isTask = isTaskRecord(event);
+    if (resolvedRecordType === 'task' && !isTask) return false;
+    if (resolvedRecordType === 'event' && isTask) return false;
+    if (!safeIncludeCompleted && isTask && isCompletedTaskRecord(event)) return false;
+    if (safeTitleContains) {
+      const haystack = `${String(event?.title || '').trim()} ${String(event?.description || '').trim()}`
+        .toLowerCase()
+        .trim();
+      if (!haystack.includes(safeTitleContains)) return false;
+    }
+    return true;
+  });
+  const sorted = filtered
+    .slice()
+    .sort((left, right) => toAiItemSortTimestampMs(right) - toAiItemSortTimestampMs(left));
+  const detailedItems = sorted.map((eventInput) => {
+    const event = eventInput && typeof eventInput === 'object' ? eventInput : {};
+    const isTask = isTaskRecord(event);
+    const normalizedProjectId = String(event?.projectId || '').trim();
+    const projectRecord = projectById.get(normalizedProjectId) || null;
+    const assigneeIds = normalizeTaskAssigneeIds(event);
+    const teamMembers = Array.isArray(projectRecord?.teamMembers) ? projectRecord.teamMembers : [];
+    const teamMemberNameById = new Map();
+    teamMembers.forEach((member) => {
+      const memberId = String(member?.id || '').trim();
+      if (!memberId) return;
+      const memberName =
+        String(member?.name || '').trim() ||
+        String(member?.username || '').trim() ||
+        String(member?.email || '').trim() ||
+        memberId;
+      teamMemberNameById.set(memberId, memberName);
+    });
+    const assigneeNames = assigneeIds
+      .map((assigneeId) => String(teamMemberNameById.get(String(assigneeId || '').trim()) || '').trim())
+      .filter(Boolean);
+    const taskTodos = Array.isArray(event?.taskTodos) ? event.taskTodos : [];
+    const completedTaskTodoCount = taskTodos.filter((todo) => todo?.checked === true).length;
+    const attachments = Array.isArray(event?.attachments) ? event.attachments : [];
+    return {
+      id: String(event?.id || '').trim(),
+      recordType: isTask ? 'task' : 'event',
+      projectId: normalizedProjectId,
+      projectName: getProjectNameByIdFromPayload(payload, normalizedProjectId),
+      title: String(event?.title || '').trim() || (isTask ? 'Untitled task' : 'Untitled event'),
+      description: String(event?.description || '').trim(),
+      location: String(event?.location || '').trim(),
+      status: isTask ? String(event?.status || '').trim() || 'To Do' : '',
+      completed: isTask ? isCompletedTaskRecord(event) : false,
+      department: String(event?.department || '').trim(),
+      assigneeIds,
+      assigneeNames,
+      startDate: normalizeIsoDate(event?.startDate || ''),
+      startTime: normalizeIsoTime(event?.startTime || ''),
+      endDate: normalizeIsoDate(event?.endDate || ''),
+      endTime: normalizeIsoTime(event?.endTime || ''),
+      showTime: event?.showTime !== false,
+      parentTaskId: isTask ? String(event?.parentTaskId || '').trim() : '',
+      parentTaskTitle: isTask ? String(event?.parentTaskTitle || '').trim() : '',
+      linkedEventId: String(event?.linkedEventId || '').trim(),
+      taskTodoCount: taskTodos.length,
+      completedTaskTodoCount,
+      openTaskTodoCount: Math.max(0, taskTodos.length - completedTaskTodoCount),
+      taskTodos: taskTodos
+        .slice(0, 12)
+        .map((todo) => ({
+          id: String(todo?.id || '').trim(),
+          text: String(todo?.text || '').trim(),
+          checked: todo?.checked === true,
+        }))
+        .filter((todo) => todo.id || todo.text),
+      attachmentCount: attachments.length,
+      attachments: attachments
+        .slice(0, 8)
+        .map((attachment) => ({
+          id: String(attachment?.id || '').trim(),
+          name: String(attachment?.name || '').trim(),
+          mimeType: String(attachment?.mimeType || '').trim(),
+          size: Math.max(0, Number.parseInt(String(attachment?.size || 0), 10) || 0),
+        }))
+        .filter((attachment) => attachment.id || attachment.name),
+      commentCount: Array.isArray(event?.comments) ? event.comments.length : 0,
+      googleCalendarLinked: event?.googleCalendarLinked === true,
+      googleCalendarId: String(event?.googleCalendarId || '').trim(),
+      googleCalendarLinkedEventId: String(event?.googleCalendarLinkedEventId || '').trim(),
+      createdAt: String(event?.createdAt || '').trim(),
+      updatedAt: String(event?.updatedAt || '').trim(),
+    };
+  });
+  const items = detailedItems.slice(safeOffset, safeOffset + safeLimit);
+  return {
+    projectId: safeProjectId,
+    projectName: safeProjectId ? getProjectNameByIdFromPayload(payload, safeProjectId) : '',
+    recordType: resolvedRecordType,
+    titleContains: safeTitleContains,
+    includeCompleted: safeIncludeCompleted,
+    totalMatched: detailedItems.length,
+    offset: safeOffset,
+    limit: safeLimit,
+    hasMore: safeOffset + safeLimit < detailedItems.length,
+    items,
+  };
+};
+
 const resolveAiProjectByHint = (payload, hintInput) => {
   const hint = String(hintInput || '').trim();
   if (!hint) return null;
@@ -4013,6 +4160,27 @@ const AI_TOOL_DEFINITIONS = [
   },
   {
     type: 'function',
+    name: 'list_project_items',
+    description:
+      'List detailed task/event records (title, description, assignee, schedule, and settings).',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'Optional project id. Omit for all scoped projects.' },
+        recordType: { type: 'string', enum: ['all', 'task', 'event'] },
+        titleContains: { type: 'string' },
+        includeCompleted: {
+          type: 'boolean',
+          description: 'For tasks: include Done/Completed records. Default true.',
+        },
+        limit: { type: 'number' },
+        offset: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    type: 'function',
     name: 'draft_create_task',
     description: 'Prepare task creation action for user confirmation.',
     parameters: {
@@ -4195,6 +4363,22 @@ const buildAiContextSummary = ({ payload, userId, username }) => {
       .filter((event) => !isTaskRecord(event))
       .filter((event) => normalizeIsoDate(event?.startDate || event?.endDate))
       .slice(0, 12);
+    const taskPreview = tasks.slice(0, 5).map((task) => ({
+      id: String(task?.id || '').trim(),
+      title: String(task?.title || '').trim() || 'Untitled task',
+      status: String(task?.status || '').trim() || 'To Do',
+      endDate: normalizeIsoDate(task?.endDate || task?.startDate),
+      description: sanitizeAiMessageContent(task?.description, 220),
+    }));
+    const eventPreview = upcomingEvents.slice(0, 5).map((event) => ({
+      id: String(event?.id || '').trim(),
+      title: String(event?.title || '').trim() || 'Untitled event',
+      startDate: normalizeIsoDate(event?.startDate || event?.endDate),
+      startTime: normalizeIsoTime(event?.startTime || ''),
+      endDate: normalizeIsoDate(event?.endDate || event?.startDate),
+      endTime: normalizeIsoTime(event?.endTime || ''),
+      description: sanitizeAiMessageContent(event?.description, 220),
+    }));
     return {
       id: projectId,
       name: String(project?.name || '').trim() || projectId,
@@ -4202,6 +4386,10 @@ const buildAiContextSummary = ({ payload, userId, username }) => {
       openTasks: openTasks.length,
       totalTasks: tasks.length,
       upcomingEvents: upcomingEvents.length,
+      taskPreview,
+      eventPreview,
+      hasMoreTaskDetails: tasks.length > taskPreview.length,
+      hasMoreEventDetails: upcomingEvents.length > eventPreview.length,
     };
   });
   return {
@@ -4221,6 +4409,7 @@ const buildAiAssistantSystemPrompt = ({ contextSummary }) => {
     'You are PAMDA AI assistant.',
     'Answer in concise Thai by default.',
     'Use tools when a tool can improve accuracy.',
+    'If user asks for task/event details (name, description, assignee, status, settings), use list_project_items first.',
     'Never invent project/task/event ids.',
     'For mutating requests, always call a draft_* tool first and ask user to confirm action.',
     'If user asks today schedule, prioritize get_today_agenda tool.',
@@ -4311,6 +4500,17 @@ const executeAiToolCall = async ({ payload, args, toolName }) => {
     return buildAiProjectOverview({
       payload,
       projectId: toolArgs.projectId,
+    });
+  }
+  if (toolName === 'list_project_items') {
+    return listAiProjectItems({
+      payload,
+      projectId: toolArgs.projectId,
+      recordType: toolArgs.recordType,
+      titleContains: toolArgs.titleContains,
+      includeCompleted: toolArgs.includeCompleted,
+      limit: toolArgs.limit,
+      offset: toolArgs.offset,
     });
   }
   if (toolName === 'draft_create_task') {
