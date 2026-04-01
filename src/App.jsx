@@ -62,7 +62,8 @@ import {
   Heart,
   Trophy,
   Pin,
-  PinOff
+  PinOff,
+  GripVertical
 } from 'lucide-react';
 
 // --- Constants & Helpers ---
@@ -2026,6 +2027,24 @@ const PROJECT_RESOURCE_ROW_TYPES = {
   LINK: 'link',
 };
 const DEFAULT_PROJECT_RESOURCE_LINK_TYPE = 'Other';
+const PROJECT_RESOURCE_LINK_TARGET_TYPES = {
+  URL: 'url',
+  PHONE: 'phone',
+  EMAIL: 'email',
+};
+const PROJECT_RESOURCE_LINK_TARGET_TYPE_SET = new Set(
+  Object.values(PROJECT_RESOURCE_LINK_TARGET_TYPES)
+);
+const PROJECT_RESOURCE_LINK_TARGET_TYPE_LABELS = {
+  [PROJECT_RESOURCE_LINK_TARGET_TYPES.URL]: 'Link URL',
+  [PROJECT_RESOURCE_LINK_TARGET_TYPES.PHONE]: 'เบอร์โทร',
+  [PROJECT_RESOURCE_LINK_TARGET_TYPES.EMAIL]: 'อีเมล',
+};
+const PROJECT_RESOURCE_LINK_TARGET_PLACEHOLDERS = {
+  [PROJECT_RESOURCE_LINK_TARGET_TYPES.URL]: 'https://...',
+  [PROJECT_RESOURCE_LINK_TARGET_TYPES.PHONE]: 'เช่น 0812345678 หรือ +66812345678',
+  [PROJECT_RESOURCE_LINK_TARGET_TYPES.EMAIL]: 'name@example.com',
+};
 const normalizeProjectResourceRowType = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   return normalized === PROJECT_RESOURCE_ROW_TYPES.HEADER
@@ -2042,6 +2061,14 @@ const normalizeProjectResourceLinkType = (value) =>
     fallback: DEFAULT_PROJECT_RESOURCE_LINK_TYPE,
     maxLength: 40,
   });
+const normalizeProjectResourceLinkTargetType = (value) => {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  return PROJECT_RESOURCE_LINK_TARGET_TYPE_SET.has(normalized)
+    ? normalized
+    : PROJECT_RESOURCE_LINK_TARGET_TYPES.URL;
+};
 const normalizeProjectResourceLinkUrl = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -2053,6 +2080,188 @@ const normalizeProjectResourceLinkUrl = (value) => {
   } catch {
     return '';
   }
+};
+const normalizeProjectResourcePhoneNumber = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const digitsAndPlus = raw.replace(/[^\d+]/g, '');
+  const normalized = digitsAndPlus.startsWith('+')
+    ? `+${digitsAndPlus.slice(1).replace(/\+/g, '')}`
+    : digitsAndPlus.replace(/\+/g, '');
+  if (!/^\+?\d{6,20}$/.test(normalized)) return '';
+  return normalized;
+};
+const normalizeProjectResourceEmailAddress = (value) => {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!normalized) return '';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return '';
+  return normalized.slice(0, 180);
+};
+const normalizeProjectResourceLinkTargetValue = (value, targetTypeInput) => {
+  const targetType = normalizeProjectResourceLinkTargetType(targetTypeInput);
+  if (targetType === PROJECT_RESOURCE_LINK_TARGET_TYPES.PHONE) {
+    return normalizeProjectResourcePhoneNumber(value);
+  }
+  if (targetType === PROJECT_RESOURCE_LINK_TARGET_TYPES.EMAIL) {
+    return normalizeProjectResourceEmailAddress(value);
+  }
+  return normalizeProjectResourceLinkUrl(value);
+};
+const inferProjectResourceLinkTargetTypeFromUrl = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return PROJECT_RESOURCE_LINK_TARGET_TYPES.URL;
+  if (/^tel:/i.test(raw)) return PROJECT_RESOURCE_LINK_TARGET_TYPES.PHONE;
+  if (/^mailto:/i.test(raw)) return PROJECT_RESOURCE_LINK_TARGET_TYPES.EMAIL;
+  return PROJECT_RESOURCE_LINK_TARGET_TYPES.URL;
+};
+const extractProjectResourceLinkTargetValueFromUrl = (value, targetTypeInput) => {
+  const raw = String(value || '').trim();
+  const targetType = normalizeProjectResourceLinkTargetType(targetTypeInput);
+  if (!raw) return '';
+  if (targetType === PROJECT_RESOURCE_LINK_TARGET_TYPES.PHONE) {
+    return raw.replace(/^tel:/i, '').trim();
+  }
+  if (targetType === PROJECT_RESOURCE_LINK_TARGET_TYPES.EMAIL) {
+    const withoutPrefix = raw.replace(/^mailto:/i, '').trim();
+    return withoutPrefix.split('?')[0];
+  }
+  return raw;
+};
+const buildProjectResourceActionHref = (linkInput) => {
+  const targetType = normalizeProjectResourceLinkTargetType(linkInput?.targetType);
+  const normalizedTargetValue = normalizeProjectResourceLinkTargetValue(
+    linkInput?.targetValue,
+    targetType
+  );
+  if (!normalizedTargetValue) return '';
+  if (targetType === PROJECT_RESOURCE_LINK_TARGET_TYPES.PHONE) {
+    return `tel:${normalizedTargetValue}`;
+  }
+  if (targetType === PROJECT_RESOURCE_LINK_TARGET_TYPES.EMAIL) {
+    return `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
+      normalizedTargetValue
+    )}`;
+  }
+  return normalizedTargetValue;
+};
+const normalizeProjectResourceLinkItem = (valueInput, index = 0) => {
+  const value =
+    valueInput && typeof valueInput === 'object' && !Array.isArray(valueInput) ? valueInput : {};
+  const targetType = normalizeProjectResourceLinkTargetType(value.targetType);
+  const targetValueRaw = value.targetValue ?? value.linkUrl ?? value.url ?? '';
+  const targetValue = normalizeProjectResourceLinkTargetValue(targetValueRaw, targetType);
+  const linkType = normalizeProjectResourceLinkType(value.linkType);
+  const linkName = normalizeProjectResourceLabel(value.linkName, {
+    fallback: '',
+    maxLength: 180,
+  });
+  const linkDescription = normalizeProjectResourceLabel(value.linkDescription, {
+    fallback: '',
+    maxLength: 280,
+  });
+  const hasData = Boolean(
+    String(value?.linkType || '').trim() ||
+      String(value?.linkName || '').trim() ||
+      String(value?.targetValue || value?.linkUrl || '').trim() ||
+      String(value?.linkDescription || '').trim()
+  );
+  if (!hasData) return null;
+  return {
+    id: String(value.id || '').trim() || `project-resource-link-item-${index + 1}`,
+    linkType,
+    linkName,
+    targetType,
+    targetValue,
+    linkDescription,
+  };
+};
+const normalizeProjectResourceLinkItems = (itemsInput, fallbackRowInput = null) => {
+  const items = (Array.isArray(itemsInput) ? itemsInput : [])
+    .map((item, index) => normalizeProjectResourceLinkItem(item, index))
+    .filter(Boolean);
+  if (items.length > 0) return items;
+  const fallbackRow =
+    fallbackRowInput &&
+    typeof fallbackRowInput === 'object' &&
+    !Array.isArray(fallbackRowInput)
+      ? fallbackRowInput
+      : {};
+  const hasLegacyData = Boolean(
+    String(fallbackRow?.linkType || '').trim() ||
+      String(fallbackRow?.linkName || '').trim() ||
+      String(fallbackRow?.linkUrl || '').trim() ||
+      String(fallbackRow?.linkDescription || '').trim()
+  );
+  if (!hasLegacyData) return [];
+  const fallbackTargetType = inferProjectResourceLinkTargetTypeFromUrl(fallbackRow?.linkUrl);
+  const fallbackTargetValue = extractProjectResourceLinkTargetValueFromUrl(
+    fallbackRow?.linkUrl,
+    fallbackTargetType
+  );
+  const fallbackRowId = String(fallbackRow?.id || '').trim();
+  const fallbackItemId =
+    String(fallbackRow?.linkItemId || '').trim() ||
+    (fallbackRowId ? `${fallbackRowId}-link-1` : 'project-resource-link-item-1');
+  const fallbackItem = normalizeProjectResourceLinkItem(
+    {
+      id: fallbackItemId,
+      linkType: fallbackRow?.linkType,
+      linkName: fallbackRow?.linkName,
+      targetType: fallbackTargetType,
+      targetValue: fallbackTargetValue,
+      linkDescription: fallbackRow?.linkDescription,
+    },
+    0
+  );
+  return fallbackItem ? [fallbackItem] : [];
+};
+const toProjectResourceLegacyFieldsFromItems = (linkItemsInput) => {
+  const linkItems = normalizeProjectResourceLinkItems(linkItemsInput);
+  const firstItem = linkItems[0] || null;
+  if (!firstItem) {
+    return {
+      linkType: DEFAULT_PROJECT_RESOURCE_LINK_TYPE,
+      linkName: '',
+      linkUrl: '',
+      linkDescription: '',
+    };
+  }
+  const targetType = normalizeProjectResourceLinkTargetType(firstItem.targetType);
+  return {
+    linkType: normalizeProjectResourceLinkType(firstItem.linkType),
+    linkName: normalizeProjectResourceLabel(firstItem.linkName, {
+      fallback: '',
+      maxLength: 180,
+    }),
+    linkUrl:
+      targetType === PROJECT_RESOURCE_LINK_TARGET_TYPES.URL
+        ? normalizeProjectResourceLinkUrl(firstItem.targetValue)
+        : '',
+    linkDescription: normalizeProjectResourceLabel(firstItem.linkDescription, {
+      fallback: '',
+      maxLength: 280,
+    }),
+  };
+};
+const createProjectResourceLinkItemDraft = (valueInput = {}) => {
+  const value =
+    valueInput && typeof valueInput === 'object' && !Array.isArray(valueInput) ? valueInput : {};
+  return {
+    id: String(value.id || '').trim() || generateId(),
+    linkType: normalizeProjectResourceLinkType(value.linkType),
+    linkName: normalizeProjectResourceLabel(value.linkName, {
+      fallback: '',
+      maxLength: 180,
+    }),
+    targetType: normalizeProjectResourceLinkTargetType(value.targetType),
+    targetValue: String(value.targetValue ?? value.linkUrl ?? '').trim().slice(0, 320),
+    linkDescription: normalizeProjectResourceLabel(value.linkDescription, {
+      fallback: '',
+      maxLength: 280,
+    }),
+  };
 };
 const normalizeProjectResourceRows = (rowsInput) =>
   (Array.isArray(rowsInput) ? rowsInput : [])
@@ -2067,16 +2276,16 @@ const normalizeProjectResourceRows = (rowsInput) =>
           title: normalizeProjectResourceLabel(row.title, { fallback: 'หัวข้อ', maxLength: 180 }),
         };
       }
+      const linkItems = normalizeProjectResourceLinkItems(row.linkItems, row);
+      const legacyFields = toProjectResourceLegacyFieldsFromItems(linkItems);
       return {
         id,
         type: PROJECT_RESOURCE_ROW_TYPES.LINK,
-        linkType: normalizeProjectResourceLinkType(row.linkType),
-        linkName: normalizeProjectResourceLabel(row.linkName, { fallback: '', maxLength: 180 }),
-        linkUrl: normalizeProjectResourceLinkUrl(row.linkUrl),
-        linkDescription: normalizeProjectResourceLabel(row.linkDescription, {
-          fallback: '',
-          maxLength: 280,
-        }),
+        linkType: legacyFields.linkType,
+        linkName: legacyFields.linkName,
+        linkUrl: legacyFields.linkUrl,
+        linkDescription: legacyFields.linkDescription,
+        linkItems,
       };
     })
     .filter(Boolean);
@@ -21348,6 +21557,9 @@ function ProjectDashboard({
   );
   const [showProjectResourceAddMenu, setShowProjectResourceAddMenu] = useState(false);
   const [isProjectResourceEditMode, setIsProjectResourceEditMode] = useState(false);
+  const [projectResourceLinkEditorState, setProjectResourceLinkEditorState] = useState(null);
+  const [projectResourceDraggingRowId, setProjectResourceDraggingRowId] = useState('');
+  const [projectResourceDragOverRowId, setProjectResourceDragOverRowId] = useState('');
   const projectResourceToolbarRef = useRef(null);
   const [isOrgEditMode, setIsOrgEditMode] = useState(false);
   const [optionsPopupType, setOptionsPopupType] = useState(null); // 'position' | 'department' | null
@@ -21454,6 +21666,11 @@ function ProjectDashboard({
     setProjectResourceRows((prev) => (isJsonEqual(prev, nextResourceRows) ? prev : nextResourceRows));
   }, [project.id, project.projectResourceRows]);
   useEffect(() => {
+    setProjectResourceLinkEditorState(null);
+    setProjectResourceDraggingRowId('');
+    setProjectResourceDragOverRowId('');
+  }, [project.id]);
+  useEffect(() => {
     if (!showProjectResourceAddMenu) return undefined;
     const handlePointerDown = (event) => {
       const toolbarElement = projectResourceToolbarRef.current;
@@ -21473,7 +21690,22 @@ function ProjectDashboard({
     if (activeTab === 'resources') return;
     setShowProjectResourceAddMenu(false);
     setIsProjectResourceEditMode(false);
+    setProjectResourceLinkEditorState(null);
+    setProjectResourceDraggingRowId('');
+    setProjectResourceDragOverRowId('');
   }, [activeTab]);
+  useEffect(() => {
+    const clearProjectResourceDragState = () => {
+      setProjectResourceDraggingRowId('');
+      setProjectResourceDragOverRowId('');
+    };
+    window.addEventListener('dragend', clearProjectResourceDragState);
+    window.addEventListener('drop', clearProjectResourceDragState);
+    return () => {
+      window.removeEventListener('dragend', clearProjectResourceDragState);
+      window.removeEventListener('drop', clearProjectResourceDragState);
+    };
+  }, []);
 
   useEffect(() => {
     const nextNotesPreferences = resolveAccountScopedNotesPreferences(project.notesPreferences, {
@@ -21624,6 +21856,7 @@ function ProjectDashboard({
         linkName: '',
         linkUrl: '',
         linkDescription: '',
+        linkItems: [],
       },
     ]);
   }, [persistProjectResourceRows]);
@@ -21643,7 +21876,15 @@ function ProjectDashboard({
   );
   const handleToggleProjectResourceEditMode = useCallback(() => {
     setShowProjectResourceAddMenu(false);
-    setIsProjectResourceEditMode((prev) => !prev);
+    setIsProjectResourceEditMode((prev) => {
+      const next = !prev;
+      if (!next) {
+        setProjectResourceLinkEditorState(null);
+        setProjectResourceDraggingRowId('');
+        setProjectResourceDragOverRowId('');
+      }
+      return next;
+    });
   }, []);
   const handleEditProjectResourceHeaderRow = useCallback(
     async (rowId, currentTitle = '') => {
@@ -21674,78 +21915,217 @@ function ProjectDashboard({
     [persistProjectResourceRows, popup]
   );
   const handleEditProjectResourceLinkRow = useCallback(
-    async (rowInput) => {
+    (rowInput) => {
       const row = rowInput && typeof rowInput === 'object' ? rowInput : null;
       if (!row) return;
-      const linkForm = await popup.promptForm({
-        title: row.linkUrl ? 'Edit link' : 'Add link',
-        message: 'กำหนดชนิดลิงก์, ชื่อ Link, URL และรายละเอียด',
-        fields: [
-          {
-            id: 'linkType',
-            label: 'Link Type',
-            placeholder: 'Form / Drive / Other',
-            defaultValue: String(row.linkType || DEFAULT_PROJECT_RESOURCE_LINK_TYPE),
-            type: 'text',
-          },
-          {
-            id: 'linkName',
-            label: 'Link Name',
-            placeholder: 'เช่น Weekly Report Form',
-            defaultValue: String(row.linkName || ''),
-            type: 'text',
-          },
-          {
-            id: 'linkUrl',
-            label: 'Link URL',
-            placeholder: 'https://...',
-            defaultValue: String(row.linkUrl || ''),
-            type: 'url',
-          },
-          {
-            id: 'linkDescription',
-            label: 'รายละเอียด',
-            placeholder: 'เช่น รายละเอียดการใช้งานลิงก์นี้',
-            defaultValue: String(row.linkDescription || ''),
-            type: 'text',
-          },
-        ],
+      const draftLinks = normalizeProjectResourceLinkItems(row.linkItems, row).map((item) =>
+        createProjectResourceLinkItemDraft(item)
+      );
+      const safeLinks = draftLinks.length > 0 ? draftLinks : [createProjectResourceLinkItemDraft()];
+      setProjectResourceLinkEditorState({
+        rowId: String(row.id || '').trim(),
+        links: safeLinks,
       });
-      if (linkForm === null) return;
-      const nextLinkName = normalizeProjectResourceLabel(linkForm?.linkName, {
+    },
+    []
+  );
+  const handleCloseProjectResourceLinkEditor = useCallback(() => {
+    setProjectResourceLinkEditorState(null);
+  }, []);
+  const handleProjectResourceLinkEditorItemChange = useCallback((itemIdInput, patchInput = {}) => {
+    const itemId = String(itemIdInput || '').trim();
+    if (!itemId) return;
+    const patch =
+      patchInput && typeof patchInput === 'object' && !Array.isArray(patchInput) ? patchInput : {};
+    setProjectResourceLinkEditorState((prev) => {
+      if (!prev || !Array.isArray(prev.links)) return prev;
+      const nextLinks = prev.links.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              ...patch,
+            }
+          : item
+      );
+      return {
+        ...prev,
+        links: nextLinks,
+      };
+    });
+  }, []);
+  const handleProjectResourceLinkEditorAddItem = useCallback(() => {
+    setProjectResourceLinkEditorState((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        links: [...(Array.isArray(prev.links) ? prev.links : []), createProjectResourceLinkItemDraft()],
+      };
+    });
+  }, []);
+  const handleProjectResourceLinkEditorRemoveItem = useCallback((itemIdInput) => {
+    const itemId = String(itemIdInput || '').trim();
+    if (!itemId) return;
+    setProjectResourceLinkEditorState((prev) => {
+      if (!prev || !Array.isArray(prev.links)) return prev;
+      const nextLinks = prev.links.filter((item) => String(item?.id || '').trim() !== itemId);
+      if (nextLinks.length === 0) {
+        return {
+          ...prev,
+          links: [createProjectResourceLinkItemDraft()],
+        };
+      }
+      return {
+        ...prev,
+        links: nextLinks,
+      };
+    });
+  }, []);
+  const handleSaveProjectResourceLinkEditor = useCallback(async () => {
+    const editorState = projectResourceLinkEditorState;
+    if (!editorState) return;
+    const draftLinks = Array.isArray(editorState.links) ? editorState.links : [];
+    const normalizedLinks = [];
+
+    for (let index = 0; index < draftLinks.length; index += 1) {
+      const draft = draftLinks[index] || {};
+      const linkType = normalizeProjectResourceLinkType(draft.linkType);
+      const linkName = normalizeProjectResourceLabel(draft.linkName, {
         fallback: '',
         maxLength: 180,
       });
-      const nextLinkUrl = normalizeProjectResourceLinkUrl(linkForm?.linkUrl);
-      if (!nextLinkName || !nextLinkUrl) {
-        await popup.alert({
-          title: 'ข้อมูลไม่ครบ',
-          message: 'กรุณากรอกชื่อ Link และ URL ให้ครบก่อนบันทึก',
-        });
-        return;
-      }
-      const nextLinkType = normalizeProjectResourceLinkType(linkForm?.linkType);
-      const nextLinkDescription = normalizeProjectResourceLabel(linkForm?.linkDescription, {
+      const targetType = normalizeProjectResourceLinkTargetType(draft.targetType);
+      const rawTargetValue = String(draft.targetValue || '').trim();
+      const targetValue = normalizeProjectResourceLinkTargetValue(rawTargetValue, targetType);
+      const linkDescription = normalizeProjectResourceLabel(draft.linkDescription, {
         fallback: '',
         maxLength: 280,
       });
-      persistProjectResourceRows((prevRows) =>
-        prevRows.map((item) =>
-          item.id === row.id
-            ? {
-                ...item,
-                type: PROJECT_RESOURCE_ROW_TYPES.LINK,
-                linkType: nextLinkType,
-                linkName: nextLinkName,
-                linkUrl: nextLinkUrl,
-                linkDescription: nextLinkDescription,
-              }
-            : item
-        )
+      const hasAnyValue = Boolean(
+        String(draft.linkType || '').trim() ||
+          String(draft.linkName || '').trim() ||
+          String(draft.targetValue || '').trim() ||
+          String(draft.linkDescription || '').trim()
       );
+      if (!hasAnyValue) continue;
+      if (!linkName) {
+        await popup.alert({
+          title: 'ข้อมูลไม่ครบ',
+          message: `กรุณากรอกชื่อ Link ในรายการที่ ${index + 1}`,
+        });
+        return;
+      }
+      if (!targetValue) {
+        const targetLabel = PROJECT_RESOURCE_LINK_TARGET_TYPE_LABELS[targetType] || 'ปลายทางลิงก์';
+        await popup.alert({
+          title: 'ข้อมูลไม่ถูกต้อง',
+          message: `กรุณากรอก ${targetLabel} ที่ถูกต้องในรายการที่ ${index + 1}`,
+        });
+        return;
+      }
+      normalizedLinks.push({
+        id: String(draft.id || '').trim() || generateId(),
+        linkType,
+        linkName,
+        targetType,
+        targetValue,
+        linkDescription,
+      });
+    }
+
+    if (normalizedLinks.length === 0) {
+      await popup.alert({
+        title: 'ข้อมูลไม่ครบ',
+        message: 'กรุณาเพิ่มอย่างน้อย 1 ลิงก์ก่อนบันทึก',
+      });
+      return;
+    }
+
+    const legacyFields = toProjectResourceLegacyFieldsFromItems(normalizedLinks);
+    persistProjectResourceRows((prevRows) =>
+      prevRows.map((row) =>
+        row.id === editorState.rowId
+          ? {
+              ...row,
+              type: PROJECT_RESOURCE_ROW_TYPES.LINK,
+              ...legacyFields,
+              linkItems: normalizedLinks,
+            }
+          : row
+      )
+    );
+    setProjectResourceLinkEditorState(null);
+  }, [persistProjectResourceRows, popup, projectResourceLinkEditorState]);
+  const moveProjectResourceRow = useCallback(
+    (sourceRowIdInput, targetRowIdInput) => {
+      const sourceRowId = String(sourceRowIdInput || '').trim();
+      const targetRowId = String(targetRowIdInput || '').trim();
+      if (!sourceRowId || !targetRowId || sourceRowId === targetRowId) return;
+      persistProjectResourceRows((prevRows) => {
+        const sourceIndex = prevRows.findIndex((row) => row.id === sourceRowId);
+        const targetIndex = prevRows.findIndex((row) => row.id === targetRowId);
+        if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) return prevRows;
+        const nextRows = [...prevRows];
+        const [movedRow] = nextRows.splice(sourceIndex, 1);
+        nextRows.splice(targetIndex, 0, movedRow);
+        return nextRows;
+      });
     },
-    [persistProjectResourceRows, popup]
+    [persistProjectResourceRows]
   );
+  const handleProjectResourceRowDragStart = useCallback(
+    (rowIdInput, event) => {
+      if (!isProjectResourceEditMode) return;
+      const rowId = String(rowIdInput || '').trim();
+      if (!rowId) return;
+      setProjectResourceDraggingRowId(rowId);
+      setProjectResourceDragOverRowId('');
+      const transfer = event?.dataTransfer;
+      if (transfer) {
+        transfer.effectAllowed = 'move';
+        transfer.setData('text/plain', rowId);
+        transfer.setData('application/x-pm-project-resource-row-id', rowId);
+      }
+    },
+    [isProjectResourceEditMode]
+  );
+  const handleProjectResourceRowDragOver = useCallback(
+    (rowIdInput, event) => {
+      if (!isProjectResourceEditMode) return;
+      const rowId = String(rowIdInput || '').trim();
+      if (!rowId) return;
+      event?.preventDefault?.();
+      if (event?.dataTransfer) {
+        event.dataTransfer.dropEffect = 'move';
+      }
+      setProjectResourceDragOverRowId((prev) => (prev === rowId ? prev : rowId));
+    },
+    [isProjectResourceEditMode]
+  );
+  const handleProjectResourceRowDrop = useCallback(
+    (targetRowIdInput, event) => {
+      if (!isProjectResourceEditMode) return;
+      event?.preventDefault?.();
+      const targetRowId = String(targetRowIdInput || '').trim();
+      if (!targetRowId) return;
+      const droppedRowId =
+        String(event?.dataTransfer?.getData('application/x-pm-project-resource-row-id') || '').trim() ||
+        String(event?.dataTransfer?.getData('text/plain') || '').trim() ||
+        String(projectResourceDraggingRowId || '').trim();
+      if (!droppedRowId || droppedRowId === targetRowId) {
+        setProjectResourceDraggingRowId('');
+        setProjectResourceDragOverRowId('');
+        return;
+      }
+      moveProjectResourceRow(droppedRowId, targetRowId);
+      setProjectResourceDraggingRowId('');
+      setProjectResourceDragOverRowId('');
+    },
+    [isProjectResourceEditMode, moveProjectResourceRow, projectResourceDraggingRowId]
+  );
+  const handleProjectResourceRowDragEnd = useCallback(() => {
+    setProjectResourceDraggingRowId('');
+    setProjectResourceDragOverRowId('');
+  }, []);
   const handleDeleteProjectResourceRow = useCallback(
     async (rowId) => {
       const shouldDelete = await popup.confirm({
@@ -21756,6 +22136,9 @@ function ProjectDashboard({
         tone: 'danger',
       });
       if (!shouldDelete) return;
+      setProjectResourceLinkEditorState((prev) =>
+        prev && prev.rowId === rowId ? null : prev
+      );
       persistProjectResourceRows((prevRows) => prevRows.filter((row) => row.id !== rowId));
     },
     [persistProjectResourceRows, popup]
@@ -24853,9 +25236,31 @@ function ProjectDashboard({
                       <table className="w-full min-w-[920px] table-fixed">
                         <tbody>
                           {projectResourceRows.map((row) => {
+                            const isDraggingRow = projectResourceDraggingRowId === row.id;
+                            const isDragOverRow =
+                              Boolean(projectResourceDraggingRowId) &&
+                              projectResourceDragOverRowId === row.id &&
+                              projectResourceDraggingRowId !== row.id;
+                            const rowDragClass = isDragOverRow
+                              ? 'bg-blue-50/80'
+                              : '';
+                            const rowDraggingClass = isDraggingRow ? 'opacity-60' : '';
                             if (row.type === PROJECT_RESOURCE_ROW_TYPES.HEADER) {
                               return (
-                                <tr key={row.id} className="border-t border-gray-200 bg-slate-50">
+                                <tr
+                                  key={row.id}
+                                  className={`border-t border-gray-200 bg-slate-50 transition-colors ${rowDragClass} ${rowDraggingClass}`}
+                                  onDragOver={
+                                    isProjectResourceEditMode
+                                      ? (event) => handleProjectResourceRowDragOver(row.id, event)
+                                      : undefined
+                                  }
+                                  onDrop={
+                                    isProjectResourceEditMode
+                                      ? (event) => handleProjectResourceRowDrop(row.id, event)
+                                      : undefined
+                                  }
+                                >
                                   <td
                                     colSpan={isProjectResourceEditMode ? 4 : 3}
                                     className="px-4 py-3"
@@ -24863,13 +25268,27 @@ function ProjectDashboard({
                                     <div className="relative flex items-center justify-center">
                                       <p
                                         className={`w-full truncate px-2 text-center text-sm md:text-base font-semibold text-gray-800 ${
-                                          isProjectResourceEditMode ? 'pr-20' : ''
+                                          isProjectResourceEditMode ? 'pr-32' : ''
                                         }`}
                                       >
                                         {row.title || 'หัวข้อ'}
                                       </p>
                                       {isProjectResourceEditMode && (
                                         <div className="absolute right-0 top-1/2 flex -translate-y-1/2 items-center gap-1.5 shrink-0">
+                                          <button
+                                            type="button"
+                                            draggable
+                                            onDragStart={(event) =>
+                                              handleProjectResourceRowDragStart(row.id, event)
+                                            }
+                                            onDragEnd={handleProjectResourceRowDragEnd}
+                                            onClick={(event) => event.preventDefault()}
+                                            className="inline-flex h-8 w-8 cursor-grab items-center justify-center rounded-md border border-gray-300 bg-white text-gray-500 hover:bg-gray-100 active:cursor-grabbing"
+                                            title="ลากสลับตำแหน่งแถว"
+                                            aria-label="ลากสลับตำแหน่งแถว"
+                                          >
+                                            <GripVertical className="w-3.5 h-3.5" />
+                                          </button>
                                           <button
                                             type="button"
                                             onClick={() =>
@@ -24898,60 +25317,149 @@ function ProjectDashboard({
                               );
                             }
 
-                            const hasLink = Boolean(row.linkName && row.linkUrl);
+                            const linkItems = normalizeProjectResourceLinkItems(row.linkItems, row);
+                            const hasLinks = linkItems.length > 0;
                             return (
-                              <tr key={row.id} className="border-t border-gray-100">
+                              <tr
+                                key={row.id}
+                                className={`border-t border-gray-100 transition-colors ${rowDragClass} ${rowDraggingClass}`}
+                                onDragOver={
+                                  isProjectResourceEditMode
+                                    ? (event) => handleProjectResourceRowDragOver(row.id, event)
+                                    : undefined
+                                }
+                                onDrop={
+                                  isProjectResourceEditMode
+                                    ? (event) => handleProjectResourceRowDrop(row.id, event)
+                                    : undefined
+                                }
+                              >
                                 <td className="w-[200px] px-4 py-3 align-top border-r border-gray-100">
-                                  {isProjectResourceEditMode ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleEditProjectResourceLinkRow(row)}
-                                      className="inline-flex items-center rounded-full border border-gray-300 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
-                                      title="แก้ไขชนิดลิงก์"
-                                    >
-                                      {row.linkType || DEFAULT_PROJECT_RESOURCE_LINK_TYPE}
-                                    </button>
+                                  {hasLinks ? (
+                                    <div className="flex flex-wrap items-start gap-1.5">
+                                      {linkItems.map((linkItem, index) => {
+                                        const targetType = normalizeProjectResourceLinkTargetType(
+                                          linkItem.targetType
+                                        );
+                                        const targetTypeLabel =
+                                          PROJECT_RESOURCE_LINK_TARGET_TYPE_LABELS[targetType] || 'Link URL';
+                                        return (
+                                          <span
+                                            key={`${row.id}-type-${linkItem.id || index}`}
+                                            className="inline-flex max-w-full items-center rounded-full border border-gray-300 bg-gray-50 px-2.5 py-1 text-[11px] font-semibold text-gray-700"
+                                          >
+                                            <span className="truncate">
+                                              {linkItem.linkType || DEFAULT_PROJECT_RESOURCE_LINK_TYPE}
+                                            </span>
+                                            <span className="ml-1.5 text-[10px] font-medium text-gray-500">
+                                              {targetTypeLabel}
+                                            </span>
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
                                   ) : (
-                                    <span className="inline-flex items-center rounded-full border border-gray-300 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
-                                      {row.linkType || DEFAULT_PROJECT_RESOURCE_LINK_TYPE}
-                                    </span>
+                                    <p className="text-sm text-gray-400">ยังไม่มีชนิดลิงก์</p>
                                   )}
                                 </td>
                                 <td className="w-[300px] px-4 py-3 align-top border-r border-gray-100">
-                                  <div className="min-w-0">
-                                    {hasLink ? (
-                                      <a
-                                        href={row.linkUrl}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-800 hover:underline break-all"
-                                      >
-                                        {row.linkName}
-                                        <ArrowRight className="w-3.5 h-3.5 shrink-0" />
-                                      </a>
-                                    ) : (
-                                      <p className="text-sm text-gray-400">ยังไม่มีลิงก์ในแถวนี้</p>
-                                    )}
-                                  </div>
+                                  {hasLinks ? (
+                                    <div className="space-y-1.5 min-w-0">
+                                      {linkItems.map((linkItem, index) => {
+                                        const targetType = normalizeProjectResourceLinkTargetType(
+                                          linkItem.targetType
+                                        );
+                                        const href = buildProjectResourceActionHref(linkItem);
+                                        const linkName =
+                                          normalizeProjectResourceLabel(linkItem.linkName, {
+                                            fallback: '',
+                                            maxLength: 180,
+                                          }) || `Link ${index + 1}`;
+                                        const targetTypeLabel =
+                                          PROJECT_RESOURCE_LINK_TARGET_TYPE_LABELS[targetType] || 'Link URL';
+                                        if (!href || isProjectResourceEditMode) {
+                                          return (
+                                            <p
+                                              key={`${row.id}-link-${linkItem.id || index}`}
+                                              className="text-sm font-medium text-gray-700 break-words"
+                                            >
+                                              {linkName}
+                                              <span className="ml-1 text-xs font-normal text-gray-400">
+                                                ({targetTypeLabel})
+                                              </span>
+                                            </p>
+                                          );
+                                        }
+                                        return (
+                                          <a
+                                            key={`${row.id}-link-${linkItem.id || index}`}
+                                            href={href}
+                                            target={
+                                              targetType === PROJECT_RESOURCE_LINK_TARGET_TYPES.PHONE
+                                                ? undefined
+                                                : '_blank'
+                                            }
+                                            rel={
+                                              targetType === PROJECT_RESOURCE_LINK_TARGET_TYPES.PHONE
+                                                ? undefined
+                                                : 'noopener noreferrer'
+                                            }
+                                            className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-800 hover:underline break-all"
+                                          >
+                                            <span>{linkName}</span>
+                                            <span className="text-xs font-normal text-blue-500">
+                                              ({targetTypeLabel})
+                                            </span>
+                                            <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                                          </a>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm text-gray-400">ยังไม่มีลิงก์ในแถวนี้</p>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3 align-top border-r border-gray-100">
-                                  {row.linkDescription ? (
-                                    <p className="text-sm text-gray-600 whitespace-pre-wrap break-words">
-                                      {row.linkDescription}
-                                    </p>
+                                  {hasLinks ? (
+                                    <div className="space-y-1.5">
+                                      {linkItems.map((linkItem, index) => (
+                                        <p
+                                          key={`${row.id}-desc-${linkItem.id || index}`}
+                                          className={`text-sm whitespace-pre-wrap break-words ${
+                                            linkItem.linkDescription ? 'text-gray-600' : 'text-gray-400'
+                                          }`}
+                                        >
+                                          {linkItem.linkDescription || 'ยังไม่มีรายละเอียด'}
+                                        </p>
+                                      ))}
+                                    </div>
                                   ) : (
                                     <p className="text-sm text-gray-400">ยังไม่มีรายละเอียด</p>
                                   )}
                                 </td>
                                 {isProjectResourceEditMode && (
-                                  <td className="w-[150px] px-4 py-3 align-top">
+                                  <td className="w-[210px] px-4 py-3 align-top">
                                     <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        draggable
+                                        onDragStart={(event) =>
+                                          handleProjectResourceRowDragStart(row.id, event)
+                                        }
+                                        onDragEnd={handleProjectResourceRowDragEnd}
+                                        onClick={(event) => event.preventDefault()}
+                                        className="inline-flex h-8 w-8 cursor-grab items-center justify-center rounded-md border border-gray-300 bg-white text-gray-500 hover:bg-gray-100 active:cursor-grabbing"
+                                        title="ลากสลับตำแหน่งแถว"
+                                        aria-label="ลากสลับตำแหน่งแถว"
+                                      >
+                                        <GripVertical className="w-3.5 h-3.5" />
+                                      </button>
                                       <button
                                         type="button"
                                         onClick={() => handleEditProjectResourceLinkRow(row)}
                                         className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100"
                                       >
-                                        {hasLink ? 'แก้ไขลิงก์' : 'เพิ่มลิงก์'}
+                                        {hasLinks ? 'แก้ไขลิงก์' : 'เพิ่มลิงก์'}
                                       </button>
                                       <button
                                         type="button"
@@ -26921,6 +27429,180 @@ function ProjectDashboard({
 	          </div>
 	        </div>
 	      )}
+
+      {projectResourceLinkEditorState && (
+        <div className="fixed inset-0 z-[125] bg-slate-900/45 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+              <h3 className="text-base font-semibold text-slate-800">
+                {projectResourceLinkEditorState.links?.some((item) =>
+                  Boolean(String(item?.linkName || '').trim() || String(item?.targetValue || '').trim())
+                )
+                  ? 'Edit links'
+                  : 'Add link'}
+              </h3>
+              <button
+                type="button"
+                onClick={handleCloseProjectResourceLinkEditor}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-500 hover:bg-slate-100"
+                aria-label="ปิดหน้าต่างเพิ่มลิงก์"
+                title="ปิดหน้าต่างเพิ่มลิงก์"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-4 max-h-[72vh] overflow-y-auto">
+              <p className="text-sm text-slate-600">
+                กำหนดชนิดลิงก์ ชื่อ Link ปลายทาง และรายละเอียด สามารถเพิ่มได้หลายลิงก์
+              </p>
+              {(Array.isArray(projectResourceLinkEditorState.links)
+                ? projectResourceLinkEditorState.links
+                : []
+              ).map((item, index) => {
+                const targetType = normalizeProjectResourceLinkTargetType(item.targetType);
+                const targetLabel =
+                  PROJECT_RESOURCE_LINK_TARGET_TYPE_LABELS[targetType] || 'Link URL';
+                const targetPlaceholder =
+                  PROJECT_RESOURCE_LINK_TARGET_PLACEHOLDERS[targetType] || 'https://...';
+                return (
+                  <div
+                    key={`project-resource-link-editor-item-${item.id || index}`}
+                    className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 space-y-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                        Link {index + 1}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleProjectResourceLinkEditorRemoveItem(item.id)}
+                        disabled={
+                          (Array.isArray(projectResourceLinkEditorState.links)
+                            ? projectResourceLinkEditorState.links.length
+                            : 0) <= 1
+                        }
+                        className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold border ${
+                          (Array.isArray(projectResourceLinkEditorState.links)
+                            ? projectResourceLinkEditorState.links.length
+                            : 0) <= 1
+                            ? 'border-slate-200 bg-white text-slate-300 cursor-not-allowed'
+                            : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
+                        }`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Remove
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-slate-600">Link Type</span>
+                        <input
+                          type="text"
+                          value={String(item.linkType || '')}
+                          onChange={(event) =>
+                            handleProjectResourceLinkEditorItemChange(item.id, {
+                              linkType: event.target.value,
+                            })
+                          }
+                          placeholder="Form / Drive / Other"
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                        />
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-slate-600">Link Name</span>
+                        <input
+                          type="text"
+                          value={String(item.linkName || '')}
+                          onChange={(event) =>
+                            handleProjectResourceLinkEditorItemChange(item.id, {
+                              linkName: event.target.value,
+                            })
+                          }
+                          placeholder="เช่น Weekly Report Form"
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                        />
+                      </label>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-slate-600">ชนิดปลายทาง</span>
+                        <select
+                          value={targetType}
+                          onChange={(event) =>
+                            handleProjectResourceLinkEditorItemChange(item.id, {
+                              targetType: event.target.value,
+                              targetValue: '',
+                            })
+                          }
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                        >
+                          <option value={PROJECT_RESOURCE_LINK_TARGET_TYPES.URL}>Link URL</option>
+                          <option value={PROJECT_RESOURCE_LINK_TARGET_TYPES.PHONE}>เบอร์โทร</option>
+                          <option value={PROJECT_RESOURCE_LINK_TARGET_TYPES.EMAIL}>อีเมล</option>
+                        </select>
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-slate-600">{targetLabel}</span>
+                        <input
+                          type="text"
+                          value={String(item.targetValue || '')}
+                          onChange={(event) =>
+                            handleProjectResourceLinkEditorItemChange(item.id, {
+                              targetValue: event.target.value,
+                            })
+                          }
+                          placeholder={targetPlaceholder}
+                          className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                        />
+                      </label>
+                    </div>
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-slate-600">รายละเอียด</span>
+                      <input
+                        type="text"
+                        value={String(item.linkDescription || '')}
+                        onChange={(event) =>
+                          handleProjectResourceLinkEditorItemChange(item.id, {
+                            linkDescription: event.target.value,
+                          })
+                        }
+                        placeholder="เช่น รายละเอียดการใช้งานลิงก์นี้"
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                      />
+                    </label>
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                onClick={handleProjectResourceLinkEditorAddItem}
+                className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100"
+              >
+                <Plus className="w-4 h-4" />
+                Add more link
+              </button>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCloseProjectResourceLinkEditor}
+                className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition-colors text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleSaveProjectResourceLinkEditor();
+                }}
+                className="px-4 py-2 rounded-lg transition-colors text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
 	      {/* Slide-over Task Detail/Edit Pane */}
 		      <TaskDetailPane 
