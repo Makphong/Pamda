@@ -13490,6 +13490,17 @@ function CalendarApp({ currentUser, onLogout, onUpdateCurrentUser }) {
       })();
       return;
     }
+    const normalizedRecordType = String(event?.recordType || '').trim().toLowerCase();
+    if (normalizedRecordType === 'task') {
+      const taskProjectId = String(event?.projectId || '').trim();
+      if (!taskProjectId) return;
+      setIsPersonalWorkspaceOpen(false);
+      setShowEventModal(false);
+      setCalendarTaskPaneProjectId(taskProjectId);
+      setCalendarTaskPaneTask(event);
+      setShowCalendarTaskPane(true);
+      return;
+    }
     setEditingEvent(event);
     setShowEventModal(true);
   };
@@ -41667,6 +41678,10 @@ function MonthGrid({
   };
   const dayQuickPanelRef = useRef(null);
   const [activeDayQuickPanelDate, setActiveDayQuickPanelDate] = useState('');
+  const [dayQuickPanelPlacement, setDayQuickPanelPlacement] = useState({
+    dateStr: '',
+    horizontal: 'left',
+  });
   const normalizedCalendarColumnCount = Math.max(1, Number(calendarColumnCount) || 1);
   const dayQuickPanelWidthPx =
     normalizedCalendarColumnCount >= 4
@@ -41676,6 +41691,42 @@ function MonthGrid({
         : normalizedCalendarColumnCount === 2
           ? 320
           : 340;
+  const resolveDayQuickPanelHorizontal = useCallback(
+    (targetElement, fallbackInput = 'left') => {
+      const fallback = String(fallbackInput || '').trim().toLowerCase() === 'right' ? 'right' : 'left';
+      if (
+        typeof window === 'undefined' ||
+        !targetElement ||
+        typeof targetElement.getBoundingClientRect !== 'function'
+      ) {
+        return fallback;
+      }
+
+      const rect = targetElement.getBoundingClientRect();
+      const viewportWidth = Math.max(
+        Number(window.innerWidth || 0),
+        Number(document.documentElement?.clientWidth || 0)
+      );
+      if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return fallback;
+
+      const edgePadding = 8;
+      const panelWidth = Math.min(
+        dayQuickPanelWidthPx,
+        Math.max(220, viewportWidth - edgePadding * 2)
+      );
+      const overflowWhenLeftAligned =
+        rect.left + edgePadding + panelWidth - (viewportWidth - edgePadding);
+      const overflowWhenRightAligned = edgePadding - (rect.right - edgePadding - panelWidth);
+      const leftFits = overflowWhenLeftAligned <= 0;
+      const rightFits = overflowWhenRightAligned <= 0;
+
+      if (leftFits && !rightFits) return 'left';
+      if (rightFits && !leftFits) return 'right';
+      if (leftFits && rightFits) return fallback;
+      return overflowWhenLeftAligned <= overflowWhenRightAligned ? 'left' : 'right';
+    },
+    [dayQuickPanelWidthPx]
+  );
   const dayEventsByDate = useMemo(() => {
     const mapped = {};
     (Array.isArray(events) ? events : []).forEach((event) => {
@@ -41725,6 +41776,10 @@ function MonthGrid({
   };
   useEffect(() => {
     setActiveDayQuickPanelDate('');
+    setDayQuickPanelPlacement({
+      dateStr: '',
+      horizontal: 'left',
+    });
   }, [year, month, showEventTime, hidePastWeeks]);
   useEffect(() => {
     if (!activeDayQuickPanelDate) return undefined;
@@ -41940,7 +41995,12 @@ function MonthGrid({
                     Number(totalEventCountByDay?.[dayIndex] || 0) -
                       Number(visibleEventCountByDay?.[dayIndex] || 0)
                   );
-                  const dayQuickPanelAlignClass = dayIndex >= 4 ? 'right-1' : 'left-1';
+                  const fallbackHorizontal = dayIndex >= 4 ? 'right' : 'left';
+                  const resolvedHorizontal =
+                    String(dayQuickPanelPlacement?.dateStr || '').trim() === dayData.dateStr
+                      ? String(dayQuickPanelPlacement?.horizontal || '').trim().toLowerCase()
+                      : fallbackHorizontal;
+                  const dayQuickPanelAlignClass = resolvedHorizontal === 'right' ? 'right-1' : 'left-1';
 
 	                  return (
 	                    <div
@@ -41956,9 +42016,21 @@ function MonthGrid({
                           ? undefined
                           : (event) => {
                               event.stopPropagation();
-                              setActiveDayQuickPanelDate((prev) =>
-                                String(prev || '').trim() === dayData.dateStr ? '' : dayData.dateStr
+                              const isAlreadyOpen =
+                                String(activeDayQuickPanelDate || '').trim() === dayData.dateStr;
+                              if (isAlreadyOpen) {
+                                setActiveDayQuickPanelDate('');
+                                return;
+                              }
+                              const nextHorizontal = resolveDayQuickPanelHorizontal(
+                                event.currentTarget,
+                                fallbackHorizontal
                               );
+                              setDayQuickPanelPlacement({
+                                dateStr: dayData.dateStr,
+                                horizontal: nextHorizontal,
+                              });
+                              setActiveDayQuickPanelDate(dayData.dateStr);
                             }
                       }
 	                    >
@@ -43595,7 +43667,7 @@ function EventModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col">
         <div className="flex justify-between items-center p-4 border-b">
           <h2 className="text-xl font-bold text-gray-800">{event ? 'Edit Event' : 'New Event'}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -43603,7 +43675,7 @@ function EventModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} noValidate className="p-5 flex flex-col gap-4 overflow-y-auto">
+        <form onSubmit={handleSubmit} noValidate className="p-5 flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto">
           <input
             type="text"
             placeholder="Event title"
