@@ -5210,7 +5210,7 @@ const normalizeAuthApiErrorMessage = (messageInput, statusInput = 0) => {
     /^\d+\s+not_found:/i.test(message) ||
     (normalized.includes('database (default)') && normalized.includes('not found'))
   ) {
-    return 'Cloud database is not initialized. Please create Firestore (Native mode) for this project.';
+    return 'Firestore database "(default)" was not found. If your database ID is custom (example: "pamda"), set FIRESTORE_DATABASE_ID on backend.';
   }
 
   if (normalized.includes('permission_denied') || normalized.includes('insufficient permission')) {

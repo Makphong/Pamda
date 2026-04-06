@@ -41,6 +41,7 @@ app.use(
 );
 
 const OTP_TTL_MINUTES = Number(process.env.OTP_TTL_MINUTES || 10);
+const FIRESTORE_DATABASE_ID = String(process.env.FIRESTORE_DATABASE_ID || '(default)').trim() || '(default)';
 const USERS_COLLECTION = String(process.env.FIRESTORE_USERS_COLLECTION || 'users').trim();
 const OTP_COLLECTION = String(process.env.FIRESTORE_OTP_COLLECTION || 'auth_otps').trim();
 const APP_DATA_COLLECTION = String(process.env.FIRESTORE_APP_DATA_COLLECTION || 'app_data').trim();
@@ -278,7 +279,10 @@ if (!AUTH_TOKEN_SECRET) {
   );
 }
 
-const firestore = new Firestore();
+const firestore =
+  FIRESTORE_DATABASE_ID && FIRESTORE_DATABASE_ID !== '(default)'
+    ? new Firestore({ databaseId: FIRESTORE_DATABASE_ID })
+    : new Firestore();
 const usersRef = firestore.collection(USERS_COLLECTION);
 const otpRef = firestore.collection(OTP_COLLECTION);
 const appDataRef = firestore.collection(APP_DATA_COLLECTION);
@@ -5911,6 +5915,7 @@ app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     service: 'pm-calendar-auth-server',
+    firestoreDatabaseId: FIRESTORE_DATABASE_ID,
     firestoreCollectionUsers: USERS_COLLECTION,
     firestoreCollectionOtp: OTP_COLLECTION,
     firestoreCollectionAppData: APP_DATA_COLLECTION,
