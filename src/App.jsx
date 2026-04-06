@@ -5195,16 +5195,75 @@ const buildProjectComparableSnapshot = (projectsInput, { ignoreNotesRealtimeFiel
     };
   });
 
+const normalizeAuthApiErrorMessage = (messageInput, statusInput = 0) => {
+  const message = String(messageInput || '').trim();
+  const status = Number(statusInput || 0);
+  const normalized = message.toLowerCase();
+
+  if (!message) {
+    if (status >= 500) return 'Server error. Please try again in a moment.';
+    if (status === 404) return 'Auth API endpoint was not found. Please contact support.';
+    return 'Authentication request failed.';
+  }
+
+  if (
+    /^\d+\s+not_found:/i.test(message) ||
+    (normalized.includes('database (default)') && normalized.includes('not found'))
+  ) {
+    return 'Cloud database is not initialized. Please create Firestore (Native mode) for this project.';
+  }
+
+  if (normalized.includes('permission_denied') || normalized.includes('insufficient permission')) {
+    return 'Server permission error while accessing cloud resources. Please check backend IAM roles.';
+  }
+
+  if (
+    normalized.includes('wrong recipient') ||
+    (normalized.includes('audience') && normalized.includes('token'))
+  ) {
+    return 'Google sign-in configuration mismatch. Frontend and backend Google Client IDs must be the same.';
+  }
+
+  if (normalized.includes('invalid google access token')) {
+    return 'Google access token is invalid or expired. Please try Google sign-in again.';
+  }
+
+  if (
+    normalized.includes('failed to fetch') ||
+    normalized.includes('networkerror') ||
+    normalized.includes('load failed')
+  ) {
+    return 'Cannot reach Auth API. Please check backend status and AUTH_API_BASE_URL.';
+  }
+
+  const grpcErrorMatch = message.match(/^\d+\s+([A-Z_]+):\s*(.*)$/);
+  if (grpcErrorMatch) {
+    const code = String(grpcErrorMatch[1] || '').trim();
+    const detail = String(grpcErrorMatch[2] || '').trim();
+    return detail ? `${code}: ${detail}` : `Server error (${code}).`;
+  }
+
+  return message;
+};
+
 const postAuthApi = async (path, payload) => {
   if (!AUTH_API_BASE_URL) {
     throw new Error('Auth API is not configured. Set VITE_AUTH_API_BASE_URL or AUTH_API_BASE_URL.');
   }
 
-  const response = await fetch(`${AUTH_API_BASE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  let response;
+  try {
+    response = await fetch(`${AUTH_API_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (networkError) {
+    const error = new Error(normalizeAuthApiErrorMessage(networkError?.message || '', 0));
+    error.status = 0;
+    error.payload = null;
+    throw error;
+  }
 
   let result = null;
   try {
@@ -5214,7 +5273,7 @@ const postAuthApi = async (path, payload) => {
   }
 
   if (!response.ok) {
-    const message = result?.message || 'Authentication request failed.';
+    const message = normalizeAuthApiErrorMessage(result?.message, response.status);
     const error = new Error(message);
     error.status = response.status;
     error.payload = result;
